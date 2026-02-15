@@ -38,7 +38,9 @@ mod run_command {
     use crate::{config::Config, find_repositories::find_repositories};
 
     pub fn execute(config: &Config) -> Result<(), Box<dyn Error>> {
-        if let Some((rx, thread_handle)) = find_repositories(&config.search_directories) {
+        if let Some((rx, thread_handle)) =
+            find_repositories(&config.search_directories, &config.ignored_directories)
+        {
             while let Ok(path) = rx.recv() {
                 println!(" - {}", path.display());
             }
