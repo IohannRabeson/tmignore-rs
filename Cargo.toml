@@ -5,7 +5,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-clap = { version = "4.5.58", features = ["derive"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-thiserror = "2.0.18"
+clap = { version = "4.5", features = ["derive"] }
+crossbeam-channel = "0.5.15"
+ignore = { version = "0.4", features = ["simd-accel"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+shellexpand = "3.1.1"
+thiserror = "2"
+
+[dev-dependencies]
+temp-dir-builder = { git = "https://github.com/IohannRabeson/temp-dir-builder", rev = "0eb3527" }

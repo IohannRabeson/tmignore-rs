@@ -1,4 +1,5 @@
 mod config;
+mod find_repositories;
 
 use std::error::Error;
 
@@ -23,7 +24,7 @@ enum Commands {
 fn main() -> Result<(), Box<dyn Error>> {
     const CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
     let cli = Cli::parse();
-    let config = Config::load_or_create_file(CONFIG_FILE_PATH)?;
+    let config = Config::load_or_create_file(shellexpand::tilde(CONFIG_FILE_PATH).to_string())?;
     match cli.command {
         Commands::Run => run_command::execute(&config),
         Commands::List => list_command::execute(&config),
@@ -34,10 +35,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 mod run_command {
     use std::error::Error;
 
-    use crate::config::Config;
+    use crate::{config::Config, find_repositories::find_repositories};
 
     pub fn execute(config: &Config) -> Result<(), Box<dyn Error>> {
-        println!("run");
+        if let Some((rx, thread_handle)) = find_repositories(&config.search_directories) {
+            while let Ok(path) = rx.recv() {
+                println!(" - {}", path.display());
+            }
+
+            thread_handle.join().unwrap();
+        }
+
         Ok(())
     }
 }
