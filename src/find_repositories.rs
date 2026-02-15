@@ -12,7 +12,7 @@ pub fn find_repositories(directories: &[impl AsRef<Path>]) -> Vec<PathBuf> {
 
     let mut results = vec![];
     let walker = create_walk_builder(directories).build_parallel();
-    let (tx, rx) = crossbeam_channel::bounded(1024);
+    let (tx, rx) = crossbeam_channel::bounded(128);
 
     let thread_handle = std::thread::spawn(move || {
         walker.run(|| {
