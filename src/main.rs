@@ -38,10 +38,12 @@ mod run_command {
     use crate::{config::Config, find_repositories::find_repositories};
 
     pub fn execute(config: &Config) -> Result<(), Box<dyn Error>> {
-        let repositories = find_repositories(&config.search_directories);
+        if let Some((rx, thread_handle)) = find_repositories(&config.search_directories) {
+            while let Ok(path) = rx.recv() {
+                println!(" - {}", path.display());
+            }
 
-        for repository in repositories {
-            println!(" - {}", repository.display());
+            thread_handle.join().unwrap();
         }
 
         Ok(())

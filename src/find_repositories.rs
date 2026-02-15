@@ -1,16 +1,20 @@
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
+    thread::JoinHandle,
 };
 
-pub fn find_repositories(directories: &[impl AsRef<Path>]) -> Vec<PathBuf> {
+use crossbeam_channel::Receiver;
+
+pub fn find_repositories(
+    directories: &[impl AsRef<Path>],
+) -> Option<(Receiver<PathBuf>, JoinHandle<()>)> {
     const DOT_GIT_DIRECTORY_NAME: &str = ".git";
 
     if directories.is_empty() {
-        return vec![];
+        return None;
     }
 
-    let mut results = vec![];
     let walker = create_walk_builder(directories).build_parallel();
     let (tx, rx) = crossbeam_channel::bounded(128);
 
@@ -33,13 +37,7 @@ pub fn find_repositories(directories: &[impl AsRef<Path>]) -> Vec<PathBuf> {
         });
     });
 
-    while let Ok(path) = rx.recv() {
-        results.push(path);
-    }
-
-    thread_handle.join().unwrap();
-
-    results
+    Some((rx, thread_handle))
 }
 
 fn create_walk_builder(directories: &[impl AsRef<Path>]) -> ignore::WalkBuilder {
@@ -56,9 +54,27 @@ fn create_walk_builder(directories: &[impl AsRef<Path>]) -> ignore::WalkBuilder 
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use temp_dir_builder::TempDirectoryBuilder;
 
     use crate::find_repositories::find_repositories;
+
+    fn find_repositories_vec(directories: &[impl AsRef<Path>]) -> Vec<PathBuf> {
+        let mut results = vec![];
+
+        match find_repositories(directories) {
+            Some((rx, thread_handle)) => {
+                while let Ok(path) = rx.recv() {
+                    results.push(path);
+                }
+                thread_handle.join().unwrap();
+            }
+            None => (),
+        }
+
+        results
+    }
 
     #[test]
     fn test_root_directory() {
@@ -67,7 +83,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let repositories = find_repositories(&[temp_dir.path()]);
+        let repositories = find_repositories_vec(&[temp_dir.path()]);
 
         assert_eq!(repositories.len(), 1);
         assert_eq!(repositories[0], temp_dir.path());
@@ -80,7 +96,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let repositories = find_repositories(&[temp_dir.path()]);
+        let repositories = find_repositories_vec(&[temp_dir.path()]);
 
         assert_eq!(repositories.len(), 1);
         assert_eq!(repositories[0], temp_dir.path().join("subdirectory"));
@@ -94,7 +110,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let repositories = find_repositories(&[temp_dir.path()]);
+        let repositories = find_repositories_vec(&[temp_dir.path()]);
 
         assert_eq!(repositories.len(), 2);
         assert!(
