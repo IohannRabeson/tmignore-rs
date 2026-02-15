@@ -39,11 +39,11 @@ mod run_command {
 
     pub fn execute(config: &Config) -> Result<(), Box<dyn Error>> {
         let repositories = find_repositories(&config.search_directories);
-        
+
         for repository in repositories {
             println!(" - {}", repository.display());
         }
-        
+
         Ok(())
     }
 }

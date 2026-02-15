@@ -25,8 +25,9 @@ pub enum LoadFromFileError {
 
 fn expand_paths(paths: &mut [PathBuf]) {
     for path in paths {
-        if let Some(path_str) = path.to_str() 
-        && let Ok(expanded) = shellexpand::full(path_str) {
+        if let Some(path_str) = path.to_str()
+            && let Ok(expanded) = shellexpand::full(path_str)
+        {
             *path = PathBuf::from(expanded.to_string())
         }
     }
@@ -40,9 +41,9 @@ impl Config {
             Self::load_from_file(file_path)
         } else {
             let default_config = Self::default();
-            
+
             std::fs::create_dir_all(file_path.parent().unwrap())?;
-            
+
             let file = File::create_new(file_path)?;
 
             serde_json::to_writer_pretty(file, &default_config)?;

@@ -1,23 +1,44 @@
-use std::{ffi::OsStr, path::{Path, PathBuf}};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
 pub fn find_repositories(directories: &[impl AsRef<Path>]) -> Vec<PathBuf> {
     const DOT_GIT_DIRECTORY_NAME: &str = ".git";
 
     if directories.is_empty() {
-        return vec![]
+        return vec![];
     }
 
-    let mut results = vec![];    
-    let walker = create_walk_builder(directories).build();
-    for entry in walker {
-        if let Ok(entry) = entry
-        && entry.path().is_dir()
-        && entry.file_name() == OsStr::new(DOT_GIT_DIRECTORY_NAME)
-        && let Some(parent) = entry.path().parent()
-        {
-            results.push(parent.to_path_buf());
-        }
+    let mut results = vec![];
+    let walker = create_walk_builder(directories).build_parallel();
+    let (tx, rx) = crossbeam_channel::bounded(1024);
+
+    let thread_handle = std::thread::spawn(move || {
+        walker.run(|| {
+            let tx = tx.clone();
+            Box::new(move |entry| {
+                use ignore::WalkState;
+
+                if let Ok(entry) = entry
+                    && entry.path().is_dir()
+                    && entry.file_name() == OsStr::new(DOT_GIT_DIRECTORY_NAME)
+                    && let Some(parent) = entry.path().parent()
+                {
+                    tx.send(parent.to_path_buf()).unwrap();
+                }
+
+                WalkState::Continue
+            })
+        });
+    });
+
+    while let Ok(path) = rx.recv() {
+        results.push(path);
     }
+
+    thread_handle.join().unwrap();
+
     results
 }
 
@@ -76,7 +97,14 @@ mod tests {
         let repositories = find_repositories(&[temp_dir.path()]);
 
         assert_eq!(repositories.len(), 2);
-        assert!(repositories.contains(&temp_dir.path().join("subdirectory").join("sub_subdirectory")));
+        assert!(
+            repositories.contains(
+                &temp_dir
+                    .path()
+                    .join("subdirectory")
+                    .join("sub_subdirectory")
+            )
+        );
         assert!(repositories.contains(&temp_dir.path().join("subdirectory")));
     }
 }
