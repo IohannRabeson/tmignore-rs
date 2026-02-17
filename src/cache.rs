@@ -1,13 +1,9 @@
-mod legacy_cache;
-
-pub use legacy_cache::LegacyCache;
-
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize};
+use crate::diff::Diff;
 
 pub struct Cache {
     file_path: PathBuf,
@@ -27,12 +23,6 @@ pub enum OpenOrCreateError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
-}
-
-#[derive(Default)]
-pub struct Diff {
-    pub added: BTreeSet<PathBuf>,
-    pub removed: BTreeSet<PathBuf>,
 }
 
 impl Cache {
@@ -87,6 +77,10 @@ impl Cache {
             diff.removed.insert(item.clone());
         }
         diff
+    }
+
+    pub fn paths(&self) -> impl Iterator<Item = &Path> {
+        self.paths.iter().map(|path| path.as_path())
     }
 }
 
