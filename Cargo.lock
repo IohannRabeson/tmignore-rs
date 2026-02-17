@@ -487,6 +487,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "crossbeam-channel",
+ "dirs",
  "ignore",
  "serde",
  "serde_json",

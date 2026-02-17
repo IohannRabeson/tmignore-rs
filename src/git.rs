@@ -19,7 +19,7 @@ pub fn find_repositories(
     }
 
     let ignored_directories = Arc::new(ignored_directories.clone());
-    let walker = create_walk_builder(directories).build_parallel();
+    let walker = create_walk_builder(directories, true).build_parallel();
     let (tx, rx) = crossbeam_channel::bounded(128);
     let thread_handle = std::thread::spawn(move || {
         walker.run(|| {
@@ -51,7 +51,7 @@ pub fn find_repositories(
     Some((rx, thread_handle))
 }
 
-fn create_walk_builder(directories: &BTreeSet<PathBuf>) -> ignore::WalkBuilder {
+fn create_walk_builder(directories: &BTreeSet<PathBuf>, ignore: bool) -> ignore::WalkBuilder {
     assert!(!directories.is_empty());
     let mut directories_iter = directories.iter();
     // Here it's guaranteed that directories contains something so we can unwrap
@@ -61,9 +61,52 @@ fn create_walk_builder(directories: &BTreeSet<PathBuf>) -> ignore::WalkBuilder {
         builder.add(directory);
     }
 
-    builder.hidden(false);
+    builder
+        .ignore(ignore)
+        .git_exclude(ignore)
+        .git_global(ignore)
+        .git_ignore(ignore)
+        .hidden(false);
 
     builder
+}
+
+pub fn find_ignored_files(repository_directory: &Path) -> Vec<PathBuf> {
+    let output = match std::process::Command::new("git")
+        .arg("-C")
+        .arg(repository_directory)
+        .arg("ls-files")
+        .arg("--directory")
+        .arg("--exclude-standard")
+        .arg("--ignored")
+        .arg("--others")
+        .arg("-z")
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("Failed to run git command: {}", error);
+            return vec![];
+        }
+    };
+
+    if !output.status.success() {
+        eprintln!(
+            "Git command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return vec![];
+    }
+
+    output.stdout
+        .split(|&b| b == 0)
+        .filter(|s| !s.is_empty())
+        .filter_map(|bytes| {
+            std::str::from_utf8(bytes)
+                .ok()
+                .map(|s| repository_directory.join(s))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -75,7 +118,7 @@ mod tests {
 
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::find_repositories::find_repositories;
+    use crate::git::find_repositories;
 
     fn find_repositories_vec(
         directories: &[impl AsRef<Path>],
