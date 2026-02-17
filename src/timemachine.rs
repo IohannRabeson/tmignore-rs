@@ -42,7 +42,11 @@ mod tests {
     #[test]
     fn test_add_exclusion() {
         let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(std::env::current_dir().unwrap().join("temp_dir_for_testing_test_add_exclusion"))
+            .root_folder(
+                std::env::current_dir()
+                    .unwrap()
+                    .join("temp_dir_for_testing_test_add_exclusion"),
+            )
             .add_empty_file("test.txt")
             .build()
             .unwrap();
@@ -55,7 +59,11 @@ mod tests {
     #[test]
     fn test_remove_exclusion() {
         let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(std::env::current_dir().unwrap().join("temp_dir_for_testing_test_remove_exclusion"))
+            .root_folder(
+                std::env::current_dir()
+                    .unwrap()
+                    .join("temp_dir_for_testing_test_remove_exclusion"),
+            )
             .add_empty_file("test.txt")
             .build()
             .unwrap();

@@ -1,15 +1,17 @@
 mod cache;
+mod legacy_cache;
 mod config;
+mod diff;
 mod git;
 mod timemachine;
 
-use std::error::Error;
+use std::{collections::BTreeSet, error::Error, path::Path};
 
 use clap::{Parser, Subcommand};
 
 use crate::{
-    cache::{Cache, LegacyCache, OpenOrCreate, OpenOrCreateError},
-    config::Config,
+    cache::{Cache, OpenOrCreate, OpenOrCreateError},
+    config::Config, legacy_cache::LegacyCache,
 };
 
 #[derive(Parser)]
@@ -21,7 +23,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Run{ 
+    Run {
         #[arg(short, long)]
         dry_run: bool,
     },
@@ -37,9 +39,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut cache = open_cache()?;
 
     match cli.command {
-        Commands::Run{ dry_run } => run_command::execute(&config, &mut cache, dry_run),
-        Commands::List => list_command::execute(&config),
-        Commands::Reset => reset_command::execute(&config),
+        Commands::Run { dry_run } => run_command::execute(&config, &mut cache, dry_run),
+        Commands::List => list_command::execute(&cache),
+        Commands::Reset => reset_command::execute(&mut cache),
     }?;
 
     cache.save_to_file()?;
@@ -79,12 +81,74 @@ fn open_cache() -> Result<Cache, OpenCacheError> {
     })
 }
 
+struct ApplyError<'a> {
+    error: std::io::Error,
+    path: &'a Path,
+    added: bool,
+}
+
+fn apply_diff_and_print<'a>(
+    diff: &'a crate::diff::Diff,
+    dry_run: bool,
+) -> Vec<&'a Path> {
+    let mut errors = Vec::new();
+    let mut add_failed_paths = BTreeSet::new();
+
+    for path in &diff.added {
+        if !dry_run {
+            if let Err(error) = timemachine::add_exclusion(path) {
+                add_failed_paths.insert(path);
+                errors.push(ApplyError {
+                    error,
+                    path,
+                    added: true,
+                });
+            }
+        }
+    }
+
+    for path in &diff.removed {
+        if !dry_run {
+            if let Err(error) = timemachine::remove_exclusion(path) {
+                errors.push(ApplyError {
+                    error,
+                    path,
+                    added: false,
+                });
+            }
+        }
+    }
+
+    for path in &diff.added {
+        if !add_failed_paths.contains(path) {
+            println!("+ {}", path.display());
+        }
+    }
+
+    for path in &diff.removed {
+        println!("- {}", path.display());
+    }
+
+    for error in &errors {
+        eprintln!("Error: {}: {}", error.path.display(), error.error)
+    }
+
+    errors.into_iter().filter(|error| error.added).map(|entry|entry.path).collect()
+}
+
 mod run_command {
-    use std::{collections::BTreeSet, error::Error};
+    use std::{
+        collections::BTreeSet,
+        error::Error,
+    };
 
-    use crate::{cache::Cache, config::Config, git, timemachine};
+    use crate::{cache::Cache, config::Config, git};
 
-    pub fn execute(config: &Config, cache: &mut Cache, dry_run: bool) -> Result<(), Box<dyn Error>> {
+    pub fn execute(
+        config: &Config,
+        cache: &mut Cache,
+        dry_run: bool,
+    ) -> Result<(), Box<dyn Error>> {
         let mut repositories = BTreeSet::new();
         let mut exclusions = BTreeSet::new();
 
@@ -104,24 +168,18 @@ mod run_command {
 
             println!("Found {} repositories", repositories.len());
 
+            if dry_run {
+                println!("Dry run mode enabled");
+            }
+
             let diff = cache.find_diff(&exclusions);
 
-            for path in &diff.added {
-                println!("+ {}", path.display());
-                if !dry_run {
-                    if let Err(error) = timemachine::add_exclusion(path) {
-                        eprintln!("Failed to add TimeMachine exclusion for '{}': {}", path.display(), error);
-                    }
-                }
+            let paths_failed_to_add = super::apply_diff_and_print(&diff, dry_run);
+
+            for path in paths_failed_to_add {
+                exclusions.remove(path);
             }
-            for path in &diff.removed {
-                println!("- {}", path.display());
-                if !dry_run {
-                    if let Err(error) = timemachine::remove_exclusion(path) {
-                        eprintln!("Failed to remove TimeMachine exclusion for '{}': {}", path.display(), error);
-                    }
-                }
-            }
+
             if !dry_run {
                 cache.write(exclusions);
             }
@@ -134,21 +192,28 @@ mod run_command {
 mod list_command {
     use std::error::Error;
 
-    use crate::config::Config;
+    use crate::cache::Cache;
 
-    pub fn execute(config: &Config) -> Result<(), Box<dyn Error>> {
-        println!("list");
+    pub fn execute(cache: &Cache) -> Result<(), Box<dyn Error>> {
+        for path in cache.paths() {
+            println!("{}", path.display());
+        }
         Ok(())
     }
 }
 
 mod reset_command {
-    use crate::config::Config;
+    use crate::cache::Cache;
 
-    use std::error::Error;
+    use std::{collections::BTreeSet, error::Error};
 
-    pub fn execute(config: &Config) -> Result<(), Box<dyn Error>> {
-        println!("reset");
+    pub fn execute(cache: &mut Cache) -> Result<(), Box<dyn Error>> {
+        let diff = cache.find_diff(&BTreeSet::new());
+
+        super::apply_diff_and_print(&diff, false);
+
+        cache.write([]);
+
         Ok(())
     }
 }
