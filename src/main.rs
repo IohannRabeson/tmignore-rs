@@ -1,6 +1,7 @@
 mod cache;
 mod config;
 mod git;
+mod timemachine;
 
 use std::error::Error;
 
@@ -20,7 +21,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Run,
+    Run{ 
+        #[arg(short, long)]
+        dry_run: bool,
+    },
     List,
     Reset,
 }
@@ -33,7 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut cache = open_cache()?;
 
     match cli.command {
-        Commands::Run => run_command::execute(&config, &mut cache),
+        Commands::Run{ dry_run } => run_command::execute(&config, &mut cache, dry_run),
         Commands::List => list_command::execute(&config),
         Commands::Reset => reset_command::execute(&config),
     }?;
@@ -54,6 +58,7 @@ enum OpenCacheError {
 }
 
 fn open_cache() -> Result<Cache, OpenCacheError> {
+    // ~/Library/Caches/tmignore-rs/cache.json
     let cache_file_path = dirs::cache_dir()
         .ok_or(OpenCacheError::NoCacheDirectory)?
         .join("tmignore-rs")
@@ -77,9 +82,9 @@ fn open_cache() -> Result<Cache, OpenCacheError> {
 mod run_command {
     use std::{collections::BTreeSet, error::Error};
 
-    use crate::{cache::Cache, config::Config, git};
+    use crate::{cache::Cache, config::Config, git, timemachine};
 
-    pub fn execute(config: &Config, cache: &mut Cache) -> Result<(), Box<dyn Error>> {
+    pub fn execute(config: &Config, cache: &mut Cache, dry_run: bool) -> Result<(), Box<dyn Error>> {
         let mut repositories = BTreeSet::new();
         let mut exclusions = BTreeSet::new();
 
@@ -103,12 +108,23 @@ mod run_command {
 
             for path in &diff.added {
                 println!("+ {}", path.display());
+                if !dry_run {
+                    if let Err(error) = timemachine::add_exclusion(path) {
+                        eprintln!("Failed to add TimeMachine exclusion for '{}': {}", path.display(), error);
+                    }
+                }
             }
             for path in &diff.removed {
                 println!("- {}", path.display());
+                if !dry_run {
+                    if let Err(error) = timemachine::remove_exclusion(path) {
+                        eprintln!("Failed to remove TimeMachine exclusion for '{}': {}", path.display(), error);
+                    }
+                }
             }
-
-            cache.write(exclusions);
+            if !dry_run {
+                cache.write(exclusions);
+            }
         }
 
         Ok(())

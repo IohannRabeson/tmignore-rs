@@ -98,7 +98,8 @@ pub fn find_ignored_files(repository_directory: &Path) -> Vec<PathBuf> {
         return vec![];
     }
 
-    output.stdout
+    output
+        .stdout
         .split(|&b| b == 0)
         .filter(|s| !s.is_empty())
         .filter_map(|bytes| {

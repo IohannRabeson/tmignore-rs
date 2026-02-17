@@ -58,7 +58,10 @@ impl Cache {
         let file = std::fs::File::open(file_path)?;
         let paths = serde_json::from_reader(file)?;
 
-        Ok(Cache { paths, file_path: file_path.to_path_buf() })
+        Ok(Cache {
+            paths,
+            file_path: file_path.to_path_buf(),
+        })
     }
 
     pub fn write(&mut self, iter: impl IntoIterator<Item = PathBuf>) {
