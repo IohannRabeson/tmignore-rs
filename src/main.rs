@@ -1,17 +1,18 @@
 mod cache;
-mod legacy_cache;
 mod config;
 mod diff;
 mod git;
+mod legacy_cache;
 mod timemachine;
 
 use std::{collections::BTreeSet, error::Error, path::Path};
-
 use clap::{Parser, Subcommand};
+use regex::RegexSet;
 
 use crate::{
     cache::{Cache, OpenOrCreate, OpenOrCreateError},
-    config::Config, legacy_cache::LegacyCache,
+    config::Config,
+    legacy_cache::LegacyCache,
 };
 
 #[derive(Parser)]
@@ -35,11 +36,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     const CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
 
     let cli = Cli::parse();
-    let config = Config::load_or_create_file(shellexpand::tilde(CONFIG_FILE_PATH).to_string())?;
+    let config_file_path = shellexpand::tilde(CONFIG_FILE_PATH).to_string();
+    let config = Config::load_or_create_file(config_file_path)?;
     let mut cache = open_cache()?;
+    let whitelist = RegexSet::new(config.whitelist_patterns.iter().filter_map(|pattern|{
+        match fnmatch_regex::glob_to_regex_pattern(pattern) {
+            Ok(pattern) => Some(pattern),
+            Err(error) => {
+                eprintln!("Invalid whitelist pattern '{}': {}", pattern, error);
+                None
+            },
+        }
+    }))?;
 
     match cli.command {
-        Commands::Run { dry_run } => run_command::execute(&config, &mut cache, dry_run),
+        Commands::Run { dry_run } => run_command::execute(&config, &mut cache, dry_run, &whitelist),
         Commands::List => list_command::execute(&cache),
         Commands::Reset => reset_command::execute(&mut cache),
     }?;
@@ -87,10 +98,7 @@ struct ApplyError<'a> {
     added: bool,
 }
 
-fn apply_diff_and_print<'a>(
-    diff: &'a crate::diff::Diff,
-    dry_run: bool,
-) -> Vec<&'a Path> {
+fn apply_diff_and_print<'a>(diff: &'a crate::diff::Diff, dry_run: bool) -> Vec<&'a Path> {
     let mut errors = Vec::new();
     let mut add_failed_paths = BTreeSet::new();
 
@@ -133,14 +141,17 @@ fn apply_diff_and_print<'a>(
         eprintln!("Error: {}: {}", error.path.display(), error.error)
     }
 
-    errors.into_iter().filter(|error| error.added).map(|entry|entry.path).collect()
+    errors
+        .into_iter()
+        .filter(|error| error.added)
+        .map(|entry| entry.path)
+        .collect()
 }
 
 mod run_command {
-    use std::{
-        collections::BTreeSet,
-        error::Error,
-    };
+    use std::{collections::BTreeSet, error::Error};
+
+    use regex::RegexSet;
 
     use crate::{cache::Cache, config::Config, git};
 
@@ -148,6 +159,7 @@ mod run_command {
         config: &Config,
         cache: &mut Cache,
         dry_run: bool,
+        whitelist: &RegexSet,
     ) -> Result<(), Box<dyn Error>> {
         let mut repositories = BTreeSet::new();
         let mut exclusions = BTreeSet::new();
@@ -161,6 +173,11 @@ mod run_command {
                 let ignored_files = git::find_ignored_files(&repository_path);
 
                 for ignored_file in ignored_files {
+                    if let Some(ignored_file) = ignored_file.to_str()
+                        && whitelist.is_match(ignored_file)
+                    {
+                        continue;
+                    }
                     exclusions.insert(ignored_file);
                 }
             }
