@@ -64,6 +64,8 @@ impl Config {
 
             serde_json::to_writer_pretty(file, &default_config)?;
 
+            println!("Created configuration file '{}'", file_path.display());
+
             Ok(default_config)
         };
 
