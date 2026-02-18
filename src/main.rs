@@ -5,9 +5,9 @@ mod git;
 mod legacy_cache;
 mod timemachine;
 
-use std::{collections::BTreeSet, error::Error, path::Path};
 use clap::{Parser, Subcommand};
 use regex::RegexSet;
+use std::{collections::BTreeSet, error::Error, path::Path};
 
 use crate::{
     cache::{Cache, OpenOrCreate, OpenOrCreateError},
@@ -39,13 +39,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let config_file_path = shellexpand::tilde(CONFIG_FILE_PATH).to_string();
     let config = Config::load_or_create_file(config_file_path)?;
     let mut cache = open_cache()?;
-    let whitelist = RegexSet::new(config.whitelist_patterns.iter().filter_map(|pattern|{
+    let whitelist = RegexSet::new(config.whitelist_patterns.iter().filter_map(|pattern| {
         match fnmatch_regex::glob_to_regex_pattern(pattern) {
             Ok(pattern) => Some(pattern),
             Err(error) => {
                 eprintln!("Invalid whitelist pattern '{}': {}", pattern, error);
                 None
-            },
+            }
         }
     }))?;
 
@@ -98,32 +98,28 @@ struct ApplyError<'a> {
     added: bool,
 }
 
-fn apply_diff_and_print<'a>(diff: &'a crate::diff::Diff, dry_run: bool) -> Vec<&'a Path> {
+fn apply_diff_and_print(diff: &crate::diff::Diff, dry_run: bool) -> Vec<&Path> {
     let mut errors = Vec::new();
     let mut add_failed_paths = BTreeSet::new();
 
     for path in &diff.added {
-        if !dry_run {
-            if let Err(error) = timemachine::add_exclusion(path) {
-                add_failed_paths.insert(path);
-                errors.push(ApplyError {
-                    error,
-                    path,
-                    added: true,
-                });
-            }
+        if !dry_run && let Err(error) = timemachine::add_exclusion(path) {
+            add_failed_paths.insert(path);
+            errors.push(ApplyError {
+                error,
+                path,
+                added: true,
+            });
         }
     }
 
     for path in &diff.removed {
-        if !dry_run {
-            if let Err(error) = timemachine::remove_exclusion(path) {
-                errors.push(ApplyError {
-                    error,
-                    path,
-                    added: false,
-                });
-            }
+        if !dry_run && let Err(error) = timemachine::remove_exclusion(path) {
+            errors.push(ApplyError {
+                error,
+                path,
+                added: false,
+            });
         }
     }
 
