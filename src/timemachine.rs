@@ -1,7 +1,7 @@
 use std::path::Path;
 
 const XATTR_NAME: &str = "com.apple.metadata:com_apple_backup_excludeItem";
-const XATTR_VALUE: &[u8] = b"com.apple.backupd";
+const XATTR_VALUE: &[u8] = b"bplist00_com.apple.backupd";
 
 pub fn add_exclusion(path: impl AsRef<Path>) -> Result<(), std::io::Error> {
     xattr::set(path.as_ref(), XATTR_NAME, XATTR_VALUE)?;
