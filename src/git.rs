@@ -11,6 +11,7 @@ use crossbeam_channel::Receiver;
 pub fn find_repositories(
     directories: &BTreeSet<PathBuf>,
     ignored_directories: &BTreeSet<PathBuf>,
+    threads: usize,
 ) -> Option<(Receiver<PathBuf>, JoinHandle<()>)> {
     const DOT_GIT_DIRECTORY_NAME: &str = ".git";
 
@@ -19,7 +20,9 @@ pub fn find_repositories(
     }
 
     let ignored_directories = Arc::new(ignored_directories.clone());
-    let walker = create_walk_builder(directories, true).build_parallel();
+    let walker = create_walk_builder(directories, true)
+        .threads(threads)
+        .build_parallel();
     let (tx, rx) = crossbeam_channel::bounded(128);
     let thread_handle = std::thread::spawn(move || {
         walker.run(|| {
@@ -128,7 +131,7 @@ mod tests {
         let mut results = vec![];
         let directories =
             BTreeSet::from_iter(directories.iter().map(AsRef::as_ref).map(Path::to_path_buf));
-        match find_repositories(&directories, ignored_directories) {
+        match find_repositories(&directories, ignored_directories, 0) {
             Some((rx, thread_handle)) => {
                 while let Ok(path) = rx.recv() {
                     results.push(path);

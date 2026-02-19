@@ -15,6 +15,7 @@ pub struct Config {
     pub ignored_directories: BTreeSet<PathBuf>,
     #[serde(rename = "whitelist")]
     pub whitelist_patterns: BTreeSet<String>,
+    pub threads: Option<usize>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -117,6 +118,7 @@ impl Default for Config {
                 "~/Pictures/Photos Library.photoslibrary".into(),
             ]),
             whitelist_patterns: BTreeSet::new(),
+            threads: Some(4),
         }
     }
 }

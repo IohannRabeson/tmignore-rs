@@ -48,9 +48,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }))?;
+    let threads = config.threads.unwrap_or(0);
 
     match cli.command {
-        Commands::Run { dry_run } => run_command::execute(&config, &mut cache, dry_run, &whitelist),
+        Commands::Run { dry_run } => {
+            run_command::execute(&config, &mut cache, dry_run, &whitelist, threads)
+        }
         Commands::List => list_command::execute(&cache),
         Commands::Reset => reset_command::execute(&mut cache),
     }?;
@@ -156,13 +159,16 @@ mod run_command {
         cache: &mut Cache,
         dry_run: bool,
         whitelist: &RegexSet,
+        threads: usize,
     ) -> Result<(), Box<dyn Error>> {
         let mut repositories = BTreeSet::new();
         let mut exclusions = BTreeSet::new();
 
-        if let Some((rx, thread_handle)) =
-            git::find_repositories(&config.search_directories, &config.ignored_directories)
-        {
+        if let Some((rx, thread_handle)) = git::find_repositories(
+            &config.search_directories,
+            &config.ignored_directories,
+            threads,
+        ) {
             while let Ok(repository_path) = rx.recv() {
                 repositories.insert(repository_path.clone());
 

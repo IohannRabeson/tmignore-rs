@@ -13,8 +13,7 @@ tmignore-rs run --help
 ```
 ## Configuration
 The configuration file is located at `~/.config/tmignore/config.json`.
-Here is the default configuration created automatically the first time
-you run tmignore-rs.
+Here is the default configuration created automatically the first time you run tmignore-rs.
 ```
 {
   "searchPaths": [
@@ -29,10 +28,20 @@ you run tmignore-rs.
     "~/Music/Music",
     "~/Pictures/Photos Library.photoslibrary"
   ],
-  "whitelist": []
+  "whitelist": [],
+  "threads": 4
 }
 ```
-### Whitelist
+### `searchPaths`
+The list of the directories to scan.
+
+### `ignoredPaths`
+The list of directories to ignore.
+
+### `threads`
+The `threads` parameter is optional, if missing the value 0 is used. 0 means the count of threads is not limited.
+
+### `whitelist`
 The `whitelist` array expects glob-style patterns. See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
 
 ## tmignore support
