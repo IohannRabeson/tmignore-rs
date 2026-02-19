@@ -30,6 +30,10 @@ enum Commands {
     },
     List,
     Reset,
+    Monitor {
+        #[arg(short, long)]
+        dry_run: bool,
+    },
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -37,28 +41,18 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let cli = Cli::parse();
     let config_file_path = shellexpand::tilde(CONFIG_FILE_PATH).to_string();
-    let config = Config::load_or_create_file(config_file_path)?;
     let mut cache = open_cache()?;
-    let whitelist = RegexSet::new(config.whitelist_patterns.iter().filter_map(|pattern| {
-        match fnmatch_regex::glob_to_regex_pattern(pattern) {
-            Ok(pattern) => Some(pattern),
-            Err(error) => {
-                eprintln!("Invalid whitelist pattern '{}': {}", pattern, error);
-                None
-            }
-        }
-    }))?;
-    let threads = config.threads.unwrap_or(0);
 
     match cli.command {
         Commands::Run { dry_run } => {
-            run_command::execute(&config, &mut cache, dry_run, &whitelist, threads)
-        }
-        Commands::List => list_command::execute(&cache),
-        Commands::Reset => reset_command::execute(&mut cache),
-    }?;
+            let config = Config::load_or_create_file(&config_file_path)?;
 
-    cache.save_to_file()?;
+            run_command::execute(&config, &mut cache, dry_run)
+        }
+        Commands::List => list_command::execute(cache),
+        Commands::Reset => reset_command::execute(cache),
+        Commands::Monitor { dry_run } => monitor_command::execute(&config_file_path, &mut cache, dry_run),
+    }?;
 
     Ok(())
 }
@@ -158,16 +152,23 @@ mod run_command {
         config: &Config,
         cache: &mut Cache,
         dry_run: bool,
-        whitelist: &RegexSet,
-        threads: usize,
     ) -> Result<(), Box<dyn Error>> {
+        let whitelist = RegexSet::new(config.whitelist_patterns.iter().filter_map(|pattern| {
+            match fnmatch_regex::glob_to_regex_pattern(pattern) {
+                Ok(pattern) => Some(pattern),
+                Err(error) => {
+                    eprintln!("Invalid whitelist pattern '{}': {}", pattern, error);
+                    None
+                }
+            }
+        }))?;
         let mut repositories = BTreeSet::new();
         let mut exclusions = BTreeSet::new();
 
         if let Some((rx, thread_handle)) = git::find_repositories(
             &config.search_directories,
             &config.ignored_directories,
-            threads,
+            config.threads.unwrap_or_default(),
         ) {
             while let Ok(repository_path) = rx.recv() {
                 repositories.insert(repository_path.clone());
@@ -201,6 +202,7 @@ mod run_command {
 
             if !dry_run {
                 cache.write(exclusions);
+                cache.save_to_file()?;
             }
         }
 
@@ -213,7 +215,7 @@ mod list_command {
 
     use crate::cache::Cache;
 
-    pub fn execute(cache: &Cache) -> Result<(), Box<dyn Error>> {
+    pub fn execute(cache: Cache) -> Result<(), Box<dyn Error>> {
         for path in cache.paths() {
             println!("{}", path.display());
         }
@@ -226,13 +228,98 @@ mod reset_command {
 
     use std::{collections::BTreeSet, error::Error};
 
-    pub fn execute(cache: &mut Cache) -> Result<(), Box<dyn Error>> {
+    pub fn execute(mut cache: Cache) -> Result<(), Box<dyn Error>> {
         let diff = cache.find_diff(&BTreeSet::new());
 
         super::apply_diff_and_print(&diff, false);
 
         cache.write([]);
+        cache.save_to_file()?;
 
         Ok(())
+    }
+}
+
+mod monitor_command {
+    use std::{error::Error, path::{Path, PathBuf}, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}};
+
+    use crossbeam_channel::Sender;
+    use notify::Watcher;
+
+    use crate::{cache::Cache, config::Config};
+
+    struct EventHandler {
+        sender: Sender<notify::Result<notify::Event>>,
+    }
+
+    impl EventHandler {
+        fn new(sender: Sender<notify::Result<notify::Event>>) -> Self {
+            Self {
+                sender
+            }
+        }
+    }
+
+    impl notify::EventHandler for EventHandler {
+        fn handle_event(&mut self, event: notify::Result<notify::Event>) {
+            let _ = self.sender.send(event);
+        }
+    }
+
+    pub fn execute(config_file_path: impl AsRef<Path>, cache: &mut Cache, dry_run: bool) -> Result<(), Box<dyn Error>>{
+        let config = Config::load_or_create_file(config_file_path)?;
+        let signal = Arc::new(AtomicBool::new(false));
+        signal_hook::flag::register(signal_hook::consts::SIGTERM, signal.clone())?;
+        signal_hook::flag::register(signal_hook::consts::SIGINT, signal.clone())?;
+        let (fs_event_sender, fs_event_receiver) = crossbeam_channel::bounded::<notify::Result<notify::Event>>(256);
+        let watcher = create_watcher(fs_event_sender, config.search_directories.iter());
+        let run_interval = Duration::from_secs(5);
+        let mut elapsed = Duration::ZERO;
+        let mut now = Instant::now();
+        let mut need_to_run = false;
+
+        while !signal.load(std::sync::atomic::Ordering::Relaxed) {
+            match fs_event_receiver.recv_timeout(Duration::from_millis(250)) {
+                Ok(event) => {
+                    if let Ok(event) = event && config.ignored_directories.iter().all(|ignored_directory|{
+                        for path in &event.paths {
+                            if path.starts_with(ignored_directory) {
+                                return false
+                            }
+                        }
+
+                        true
+                    }) {
+                        need_to_run = true;
+                    }
+                },
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => (),
+                Err(error) => return Err(Box::new(error))
+            }
+
+            elapsed += Instant::now() - now;
+            now = Instant::now();
+
+            if need_to_run && elapsed >= run_interval {
+                need_to_run = false;
+                elapsed = Duration::ZERO;
+                crate::run_command::execute(&config, cache, dry_run)?;
+            }
+        }
+        println!("Stop gracefully");
+        Ok(())
+    }
+
+    fn create_watcher<'a>(sender: Sender<notify::Result<notify::Event>>, search_directories: impl Iterator<Item = &'a PathBuf>) -> notify::Result<notify::RecommendedWatcher> {
+        let mut watcher = notify::recommended_watcher(EventHandler::new(sender))?;
+        let mut watcher_paths = watcher.paths_mut();
+
+        for directory_path in search_directories {
+            watcher_paths.add(directory_path, notify::RecursiveMode::Recursive)?;
+        }
+
+        watcher_paths.commit()?;
+
+        Ok(watcher)
     }
 }

@@ -34,6 +34,8 @@ pub enum ValidationError {
     FileInSearchPaths(PathBuf),
     #[error("File in ignoredPaths: {0}")]
     FileInIgnoredPaths(PathBuf),
+    #[error("No search directories")]
+    NoSearchDirectories,
 }
 
 fn expand_paths(paths: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
@@ -98,6 +100,10 @@ impl Config {
             if path.is_file() {
                 return Err(ValidationError::FileInIgnoredPaths(path.clone()));
             }
+        }
+
+        if config.search_directories.is_empty() {
+            return Err(ValidationError::NoSearchDirectories);
         }
 
         Ok(())
