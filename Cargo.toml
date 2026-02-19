@@ -8,7 +8,8 @@ edition = "2024"
 clap = { version = "4.5", features = ["derive"] }
 crossbeam-channel = "0.5.15"
 dirs = "6.0.0"
-fnmatch-regex = { git = "https://gitlab.com/IohannRabeson/fnmatch-regex-rs", rev = "362076db8862caea87db07ed8945684a642e97d5"}
+# 18 fev 2026: check later if the crate on crates.io has been updated 
+fnmatch-regex = { git = "https://gitlab.com/ppentchev/fnmatch-regex-rs", rev = "0553693d62b2d1cc3f4630b350a87beb7d5cf82b"}
 ignore = { version = "0.4", features = ["simd-accel"] }
 regex = "1.12.3"
 serde = { version = "1", features = ["derive"] }

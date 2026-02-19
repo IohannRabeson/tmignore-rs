@@ -208,13 +208,12 @@ dependencies = [
 
 [[package]]
 name = "fnmatch-regex"
-version = "0.2.1"
-source = "git+https://gitlab.com/IohannRabeson/fnmatch-regex-rs?rev=362076db8862caea87db07ed8945684a642e97d5#362076db8862caea87db07ed8945684a642e97d5"
+version = "0.3.0"
+source = "git+https://gitlab.com/ppentchev/fnmatch-regex-rs?rev=0553693d62b2d1cc3f4630b350a87beb7d5cf82b#0553693d62b2d1cc3f4630b350a87beb7d5cf82b"
 dependencies = [
  "anyhow",
  "itertools",
  "regex",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -401,7 +400,7 @@ checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
 dependencies = [
  "getrandom",
  "libredox",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -531,16 +530,7 @@ source = "git+https://github.com/IohannRabeson/temp-dir-builder?rev=0eb3527#0eb3
 dependencies = [
  "path-clean",
  "rand",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -549,18 +539,7 @@ version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl 2.0.18",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -588,7 +567,7 @@ dependencies = [
  "serde_json",
  "shellexpand",
  "temp-dir-builder",
- "thiserror 2.0.18",
+ "thiserror",
  "xattr",
 ]
 
