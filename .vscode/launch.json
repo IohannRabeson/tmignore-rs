@@ -18,6 +18,18 @@
             "args": ["run"]
         },
         {
+            "name": "Debug monitor command",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "run",
+                    "--bin=tmignore-rs"
+                ]
+            },
+            "args": ["monitor"]
+        },
+        {
             "name": "Debug unit tests in executable 'tmignore-rs'",
             "type": "lldb",
             "request": "launch",
