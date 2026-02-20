@@ -6,7 +6,6 @@ mod legacy_cache;
 mod timemachine;
 
 use clap::{Parser, Subcommand};
-use regex::RegexSet;
 use std::{collections::BTreeSet, error::Error, path::Path};
 
 use crate::{
@@ -51,7 +50,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::List => list_command::execute(cache),
         Commands::Reset => reset_command::execute(cache),
-        Commands::Monitor { dry_run } => monitor_command::execute(&config_file_path, &mut cache, dry_run),
+        Commands::Monitor { dry_run } => {
+            monitor_command::execute(&config_file_path, &mut cache, dry_run)
+        }
     }?;
 
     Ok(())
@@ -241,7 +242,12 @@ mod reset_command {
 }
 
 mod monitor_command {
-    use std::{error::Error, path::{Path, PathBuf}, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}};
+    use std::{
+        error::Error,
+        path::{Path, PathBuf},
+        sync::{Arc, atomic::AtomicBool},
+        time::{Duration, Instant},
+    };
 
     use crossbeam_channel::Sender;
     use notify::Watcher;
@@ -254,9 +260,7 @@ mod monitor_command {
 
     impl EventHandler {
         fn new(sender: Sender<notify::Result<notify::Event>>) -> Self {
-            Self {
-                sender
-            }
+            Self { sender }
         }
     }
 
@@ -266,13 +270,19 @@ mod monitor_command {
         }
     }
 
-    pub fn execute(config_file_path: impl AsRef<Path>, cache: &mut Cache, dry_run: bool) -> Result<(), Box<dyn Error>>{
-        let config = Config::load_or_create_file(config_file_path)?;
+    pub fn execute(
+        config_file_path: impl AsRef<Path>,
+        cache: &mut Cache,
+        dry_run: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        let config_file_path = config_file_path.as_ref().to_path_buf();
+        let mut config = Config::load_or_create_file(&config_file_path)?;
         let signal = Arc::new(AtomicBool::new(false));
         signal_hook::flag::register(signal_hook::consts::SIGTERM, signal.clone())?;
         signal_hook::flag::register(signal_hook::consts::SIGINT, signal.clone())?;
-        let (fs_event_sender, fs_event_receiver) = crossbeam_channel::bounded::<notify::Result<notify::Event>>(256);
-        let watcher = create_watcher(fs_event_sender, config.search_directories.iter());
+        let (fs_event_sender, fs_event_receiver) =
+            crossbeam_channel::bounded::<notify::Result<notify::Event>>(256);
+        let _watcher = create_watcher(fs_event_sender, config.search_directories.iter());
         let run_interval = Duration::from_secs(5);
         let mut elapsed = Duration::ZERO;
         let mut now = Instant::now();
@@ -281,20 +291,21 @@ mod monitor_command {
         while !signal.load(std::sync::atomic::Ordering::Relaxed) {
             match fs_event_receiver.recv_timeout(Duration::from_millis(250)) {
                 Ok(event) => {
-                    if let Ok(event) = event && config.ignored_directories.iter().all(|ignored_directory|{
-                        for path in &event.paths {
-                            if path.starts_with(ignored_directory) {
-                                return false
-                            }
+                    if let Ok(event) = event {
+                        if matches!(event.kind, notify::EventKind::Modify(notify::event::ModifyKind::Data(_)))
+                            && event.paths.contains(&config_file_path)
+                        {
+                            config.reload(&config_file_path)?;
+                            println!("Config reloaded");
                         }
 
-                        true
-                    }) {
-                        need_to_run = true;
+                        if filter_event(&config, &event) {
+                            need_to_run = true;
+                        }
                     }
-                },
+                }
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => (),
-                Err(error) => return Err(Box::new(error))
+                Err(error) => return Err(Box::new(error)),
             }
 
             elapsed += Instant::now() - now;
@@ -310,7 +321,22 @@ mod monitor_command {
         Ok(())
     }
 
-    fn create_watcher<'a>(sender: Sender<notify::Result<notify::Event>>, search_directories: impl Iterator<Item = &'a PathBuf>) -> notify::Result<notify::RecommendedWatcher> {
+    fn filter_event(config: &Config, event: &notify::Event) -> bool {
+        config.ignored_directories.iter().all(|ignored_directory| {
+            for path in &event.paths {
+                if path.starts_with(ignored_directory) {
+                    return false;
+                }
+            }
+
+            true
+        })
+    }
+
+    fn create_watcher<'a>(
+        sender: Sender<notify::Result<notify::Event>>,
+        search_directories: impl Iterator<Item = &'a PathBuf>,
+    ) -> notify::Result<notify::RecommendedWatcher> {
         let mut watcher = notify::recommended_watcher(EventHandler::new(sender))?;
         let mut watcher_paths = watcher.paths_mut();
 

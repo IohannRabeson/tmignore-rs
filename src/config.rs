@@ -73,13 +73,16 @@ impl Config {
         };
 
         if let Ok(config) = config.as_mut() {
-            config.search_directories = expand_paths(&config.search_directories);
-            config.ignored_directories = expand_paths(&config.ignored_directories);
-
+            Self::expand(config);
             Self::validate(config)?;
         }
 
         config
+    }
+
+    fn expand(config: &mut Config) {
+        config.search_directories = expand_paths(&config.search_directories);
+        config.ignored_directories = expand_paths(&config.ignored_directories);
     }
 
     fn load_from_file(file_path: impl AsRef<Path>) -> Result<Self, LoadFromFileError> {
@@ -106,6 +109,13 @@ impl Config {
             return Err(ValidationError::NoSearchDirectories);
         }
 
+        Ok(())
+    }
+
+    pub fn reload(&mut self, file_path: impl AsRef<Path>) -> Result<(), LoadFromFileError> {
+        *self = Self::load_from_file(file_path)?;
+        Self::expand(self);
+        Self::validate(self)?;
         Ok(())
     }
 }
