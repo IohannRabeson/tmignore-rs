@@ -32,16 +32,17 @@ pub fn find_repositories(
             Box::new(move |entry| {
                 use ignore::WalkState;
                 if let Ok(entry) = entry
-                    && entry.path().is_dir() {
-                        if ignored_directories.contains(entry.path()) {
-                            return WalkState::Skip;
-                        }
-                        if entry.file_name() == OsStr::new(DOT_GIT_DIRECTORY_NAME)
-                            && let Some(parent) = entry.path().parent()
-                        {
-                            tx.send(parent.to_path_buf()).unwrap();
-                        }
+                    && entry.path().is_dir()
+                {
+                    if ignored_directories.contains(entry.path()) {
+                        return WalkState::Skip;
                     }
+                    if entry.file_name() == OsStr::new(DOT_GIT_DIRECTORY_NAME)
+                        && let Some(parent) = entry.path().parent()
+                    {
+                        tx.send(parent.to_path_buf()).unwrap();
+                    }
+                }
 
                 WalkState::Continue
             })

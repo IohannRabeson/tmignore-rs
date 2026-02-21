@@ -23,15 +23,28 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Scan for paths to add or remove from the backup exclusion list
     Run {
-        #[arg(short, long)]
+        #[arg(long)]
         dry_run: bool,
+        #[arg(long)]
+        details: bool,
     },
+    /// Print the backup exclusion list
     List,
-    Reset,
-    Monitor {
-        #[arg(short, long)]
+    /// Reset the backup exclusion list
+    Reset {
+        #[arg(long)]
         dry_run: bool,
+        #[arg(long)]
+        details: bool,
+    },
+    /// Monitor for changes and update the backup exclusion list periodically
+    Monitor {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        details: bool,
     },
 }
 
@@ -43,15 +56,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut cache = open_cache()?;
 
     match cli.command {
-        Commands::Run { dry_run } => {
+        Commands::Run { dry_run, details } => {
             let config = Config::load_or_create_file(&config_file_path)?;
 
-            run_command::execute(&config, &mut cache, dry_run)
+            run_command::execute(&config, &mut cache, dry_run, details)
         }
         Commands::List => list_command::execute(cache),
-        Commands::Reset => reset_command::execute(cache),
-        Commands::Monitor { dry_run } => {
-            monitor_command::execute(&config_file_path, &mut cache, dry_run)
+        Commands::Reset { dry_run, details } => reset_command::execute(cache, dry_run, details),
+        Commands::Monitor { dry_run, details } => {
+            monitor_command::execute(&config_file_path, &mut cache, dry_run, details)
         }
     }?;
 
@@ -96,7 +109,11 @@ struct ApplyError<'a> {
     added: bool,
 }
 
-fn apply_diff_and_print(diff: &crate::diff::Diff, dry_run: bool) -> Vec<&Path> {
+fn apply_diff_and_print(diff: &crate::diff::Diff, dry_run: bool, details: bool) -> Vec<&Path> {
+    if dry_run {
+        println!("Dry run mode enabled");
+    }
+
     let mut errors = Vec::new();
     let mut add_failed_paths = BTreeSet::new();
 
@@ -121,14 +138,36 @@ fn apply_diff_and_print(diff: &crate::diff::Diff, dry_run: bool) -> Vec<&Path> {
         }
     }
 
-    for path in &diff.added {
-        if !add_failed_paths.contains(path) {
-            println!("+ {}", path.display());
+    let add_count = diff.added.len() - add_failed_paths.len();
+    let remove_count = diff.removed.len();
+
+    if add_count > 0 {
+        println!("Added {} paths to the backup exclusion list", add_count);
+    }
+
+    if remove_count > 0 {
+        println!(
+            "Removed {} paths from the backup exclusion list",
+            remove_count
+        );
+    }
+
+    if add_count == 0 && remove_count == 0 {
+        println!("No changes to the backup exclusion list")
+    }
+
+    if details {
+        for path in &diff.added {
+            if !add_failed_paths.contains(path) {
+                println!("+ {}", path.display());
+            }
         }
     }
 
-    for path in &diff.removed {
-        println!("- {}", path.display());
+    if details {
+        for path in &diff.removed {
+            println!("- {}", path.display());
+        }
     }
 
     for error in &errors {
@@ -153,6 +192,7 @@ mod run_command {
         config: &Config,
         cache: &mut Cache,
         dry_run: bool,
+        details: bool,
     ) -> Result<(), Box<dyn Error>> {
         let whitelist = RegexSet::new(config.whitelist_patterns.iter().filter_map(|pattern| {
             match fnmatch_regex::glob_to_regex_pattern(pattern) {
@@ -189,13 +229,9 @@ mod run_command {
 
             println!("Found {} repositories", repositories.len());
 
-            if dry_run {
-                println!("Dry run mode enabled");
-            }
-
             let diff = cache.find_diff(&exclusions);
 
-            let paths_failed_to_add = super::apply_diff_and_print(&diff, dry_run);
+            let paths_failed_to_add = super::apply_diff_and_print(&diff, dry_run, details);
 
             for path in paths_failed_to_add {
                 exclusions.remove(path);
@@ -229,10 +265,10 @@ mod reset_command {
 
     use std::{collections::BTreeSet, error::Error};
 
-    pub fn execute(mut cache: Cache) -> Result<(), Box<dyn Error>> {
+    pub fn execute(mut cache: Cache, dry_run: bool, details: bool) -> Result<(), Box<dyn Error>> {
         let diff = cache.find_diff(&BTreeSet::new());
 
-        super::apply_diff_and_print(&diff, false);
+        super::apply_diff_and_print(&diff, dry_run, details);
 
         if !dry_run {
             cache.write([]);
@@ -276,6 +312,7 @@ mod monitor_command {
         config_file_path: impl AsRef<Path>,
         cache: &mut Cache,
         dry_run: bool,
+        details: bool,
     ) -> Result<(), Box<dyn Error>> {
         let config_file_path = config_file_path.as_ref().to_path_buf();
         let mut config = Config::load_or_create_file(&config_file_path)?;
@@ -294,10 +331,12 @@ mod monitor_command {
             match fs_event_receiver.recv_timeout(Duration::from_millis(250)) {
                 Ok(event) => {
                     if let Ok(event) = event {
-                        if matches!(event.kind, notify::EventKind::Modify(notify::event::ModifyKind::Data(_)))
-                            && event.paths.contains(&config_file_path)
+                        if matches!(
+                            event.kind,
+                            notify::EventKind::Modify(notify::event::ModifyKind::Data(_))
+                        ) && event.paths.contains(&config_file_path)
                         {
-                            config.reload(&config_file_path)?;
+                            config.reload_file(&config_file_path)?;
                             println!("Config reloaded");
                         }
 
@@ -316,7 +355,7 @@ mod monitor_command {
             if need_to_run && elapsed >= run_interval {
                 need_to_run = false;
                 elapsed = Duration::ZERO;
-                crate::run_command::execute(&config, cache, dry_run)?;
+                crate::run_command::execute(&config, cache, dry_run, details)?;
             }
         }
         println!("Stop gracefully");
