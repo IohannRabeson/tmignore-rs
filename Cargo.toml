@@ -22,3 +22,8 @@ xattr = "1.6.1"
 
 [dev-dependencies]
 temp-dir-builder = { git = "https://github.com/IohannRabeson/temp-dir-builder", rev = "0eb3527" }
+
+# Usage: cargo run --profile=release-with-debug
+[profile.release-with-debug]
+inherits = "release"
+debug = true
