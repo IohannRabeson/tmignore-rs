@@ -234,8 +234,10 @@ mod reset_command {
 
         super::apply_diff_and_print(&diff, false);
 
-        cache.write([]);
-        cache.save_to_file()?;
+        if !dry_run {
+            cache.write([]);
+            cache.save_to_file()?;
+        }
 
         Ok(())
     }
