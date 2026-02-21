@@ -379,7 +379,7 @@ mod monitor_command {
                             println!("Configuration reloaded");
                         }
 
-                        if filter_event(&config, &event) {
+                        if accept_event(&config, &event) {
                             need_to_run = true;
                         }
                     }
@@ -401,7 +401,14 @@ mod monitor_command {
         Ok(())
     }
 
-    fn filter_event(config: &Config, event: &notify::Event) -> bool {
+    fn accept_event(config: &Config, event: &notify::Event) -> bool {
+        match &event.kind {
+            notify::EventKind::Create(_) => (),
+            notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => (),
+            notify::EventKind::Remove(_) => (),
+            _ => return false,
+        }
+
         config.ignored_directories.iter().all(|ignored_directory| {
             for path in &event.paths {
                 if path.starts_with(ignored_directory) {
