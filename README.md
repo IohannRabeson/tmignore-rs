@@ -42,7 +42,11 @@ The list of directories to ignore.
 The `threads` parameter is optional, if missing the value 0 is used. 0 means the count of threads is not limited.
 
 ### `whitelist`
-The `whitelist` array expects glob-style patterns. See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
+The `whitelist` array expects glob-style patterns:  
+ - `*.broguerec` matches all files with the `.broguerec` extension
+ - `*/BrogueRunHistory.txt` matches all files named `BrogueRunHistory.txt`
+See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
+
 
 ## tmignore support
 This tool is a drop-in replacement for [tmignore](https://github.com/samuelmeuli/tmignore). It will import the tmignore cache the first time it will launched.
