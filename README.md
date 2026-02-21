@@ -1,5 +1,7 @@
 # tmignore-rs
 Makes Time Machine respect .gitignore files
+This tool is a drop-in replacement for [tmignore](https://github.com/samuelmeuli/tmignore). 
+It will import the tmignore cache the first time it will launched.
 
 ## How to use it
 ```
@@ -9,7 +11,6 @@ You can use `run --dry-run` to check which files will be excluded from backups.
 You can get help using `--help`:
 ```
 tmignore-rs --help
-tmignore-rs run --help
 ```
 ## Configuration
 The configuration file is located at `~/.config/tmignore/config.json`.
@@ -46,7 +47,3 @@ The `whitelist` array expects glob-style patterns:
  - `*.broguerec` matches all files with the `.broguerec` extension
  - `*/BrogueRunHistory.txt` matches all files named `BrogueRunHistory.txt`
 See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
-
-
-## tmignore support
-This tool is a drop-in replacement for [tmignore](https://github.com/samuelmeuli/tmignore). It will import the tmignore cache the first time it will launched.
