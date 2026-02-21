@@ -57,14 +57,21 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match cli.command {
         Commands::Run { dry_run, details } => {
+            let mut logger = Logger::new(dry_run);
             let config = Config::load_or_create_file(&config_file_path)?;
 
-            run_command::execute(&config, &mut cache, dry_run, details)
+            run_command::execute(&config, &mut cache, dry_run, details, &mut logger)
         }
         Commands::List => list_command::execute(cache),
-        Commands::Reset { dry_run, details } => reset_command::execute(cache, dry_run, details),
+        Commands::Reset { dry_run, details } => {
+            let mut logger = Logger::new(dry_run);
+
+            reset_command::execute(cache, dry_run, details, &mut logger)
+        }
         Commands::Monitor { dry_run, details } => {
-            monitor_command::execute(&config_file_path, &mut cache, dry_run, details)
+            let mut logger = Logger::new(dry_run);
+
+            monitor_command::execute(&config_file_path, &mut cache, dry_run, details, &mut logger)
         }
     }?;
 
@@ -109,11 +116,12 @@ struct ApplyError<'a> {
     added: bool,
 }
 
-fn apply_diff_and_print(diff: &crate::diff::Diff, dry_run: bool, details: bool) -> Vec<&Path> {
-    if dry_run {
-        println!("Dry run mode enabled");
-    }
-
+fn apply_diff_and_print<'a>(
+    diff: &'a crate::diff::Diff,
+    dry_run: bool,
+    details: bool,
+    logger: &mut Logger,
+) -> Vec<&'a Path> {
     let mut errors = Vec::new();
     let mut add_failed_paths = BTreeSet::new();
 
@@ -142,36 +150,39 @@ fn apply_diff_and_print(diff: &crate::diff::Diff, dry_run: bool, details: bool) 
     let remove_count = diff.removed.len();
 
     if add_count > 0 {
-        println!("Added {} paths to the backup exclusion list", add_count);
+        logger.log(format!(
+            "Added {} paths to the backup exclusion list",
+            add_count
+        ));
     }
 
     if remove_count > 0 {
-        println!(
+        logger.log(format!(
             "Removed {} paths from the backup exclusion list",
             remove_count
-        );
+        ));
     }
 
     if add_count == 0 && remove_count == 0 {
-        println!("No changes to the backup exclusion list")
+        logger.log(format!("No changes to the backup exclusion list"));
     }
 
     if details {
         for path in &diff.added {
             if !add_failed_paths.contains(path) {
-                println!("+ {}", path.display());
+                logger.log(format!("+ {}", path.display()));
             }
         }
     }
 
     if details {
         for path in &diff.removed {
-            println!("- {}", path.display());
+            logger.log(format!("- {}", path.display()));
         }
     }
 
     for error in &errors {
-        eprintln!("Error: {}: {}", error.path.display(), error.error)
+        eprintln!("Error: {}: {}", error.path.display(), error.error);
     }
 
     errors
@@ -181,24 +192,43 @@ fn apply_diff_and_print(diff: &crate::diff::Diff, dry_run: bool, details: bool) 
         .collect()
 }
 
+struct Logger {
+    dry_run: bool,
+}
+
+impl Logger {
+    pub fn new(dry_run: bool) -> Self {
+        Self { dry_run }
+    }
+
+    pub fn log(&mut self, str: impl AsRef<str>) {
+        if self.dry_run {
+            println!("[DRY RUN] {}", str.as_ref());
+        } else {
+            println!("{}", str.as_ref());
+        }
+    }
+}
+
 mod run_command {
     use std::{collections::BTreeSet, error::Error};
 
     use regex::RegexSet;
 
-    use crate::{cache::Cache, config::Config, git};
+    use crate::{Logger, cache::Cache, config::Config, git};
 
     pub fn execute(
         config: &Config,
         cache: &mut Cache,
         dry_run: bool,
         details: bool,
+        mut logger: &mut Logger,
     ) -> Result<(), Box<dyn Error>> {
         let whitelist = RegexSet::new(config.whitelist_patterns.iter().filter_map(|pattern| {
             match fnmatch_regex::glob_to_regex_pattern(pattern) {
                 Ok(pattern) => Some(pattern),
                 Err(error) => {
-                    eprintln!("Invalid whitelist pattern '{}': {}", pattern, error);
+                    eprintln!("Error: invalid whitelist pattern '{}': {}", pattern, error);
                     None
                 }
             }
@@ -206,6 +236,7 @@ mod run_command {
         let mut repositories = BTreeSet::new();
         let mut exclusions = BTreeSet::new();
 
+        logger.log("Searching for Git repositories...");
         if let Some((rx, thread_handle)) = git::find_repositories(
             &config.search_directories,
             &config.ignored_directories,
@@ -227,11 +258,12 @@ mod run_command {
             }
             thread_handle.join().unwrap();
 
-            println!("Found {} repositories", repositories.len());
+            logger.log(format!("Found {} repositories", repositories.len()));
 
             let diff = cache.find_diff(&exclusions);
 
-            let paths_failed_to_add = super::apply_diff_and_print(&diff, dry_run, details);
+            let paths_failed_to_add =
+                super::apply_diff_and_print(&diff, dry_run, details, &mut logger);
 
             for path in paths_failed_to_add {
                 exclusions.remove(path);
@@ -261,14 +293,19 @@ mod list_command {
 }
 
 mod reset_command {
-    use crate::cache::Cache;
+    use crate::{Logger, cache::Cache};
 
     use std::{collections::BTreeSet, error::Error};
 
-    pub fn execute(mut cache: Cache, dry_run: bool, details: bool) -> Result<(), Box<dyn Error>> {
+    pub fn execute(
+        mut cache: Cache,
+        dry_run: bool,
+        details: bool,
+        logger: &mut Logger,
+    ) -> Result<(), Box<dyn Error>> {
         let diff = cache.find_diff(&BTreeSet::new());
 
-        super::apply_diff_and_print(&diff, dry_run, details);
+        super::apply_diff_and_print(&diff, dry_run, details, logger);
 
         if !dry_run {
             cache.write([]);
@@ -290,7 +327,7 @@ mod monitor_command {
     use crossbeam_channel::Sender;
     use notify::Watcher;
 
-    use crate::{cache::Cache, config::Config};
+    use crate::{Logger, cache::Cache, config::Config};
 
     struct EventHandler {
         sender: Sender<notify::Result<notify::Event>>,
@@ -313,6 +350,7 @@ mod monitor_command {
         cache: &mut Cache,
         dry_run: bool,
         details: bool,
+        logger: &mut Logger,
     ) -> Result<(), Box<dyn Error>> {
         let config_file_path = config_file_path.as_ref().to_path_buf();
         let mut config = Config::load_or_create_file(&config_file_path)?;
@@ -327,6 +365,7 @@ mod monitor_command {
         let mut now = Instant::now();
         let mut need_to_run = false;
 
+        logger.log("Monitor started");
         while !signal.load(std::sync::atomic::Ordering::Relaxed) {
             match fs_event_receiver.recv_timeout(Duration::from_millis(250)) {
                 Ok(event) => {
@@ -337,7 +376,7 @@ mod monitor_command {
                         ) && event.paths.contains(&config_file_path)
                         {
                             config.reload_file(&config_file_path)?;
-                            println!("Config reloaded");
+                            println!("Configuration reloaded");
                         }
 
                         if filter_event(&config, &event) {
@@ -355,10 +394,10 @@ mod monitor_command {
             if need_to_run && elapsed >= run_interval {
                 need_to_run = false;
                 elapsed = Duration::ZERO;
-                crate::run_command::execute(&config, cache, dry_run, details)?;
+                crate::run_command::execute(&config, cache, dry_run, details, logger)?;
             }
         }
-        println!("Stop gracefully");
+        logger.log("Monitor stopped");
         Ok(())
     }
 
