@@ -16,6 +16,7 @@ pub struct Config {
     #[serde(rename = "whitelist")]
     pub whitelist_patterns: BTreeSet<String>,
     pub threads: Option<usize>,
+    pub monitor_interval_secs: Option<u64>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -70,6 +71,9 @@ fn expand_paths(paths: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
 }
 
 impl Config {
+    pub const DEFAULT_MONITOR_INTERVAL_SECS: u64 = 5;
+    pub const DEFAULT_THREADS: usize = 4;
+
     pub fn load_or_create_file(file_path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let file_path = file_path.as_ref();
 
@@ -165,7 +169,8 @@ impl Default for Config {
                 "~/Pictures/Photos Library.photoslibrary".into(),
             ]),
             whitelist_patterns: BTreeSet::new(),
-            threads: Some(4),
+            threads: Some(Self::DEFAULT_THREADS),
+            monitor_interval_secs: Some(Self::DEFAULT_MONITOR_INTERVAL_SECS),
         }
     }
 }
