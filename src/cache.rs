@@ -54,8 +54,21 @@ impl Cache {
         })
     }
 
-    pub fn write(&mut self, iter: impl IntoIterator<Item = PathBuf>) {
+    pub fn reset(&mut self, iter: impl IntoIterator<Item = PathBuf>) {
         self.paths = BTreeSet::from_iter(iter);
+    }
+
+    pub fn add_paths(&mut self, iter: impl Iterator<Item = PathBuf>) {
+        for path in iter {
+            self.paths.insert(path);
+        }
+    }
+
+    pub fn remove_paths_in_directory(&mut self, directory: impl AsRef<Path>) {
+        let directory = directory.as_ref();
+        self.paths.retain(|path|{
+            !path.starts_with(directory)
+        });
     }
 
     pub fn save_to_file(&self) -> Result<(), std::io::Error> {
@@ -79,6 +92,24 @@ impl Cache {
         diff
     }
 
+    pub fn find_diff_in_directory(
+        &self,
+        exclusions: &BTreeSet<PathBuf>,
+        directory: impl AsRef<Path>,
+    ) -> Diff {
+        let directory = directory.as_ref();
+        let mut diff = Diff::default();
+        let added = exclusions.difference(&self.paths);
+        let removed = self.paths.difference(exclusions);
+        for item in added.filter(|path| path.starts_with(directory)) {
+            diff.added.insert(item.clone());
+        }
+        for item in removed.filter(|path| path.starts_with(directory)) {
+            diff.removed.insert(item.clone());
+        }
+        diff
+    }
+
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
         self.paths.iter().map(|path| path.as_path())
     }
@@ -96,12 +127,25 @@ mod tests {
             file_path: "".into(),
             paths: BTreeSet::new(),
         };
-        cache.write([PathBuf::from("hello"), PathBuf::from("world")]);
+        cache.reset([PathBuf::from("hello"), PathBuf::from("world")]);
         let exclusions = BTreeSet::from([PathBuf::from("world"), PathBuf::from("hey")]);
         let diff = cache.find_diff(&exclusions);
         assert_eq!(1, diff.added.len());
         assert!(diff.added.contains(&PathBuf::from("hey")));
         assert_eq!(1, diff.removed.len());
         assert!(diff.removed.contains(&PathBuf::from("hello")));
+    }
+
+    #[test]
+    fn test_remove_paths_in_directory() {
+        let mut cache = Cache {
+            file_path: "".into(),
+            paths: BTreeSet::from([PathBuf::from("hello").join("removed"), PathBuf::from("world")]),
+        };
+
+        cache.remove_paths_in_directory("hello");
+
+        assert_eq!(1, cache.paths.len());
+        assert_eq!(Some(&PathBuf::from("world")), cache.paths.first());
     }
 }

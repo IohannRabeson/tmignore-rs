@@ -6,11 +6,13 @@ mod legacy_cache;
 mod timemachine;
 
 use clap::{Parser, Subcommand};
+use regex::RegexSet;
 use std::{collections::BTreeSet, error::Error, path::Path};
 
 use crate::{
     cache::{Cache, OpenOrCreate, OpenOrCreateError},
     config::Config,
+    git::FindIgnoredFileError,
     legacy_cache::LegacyCache,
 };
 
@@ -103,7 +105,7 @@ fn open_cache() -> Result<Cache, OpenCacheError> {
     Ok(match Cache::open_or_create(cache_file_path)? {
         OpenOrCreate::Created(mut cache) => {
             let paths_to_import = LegacyCache::import()?;
-            cache.write(paths_to_import);
+            cache.reset(paths_to_import);
             cache
         }
         OpenOrCreate::Opened(cache) => cache,
@@ -137,7 +139,9 @@ fn apply_diff_and_print<'a>(
     }
 
     for path in &diff.removed {
-        if !dry_run && let Err(error) = timemachine::remove_exclusion(path) {
+        if !dry_run 
+        && path.exists()
+        && let Err(error) = timemachine::remove_exclusion(path) {
             errors.push(ApplyError {
                 error,
                 path,
@@ -210,29 +214,60 @@ impl Logger {
     }
 }
 
+fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, regex::Error> {
+    RegexSet::new(whitelist_patterns.iter().filter_map(|pattern| {
+        match fnmatch_regex::glob_to_regex_pattern(pattern) {
+            Ok(pattern) => Some(pattern),
+            Err(error) => {
+                eprintln!("Error: invalid whitelist pattern '{}': {}", pattern, error);
+                None
+            }
+        }
+    }))
+}
+
+/// Find the paths in a repository to exclude from Time Machine backup.
+/// If a path matches at least one of the regexes in the `whitelist` RegexSet it will not be
+/// added to the `exclusion` set. 
+fn find_paths_to_exclude_from_backup(
+    repository_path: impl AsRef<Path>,
+    whitelist: &RegexSet,
+    exclusions: &mut BTreeSet<std::path::PathBuf>,
+) -> Result<(), FindIgnoredFileError> {
+    let repository_path = repository_path.as_ref();
+    let ignored_files = git::find_ignored_files(repository_path)?;
+
+    for ignored_file in ignored_files {
+        if let Some(ignored_file) = ignored_file.to_str()
+            && whitelist.is_match(ignored_file)
+        {
+            continue;
+        }
+        exclusions.insert(ignored_file);
+    }
+
+    Ok(())
+}
+
 mod run_command {
     use std::{collections::BTreeSet, error::Error};
 
-    use regex::RegexSet;
-
-    use crate::{Logger, cache::Cache, config::Config, git};
+    use crate::{
+        Logger,
+        cache::Cache,
+        config::Config,
+        create_whitelist, find_paths_to_exclude_from_backup,
+        git::{self},
+    };
 
     pub fn execute(
         config: &Config,
         cache: &mut Cache,
         dry_run: bool,
         details: bool,
-        mut logger: &mut Logger,
+        logger: &mut Logger,
     ) -> Result<(), Box<dyn Error>> {
-        let whitelist = RegexSet::new(config.whitelist_patterns.iter().filter_map(|pattern| {
-            match fnmatch_regex::glob_to_regex_pattern(pattern) {
-                Ok(pattern) => Some(pattern),
-                Err(error) => {
-                    eprintln!("Error: invalid whitelist pattern '{}': {}", pattern, error);
-                    None
-                }
-            }
-        }))?;
+        let whitelist = create_whitelist(&config.whitelist_patterns)?;
         let mut repositories = BTreeSet::new();
         let mut exclusions = BTreeSet::new();
 
@@ -245,16 +280,7 @@ mod run_command {
             while let Ok(repository_path) = rx.recv() {
                 repositories.insert(repository_path.clone());
 
-                let ignored_files = git::find_ignored_files(&repository_path);
-
-                for ignored_file in ignored_files {
-                    if let Some(ignored_file) = ignored_file.to_str()
-                        && whitelist.is_match(ignored_file)
-                    {
-                        continue;
-                    }
-                    exclusions.insert(ignored_file);
-                }
+                find_paths_to_exclude_from_backup(repository_path, &whitelist, &mut exclusions)?;
             }
             thread_handle.join().unwrap();
 
@@ -263,14 +289,14 @@ mod run_command {
             let diff = cache.find_diff(&exclusions);
 
             let paths_failed_to_add =
-                super::apply_diff_and_print(&diff, dry_run, details, &mut logger);
+                super::apply_diff_and_print(&diff, dry_run, details, logger);
 
             for path in paths_failed_to_add {
                 exclusions.remove(path);
             }
 
             if !dry_run {
-                cache.write(exclusions);
+                cache.reset(exclusions);
                 cache.save_to_file()?;
             }
         }
@@ -308,7 +334,7 @@ mod reset_command {
         super::apply_diff_and_print(&diff, dry_run, details, logger);
 
         if !dry_run {
-            cache.write([]);
+            cache.reset([]);
             cache.save_to_file()?;
         }
 
@@ -318,6 +344,7 @@ mod reset_command {
 
 mod monitor_command {
     use std::{
+        collections::BTreeSet,
         error::Error,
         path::{Path, PathBuf},
         sync::{Arc, atomic::AtomicBool},
@@ -327,7 +354,10 @@ mod monitor_command {
     use crossbeam_channel::Sender;
     use notify::Watcher;
 
-    use crate::{Logger, cache::Cache, config::Config};
+    use crate::{
+        Logger, apply_diff_and_print, cache::Cache, config::Config, create_whitelist,
+        find_paths_to_exclude_from_backup, git,
+    };
 
     struct EventHandler {
         sender: Sender<notify::Result<notify::Event>>,
@@ -345,6 +375,12 @@ mod monitor_command {
         }
     }
 
+    /// This command monitors a set of directories for changes and keeps up to date the
+    /// list of paths to exclude from Time Machine backups.
+    /// It works by watching the search directories specified by the configuration file.
+    /// Each 5 seconds by default the changes found in the file system are applied to the list of excluded files.
+    /// The configuration file is watched, if it is modified it will be reloaded and a complete scan will start.
+    /// If a .gitignore file is modified then a scan of the repository will be scheduled.
     pub fn execute(
         config_file_path: impl AsRef<Path>,
         cache: &mut Cache,
@@ -362,7 +398,10 @@ mod monitor_command {
         let _watcher = create_watcher(fs_event_sender, config.search_directories.iter());
         let mut elapsed = Duration::ZERO;
         let mut now = Instant::now();
-        let mut need_to_run = false;
+        let mut repositories_to_scan = BTreeSet::new();
+        let mut whitelist = create_whitelist(&config.whitelist_patterns)?;
+
+        crate::run_command::execute(&config, cache, dry_run, details, logger)?;
 
         logger.log("Monitor started");
         while !signal.load(std::sync::atomic::Ordering::Relaxed) {
@@ -375,11 +414,17 @@ mod monitor_command {
                         ) && event.paths.contains(&config_file_path)
                         {
                             config.reload_file(&config_file_path)?;
+                            whitelist = create_whitelist(&config.whitelist_patterns)?;
                             println!("Configuration reloaded");
+                            crate::run_command::execute(&config, cache, dry_run, details, logger)?;
                         }
 
                         if accept_event(&config, &event) {
-                            need_to_run = true;
+                            let repositories_paths = find_repositories(&event);
+
+                            for path in repositories_paths {
+                                repositories_to_scan.insert(path);
+                            }
                         }
                     }
                 }
@@ -389,21 +434,64 @@ mod monitor_command {
 
             elapsed += Instant::now() - now;
             now = Instant::now();
-            let run_interval = Duration::from_secs(config.monitor_interval_secs.unwrap_or(Config::DEFAULT_MONITOR_INTERVAL_SECS));
-            if need_to_run && elapsed >= run_interval {
-                need_to_run = false;
+            let run_interval = Duration::from_secs(
+                config
+                    .monitor_interval_secs
+                    .unwrap_or(Config::DEFAULT_MONITOR_INTERVAL_SECS),
+            );
+            if !repositories_to_scan.is_empty() && elapsed >= run_interval {
+                for repository_to_scan in &repositories_to_scan {
+                    logger.log(format!("Scanning repository '{}'", repository_to_scan.display()));
+                    let mut exclusions = BTreeSet::new();
+                    find_paths_to_exclude_from_backup(
+                        repository_to_scan,
+                        &whitelist,
+                        &mut exclusions,
+                    )?;
+                    let diff = cache.find_diff_in_directory(&exclusions, repository_to_scan);
+                    let paths_failed_to_add = apply_diff_and_print(&diff, dry_run, details, logger);
+
+                    for path in paths_failed_to_add {
+                        exclusions.remove(path);
+                    }
+
+                    if !dry_run {
+                        cache.remove_paths_in_directory(repository_to_scan);
+                        cache.add_paths(exclusions.into_iter());
+                    }
+                }
+                if !dry_run {
+                    cache.save_to_file()?;
+                }
+                repositories_to_scan.clear();
                 elapsed = Duration::ZERO;
-                crate::run_command::execute(&config, cache, dry_run, details, logger)?;
             }
         }
         logger.log("Monitor stopped");
         Ok(())
     }
 
+    fn find_repositories(event: &notify::Event) -> BTreeSet<PathBuf> {
+        let mut results = BTreeSet::new();
+
+        for path in &event.paths {
+            if let Some(repository_path) = git::find_parent_repository(path) {
+                results.insert(repository_path);
+            }
+        }
+
+        results
+    }
+
     fn accept_event(config: &Config, event: &notify::Event) -> bool {
         match &event.kind {
             notify::EventKind::Create(_) => (),
             notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => (),
+            notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => {
+                if !event.paths.iter().any(|path|path.ends_with(".gitignore")) {
+                    return false
+                }
+            }
             notify::EventKind::Remove(_) => (),
             _ => return false,
         }
