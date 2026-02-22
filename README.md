@@ -3,15 +3,24 @@ Makes Time Machine respect .gitignore files
 This tool is a drop-in replacement for [tmignore](https://github.com/samuelmeuli/tmignore). 
 It will import the tmignore cache the first time it will launched.
 
+## Requirements
+This program runs on MacOS only and it requires Git to be installed.
+
 ## How to use it
 ```
-tmignore-rs run
+tmignore-rs monitor
 ```
-You can use `run --dry-run` to check which files will be excluded from backups.
+You can use `--dry-run` to check which files will be excluded from backups.  
+You can use `--details` to print the list of paths added and removed.  
 You can get help using `--help`:
 ```
 tmignore-rs --help
 ```
+You can also get help about a specific command:
+```
+tmignore-rs monitor --help
+```
+
 ## Configuration
 The configuration file is located at `~/.config/tmignore/config.json`.
 Here is the default configuration created automatically the first time you run tmignore-rs.
@@ -30,7 +39,8 @@ Here is the default configuration created automatically the first time you run t
     "~/Pictures/Photos Library.photoslibrary"
   ],
   "whitelist": [],
-  "threads": 4
+  "threads": 4,
+  "monitor_interval_secs": 5
 }
 ```
 ### `searchPaths`
