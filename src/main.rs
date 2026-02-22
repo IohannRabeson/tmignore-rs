@@ -360,7 +360,6 @@ mod monitor_command {
         let (fs_event_sender, fs_event_receiver) =
             crossbeam_channel::bounded::<notify::Result<notify::Event>>(256);
         let _watcher = create_watcher(fs_event_sender, config.search_directories.iter());
-        let run_interval = Duration::from_secs(5);
         let mut elapsed = Duration::ZERO;
         let mut now = Instant::now();
         let mut need_to_run = false;
@@ -390,7 +389,7 @@ mod monitor_command {
 
             elapsed += Instant::now() - now;
             now = Instant::now();
-
+            let run_interval = Duration::from_secs(config.monitor_interval_secs.unwrap_or(Config::DEFAULT_MONITOR_INTERVAL_SECS));
             if need_to_run && elapsed >= run_interval {
                 need_to_run = false;
                 elapsed = Duration::ZERO;
