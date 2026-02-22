@@ -164,7 +164,7 @@ fn apply_diff_and_print<'a>(
     }
 
     if add_count == 0 && remove_count == 0 {
-        logger.log(format!("No changes to the backup exclusion list"));
+        logger.log("No changes to the backup exclusion list");
     }
 
     if details {
