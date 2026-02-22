@@ -57,3 +57,13 @@ The `whitelist` array expects glob-style patterns:
  - `*.broguerec` matches all files with the `.broguerec` extension
  - `*/BrogueRunHistory.txt` matches all files named `BrogueRunHistory.txt`
 See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
+
+## Profiling
+There is a dedicated profile named `release-with-debug`, you can use it with:
+```
+cargo run --profile=release-with-debug
+```
+You might need to sign the binary to be able to use Instruments:
+```
+scripts/codesign-for-instruments.sh target/release-with-debug/tmignore-rs
+```
