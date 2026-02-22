@@ -8,13 +8,13 @@ use std::{
 
 use crossbeam_channel::Receiver;
 
+const DOT_GIT_DIRECTORY_NAME: &str = ".git";
+
 pub fn find_repositories(
     directories: &BTreeSet<PathBuf>,
     ignored_directories: &BTreeSet<PathBuf>,
     threads: usize,
 ) -> Option<(Receiver<PathBuf>, JoinHandle<()>)> {
-    const DOT_GIT_DIRECTORY_NAME: &str = ".git";
-
     if directories.is_empty() {
         return None;
     }
@@ -72,8 +72,22 @@ fn create_walk_builder(directories: &BTreeSet<PathBuf>, ignore: bool) -> ignore:
     builder
 }
 
-pub fn find_ignored_files(repository_directory: &Path) -> Vec<PathBuf> {
-    let output = match std::process::Command::new("git")
+#[derive(thiserror::Error, Debug)]
+pub enum FindIgnoredFileError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("Git command failed: {0}")]
+    CommandFailed(String),
+}
+
+pub fn find_ignored_files(
+    repository_directory: &Path,
+) -> Result<Vec<PathBuf>, FindIgnoredFileError> {
+    if !repository_directory.exists() {
+        return Ok(vec![])
+    }
+
+    let output = std::process::Command::new("git")
         .arg("-C")
         .arg(repository_directory)
         .arg("ls-files")
@@ -82,24 +96,15 @@ pub fn find_ignored_files(repository_directory: &Path) -> Vec<PathBuf> {
         .arg("--ignored")
         .arg("--others")
         .arg("-z")
-        .output()
-    {
-        Ok(output) => output,
-        Err(error) => {
-            eprintln!("Failed to run git command: {}", error);
-            return vec![];
-        }
-    };
+        .output()?;
 
     if !output.status.success() {
-        eprintln!(
-            "Git command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return vec![];
+        return Err(FindIgnoredFileError::CommandFailed(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
     }
 
-    output
+    Ok(output
         .stdout
         .split(|&b| b == 0)
         .filter(|s| !s.is_empty())
@@ -108,7 +113,19 @@ pub fn find_ignored_files(repository_directory: &Path) -> Vec<PathBuf> {
                 .ok()
                 .map(|s| repository_directory.join(s))
         })
-        .collect()
+        .collect())
+}
+
+pub fn find_parent_repository(path: impl AsRef<Path>) -> Option<PathBuf> {
+    let mut path = path.as_ref();
+
+    loop {
+        if path.join(DOT_GIT_DIRECTORY_NAME).is_dir() {
+            return Some(path.to_path_buf());
+        }
+
+        path = path.parent()?;
+    }
 }
 
 #[cfg(test)]
@@ -120,7 +137,7 @@ mod tests {
 
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::git::find_repositories;
+    use crate::git::{find_parent_repository, find_repositories};
 
     fn find_repositories_vec(
         directories: &[impl AsRef<Path>],
@@ -206,5 +223,29 @@ mod tests {
 
         assert_eq!(repositories.len(), 1);
         assert_eq!(repositories[0], temp_dir.path().join("subdirectory"));
+    }
+
+    #[test]
+    fn test_find_parent_directory_success() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_directory("repository/suddir/subsub")
+            .add_directory("repository/.git")
+            .add_directory("not_a_repo/sub")
+            .build()
+            .unwrap();
+        let repository_path = temp_dir.path().join("repository");
+        let subdir_path = repository_path.join("suddir");
+        let subsub_path = subdir_path.join("suddir");
+        let not_a_repo_sub = temp_dir.path().join("not_a_repo").join("sub");
+
+        assert_eq!(
+            find_parent_repository(&subdir_path).as_ref(),
+            Some(&repository_path)
+        );
+        assert_eq!(
+            find_parent_repository(&subsub_path).as_ref(),
+            Some(&repository_path)
+        );
+        assert_eq!(find_parent_repository(&not_a_repo_sub), None);
     }
 }
