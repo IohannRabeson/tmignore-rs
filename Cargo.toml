@@ -13,6 +13,7 @@ fnmatch-regex = { git = "https://gitlab.com/ppentchev/fnmatch-regex-rs", rev = "
 ignore = { version = "0.4", features = ["simd-accel"] }
 notify = "8.2.0"
 regex = "1.12.3"
+rusqlite = "0.38.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shellexpand = "3.1.1"
