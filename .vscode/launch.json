@@ -18,6 +18,18 @@
             "args": ["run"]
         },
         {
+            "name": "Debug reset command",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "run",
+                    "--bin=tmignore-rs"
+                ]
+            },
+            "args": ["reset"]
+        },
+        {
             "name": "Debug monitor command",
             "type": "lldb",
             "request": "launch",
