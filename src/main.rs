@@ -91,11 +91,11 @@ enum OpenCacheError {
 }
 
 fn open_cache() -> Result<Cache, OpenCacheError> {
-    // ~/Library/Caches/tmignore-rs/cache.json
+    // ~/Library/Caches/tmignore-rs/cache.db
     let cache_file_path = dirs::cache_dir()
         .ok_or(OpenCacheError::NoCacheDirectory)?
         .join("tmignore-rs")
-        .join("cache.json");
+        .join("cache.db");
     std::fs::create_dir_all(
         cache_file_path
             .parent()
@@ -139,9 +139,10 @@ fn apply_diff_and_print<'a>(
     }
 
     for path in &diff.removed {
-        if !dry_run 
-        && path.exists()
-        && let Err(error) = timemachine::remove_exclusion(path) {
+        if !dry_run
+            && path.exists()
+            && let Err(error) = timemachine::remove_exclusion(path)
+        {
             errors.push(ApplyError {
                 error,
                 path,
@@ -228,7 +229,7 @@ fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, r
 
 /// Find the paths in a repository to exclude from Time Machine backup.
 /// If a path matches at least one of the regexes in the `whitelist` RegexSet it will not be
-/// added to the `exclusion` set. 
+/// added to the `exclusion` set.
 fn find_paths_to_exclude_from_backup(
     repository_path: impl AsRef<Path>,
     whitelist: &RegexSet,
@@ -288,8 +289,7 @@ mod run_command {
 
             let diff = cache.find_diff(&exclusions);
 
-            let paths_failed_to_add =
-                super::apply_diff_and_print(&diff, dry_run, details, logger);
+            let paths_failed_to_add = super::apply_diff_and_print(&diff, dry_run, details, logger);
 
             for path in paths_failed_to_add {
                 exclusions.remove(path);
@@ -297,7 +297,6 @@ mod run_command {
 
             if !dry_run {
                 cache.reset(exclusions);
-                cache.save_to_file()?;
             }
         }
 
@@ -335,7 +334,6 @@ mod reset_command {
 
         if !dry_run {
             cache.reset([]);
-            cache.save_to_file()?;
         }
 
         Ok(())
@@ -441,7 +439,10 @@ mod monitor_command {
             );
             if !repositories_to_scan.is_empty() && elapsed >= run_interval {
                 for repository_to_scan in &repositories_to_scan {
-                    logger.log(format!("Scanning repository '{}'", repository_to_scan.display()));
+                    logger.log(format!(
+                        "Scanning repository '{}'",
+                        repository_to_scan.display()
+                    ));
                     let mut exclusions = BTreeSet::new();
                     find_paths_to_exclude_from_backup(
                         repository_to_scan,
@@ -459,9 +460,6 @@ mod monitor_command {
                         cache.remove_paths_in_directory(repository_to_scan);
                         cache.add_paths(exclusions.into_iter());
                     }
-                }
-                if !dry_run {
-                    cache.save_to_file()?;
                 }
                 repositories_to_scan.clear();
                 elapsed = Duration::ZERO;
@@ -488,8 +486,8 @@ mod monitor_command {
             notify::EventKind::Create(_) => (),
             notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => (),
             notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => {
-                if !event.paths.iter().any(|path|path.ends_with(".gitignore")) {
-                    return false
+                if !event.paths.iter().any(|path| path.ends_with(".gitignore")) {
+                    return false;
                 }
             }
             notify::EventKind::Remove(_) => (),

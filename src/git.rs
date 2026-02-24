@@ -84,7 +84,7 @@ pub fn find_ignored_files(
     repository_directory: &Path,
 ) -> Result<Vec<PathBuf>, FindIgnoredFileError> {
     if !repository_directory.exists() {
-        return Ok(vec![])
+        return Ok(vec![]);
     }
 
     let output = std::process::Command::new("git")
