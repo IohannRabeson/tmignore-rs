@@ -53,13 +53,6 @@ impl Cache {
         })
     }
 
-    fn setup(&mut self) -> Result<(), OpenOrCreateError> {
-        self.connection
-            .borrow()
-            .execute_batch(include_str!("sql/schema.sql"))?;
-        Ok(())
-    }
-
     pub fn load_from_file(file_path: impl AsRef<Path>) -> Result<Cache, OpenOrCreateError> {
         let file_path = file_path.as_ref();
 
@@ -73,7 +66,7 @@ impl Cache {
     }
 
     #[cfg(test)]
-    fn open_in_memory() -> Result<Self, OpenOrCreateError> {
+    pub fn open_in_memory() -> Result<Self, OpenOrCreateError> {
         let mut cache = Self {
             connection: RefCell::new(Connection::open_in_memory()?),
         };
@@ -83,29 +76,34 @@ impl Cache {
         Ok(cache)
     }
 
+    fn setup(&mut self) -> Result<(), OpenOrCreateError> {
+        self.connection
+            .borrow()
+            .execute_batch(include_str!("sql/schema.sql"))?;
+        Ok(())
+    }
+
     const SQL_INSERT_PATH: &str = "INSERT INTO paths (path) VALUES (?)";
 
     pub fn reset(&mut self, iter: impl IntoIterator<Item = PathBuf>) {
         if let Ok(transaction) = self.connection.borrow_mut().transaction() {
-            {
-                let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH).unwrap();
-                transaction.execute("DELETE FROM paths", params![]).unwrap();
-                for path in iter {
-                    insert_stmt.execute(params![path_to_bytes(&path)]).unwrap();
-                }
+            let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH).unwrap();
+            transaction.execute("DELETE FROM paths", params![]).unwrap();
+            for path in iter {
+                insert_stmt.execute(params![path_to_bytes(&path)]).unwrap();
             }
+            drop(insert_stmt);
             transaction.commit().unwrap();
         }
     }
 
     pub fn add_paths(&mut self, iter: impl Iterator<Item = PathBuf>) {
         if let Ok(transaction) = self.connection.borrow_mut().transaction() {
-            {
-                let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH).unwrap();
-                for path in iter {
-                    insert_stmt.execute(params![path_to_bytes(&path)]).unwrap();
-                }
+            let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH).unwrap();
+            for path in iter {
+                insert_stmt.execute(params![path_to_bytes(&path)]).unwrap();
             }
+            drop(insert_stmt);
             transaction.commit().unwrap();
         }
     }
