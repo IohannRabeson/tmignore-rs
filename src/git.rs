@@ -87,9 +87,11 @@ pub fn find_ignored_files(
         return Ok(vec![]);
     }
 
+    let repository_directory = repository_directory.canonicalize()?;
+
     let output = std::process::Command::new("git")
         .arg("-C")
-        .arg(repository_directory)
+        .arg(&repository_directory)
         .arg("ls-files")
         .arg("--directory")
         .arg("--exclude-standard")
