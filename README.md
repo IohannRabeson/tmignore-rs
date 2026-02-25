@@ -7,6 +7,26 @@ It will import the tmignore cache the first time it will launched.
 This program runs on MacOS only and it requires Git to be installed.
 
 ## How to use it
+<details>
+<summary>Click to show help</summary>
+```console
+Makes Time Machine respect .gitignore files
+
+Usage: tmignore-rs <COMMAND>
+
+Commands:
+  run      Scan for paths to add or remove from the backup exclusion list
+  list     Print the backup exclusion list
+  reset    Reset the backup exclusion list
+  monitor  Watch for file changes and keep the exclusion list up to date
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+```
+</details>
 ```
 tmignore-rs monitor
 ```

@@ -41,7 +41,11 @@ enum Commands {
         #[arg(long)]
         details: bool,
     },
-    /// Monitor for changes and update the backup exclusion list periodically
+    /// Watch for file changes and keep the exclusion list up to date
+    ///
+    /// Begins with a complete scan to ensure the exclusion list is up to date.
+    /// If the configuration file is modified, it is reloaded and a
+    /// complete scan is triggered.
     Monitor {
         #[arg(long)]
         dry_run: bool,
