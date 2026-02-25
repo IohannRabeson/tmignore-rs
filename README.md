@@ -67,3 +67,7 @@ You might need to sign the binary to be able to use Instruments:
 ```
 scripts/codesign-for-instruments.sh target/release-with-debug/tmignore-rs
 ```
+
+## Tests
+I had an issue using the temp folder returned by std::env::temp_dir(). This folder
+is excluded from Time machine backup by default making testing impossible.
