@@ -15,14 +15,14 @@ pub fn remove_exclusion(path: impl AsRef<Path>) -> Result<(), std::io::Error> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{path::Path, process::Command};
 
     use temp_dir_builder::TempDirectoryBuilder;
 
     use crate::timemachine::{add_exclusion, remove_exclusion};
 
-    fn is_excluded_from_time_machine(path: impl AsRef<Path>) -> bool {
+    pub(crate) fn is_excluded_from_time_machine(path: impl AsRef<Path>) -> bool {
         let path = path.as_ref();
 
         let output = Command::new("/usr/bin/tmutil")

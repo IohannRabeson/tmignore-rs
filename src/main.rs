@@ -302,6 +302,68 @@ mod run_command {
 
         Ok(())
     }
+
+    #[cfg(test)]
+    pub(crate) mod tests {
+        use std::path::Path;
+
+        use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
+
+        use crate::{Logger, cache::Cache, config::Config, run_command};
+
+        pub(crate) fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
+            let temp_dir = TempDirectoryBuilder::default()
+                .root_folder(root_directory)
+                .add_text_file(".gitignore", "a\nb\n")
+                .add_empty_file("a")
+                .add_empty_file("b")
+                .add_empty_file("c")
+                .build()
+                .unwrap();
+
+            std::process::Command::new("git").arg("init").arg(temp_dir.path()).output().unwrap();
+
+            temp_dir
+        }
+
+        #[test]
+        fn test_command() {
+            let temp_dir = create_repository("run_command_test_command");
+            let mut cache = Cache::open_in_memory().unwrap();
+            let mut config = Config::default();
+            config.search_directories.clear();
+            config.search_directories.insert(temp_dir.path().to_path_buf());
+            let dry_run = false;
+            let mut logger = Logger::new(dry_run);
+            run_command::execute(&config, &mut cache, dry_run, false, &mut logger).unwrap();
+            let a_file_path = temp_dir.path().join("a");
+            let b_file_path = temp_dir.path().join("b");
+            let c_file_path = temp_dir.path().join("c");
+            assert_eq!(2, cache.paths().len());
+            assert!(crate::timemachine::tests::is_excluded_from_time_machine(a_file_path));
+            assert!(crate::timemachine::tests::is_excluded_from_time_machine(b_file_path));
+            assert!(!crate::timemachine::tests::is_excluded_from_time_machine(c_file_path));
+        }
+
+        #[test]
+        fn test_dry_run() {
+            let temp_dir = create_repository("run_command_test_command_dry_run");
+            let mut cache = Cache::open_in_memory().unwrap();
+            let mut config = Config::default();
+            config.search_directories.clear();
+            config.search_directories.insert(temp_dir.path().to_path_buf());
+            let dry_run = true;
+            let mut logger = Logger::new(dry_run);
+            run_command::execute(&config, &mut cache, dry_run, false, &mut logger).unwrap();
+            let a_file_path = temp_dir.path().join("a");
+            let b_file_path = temp_dir.path().join("b");
+            let c_file_path = temp_dir.path().join("c");
+            assert_eq!(0, cache.paths().len());
+            assert!(!crate::timemachine::tests::is_excluded_from_time_machine(a_file_path));
+            assert!(!crate::timemachine::tests::is_excluded_from_time_machine(b_file_path));
+            assert!(!crate::timemachine::tests::is_excluded_from_time_machine(c_file_path));
+        }
+    }
 }
 
 mod list_command {
