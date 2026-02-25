@@ -7,9 +7,15 @@ It will import the tmignore cache the first time it will launched.
 This program runs on MacOS only and it requires Git to be installed.
 
 ## How to use it
-<details>
-<summary>Click to show help</summary>
-```console
+The most important command is the `monitor` command:
+```
+tmignore-rs monitor
+```
+## Show help
+```
+tmignore-rs --help
+```
+```
 Makes Time Machine respect .gitignore files
 
 Usage: tmignore-rs <COMMAND>
@@ -24,17 +30,6 @@ Commands:
 Options:
   -h, --help     Print help
   -V, --version  Print version
-
-```
-</details>
-```
-tmignore-rs monitor
-```
-You can use `--dry-run` to check which files will be excluded from backups.  
-You can use `--details` to print the list of paths added and removed.  
-You can get help using `--help`:
-```
-tmignore-rs --help
 ```
 You can also get help about a specific command:
 ```
