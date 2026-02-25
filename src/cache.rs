@@ -10,6 +10,8 @@ use rusqlite::{Connection, params};
 
 use crate::diff::Diff;
 
+/// The cache stores the list of paths to exclude from Time Machine backup.
+/// I refer to it by "the exclusion list" in the public documentation.
 pub struct Cache {
     connection: RefCell<Connection>,
 }
