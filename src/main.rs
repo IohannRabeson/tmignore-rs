@@ -7,7 +7,11 @@ mod timemachine;
 
 use clap::{Parser, Subcommand};
 use regex::RegexSet;
-use std::{collections::BTreeSet, error::Error, path::Path};
+use std::{
+    collections::BTreeSet,
+    error::Error,
+    path::{Path, PathBuf},
+};
 
 use crate::{
     cache::{Cache, OpenOrCreate, OpenOrCreateError},
@@ -95,11 +99,8 @@ enum OpenCacheError {
 }
 
 fn open_cache() -> Result<Cache, OpenCacheError> {
-    // ~/Library/Caches/tmignore-rs/cache.db
-    let cache_file_path = dirs::cache_dir()
-        .ok_or(OpenCacheError::NoCacheDirectory)?
-        .join("tmignore-rs")
-        .join("cache.db");
+    let cache_file_path =
+        PathBuf::from(shellexpand::tilde("~/Library/Caches/tmignore-rs/cache.db").to_string());
     std::fs::create_dir_all(
         cache_file_path
             .parent()

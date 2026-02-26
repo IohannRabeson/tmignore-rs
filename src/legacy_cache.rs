@@ -12,11 +12,8 @@ pub struct LegacyCache {
 
 impl LegacyCache {
     pub fn import() -> Result<Vec<PathBuf>, std::io::Error> {
-        // ~/Library/Caches/tmignore/cache.json
-        let cache_file_path = match dirs::cache_dir() {
-            Some(cache_dir) => cache_dir.join("tmignore").join("cache.json"),
-            None => return Ok(vec![]),
-        };
+        let cache_file_path =
+            shellexpand::tilde("~/Library/Caches/tmignore/cache.json").to_string();
 
         Self::load_file(cache_file_path)
     }
