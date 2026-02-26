@@ -56,20 +56,6 @@ pub enum ValidationFail {
     NoSearchDirectories,
 }
 
-fn expand_paths(paths: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
-    let mut results = BTreeSet::new();
-
-    for path in paths {
-        if let Some(path_str) = path.to_str()
-            && let Ok(expanded) = shellexpand::full(path_str)
-        {
-            results.insert(PathBuf::from(expanded.to_string()));
-        }
-    }
-
-    results
-}
-
 impl Config {
     pub const DEFAULT_MONITOR_INTERVAL_SECS: u64 = 5;
     pub const DEFAULT_THREADS: usize = 4;
@@ -109,8 +95,22 @@ impl Config {
     }
 
     fn expand(config: &mut Config) {
-        config.search_directories = expand_paths(&config.search_directories);
-        config.ignored_directories = expand_paths(&config.ignored_directories);
+        config.search_directories = Self::expand_paths(&config.search_directories);
+        config.ignored_directories = Self::expand_paths(&config.ignored_directories);
+    }
+
+    fn expand_paths(paths: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
+        let mut results = BTreeSet::new();
+
+        for path in paths {
+            if let Some(path_str) = path.to_str()
+                && let Ok(expanded) = shellexpand::full(path_str)
+            {
+                results.insert(PathBuf::from(expanded.to_string()));
+            }
+        }
+
+        results
     }
 
     fn validate(config: &Config) -> Result<(), ValidationError> {
