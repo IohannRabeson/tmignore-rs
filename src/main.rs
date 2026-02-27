@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Commands::Reset { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
 
-            commands::reset::execute(cache, dry_run, details, &mut logger)
+            commands::reset::execute(&mut cache, dry_run, details, &mut logger)
         }
         Commands::Monitor { dry_run, details } => {
             let mut logger = Logger::new(dry_run);

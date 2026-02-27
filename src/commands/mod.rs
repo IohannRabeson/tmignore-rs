@@ -1,7 +1,7 @@
-pub mod run;
 pub mod list;
-pub mod reset;
 pub mod monitor;
+pub mod reset;
+pub mod run;
 
 use std::{collections::BTreeSet, path::Path};
 
@@ -94,7 +94,6 @@ fn apply_diff_and_print<'a>(
         .collect()
 }
 
-
 fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, regex::Error> {
     RegexSet::new(whitelist_patterns.iter().filter_map(|pattern| {
         match fnmatch_regex::glob_to_regex_pattern(pattern) {
@@ -128,4 +127,42 @@ fn find_paths_to_exclude_from_backup(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::path::Path;
+
+    use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
+
+    use crate::config::Config;
+
+    pub(crate) fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
+        let temp_dir = TempDirectoryBuilder::default()
+            .root_folder(root_directory)
+            .add_text_file(".gitignore", "a\nb\n")
+            .add_empty_file("a")
+            .add_empty_file("b")
+            .add_empty_file("c")
+            .build()
+            .unwrap();
+
+        std::process::Command::new("git")
+            .arg("init")
+            .arg(temp_dir.path())
+            .output()
+            .unwrap();
+
+        temp_dir
+    }
+
+    pub(crate) fn create_config(search_directory: impl AsRef<Path>) -> Config {
+        let mut config = Config::default();
+        config.search_directories.clear();
+        config
+            .search_directories
+            .insert(search_directory.as_ref().to_path_buf());
+
+        config
+    }
 }
