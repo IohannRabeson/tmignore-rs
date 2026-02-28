@@ -218,7 +218,7 @@ mod tests {
             let mut cache = Cache::open_in_memory().unwrap();
             let dry_run = false;
             let mut logger = Logger::new(dry_run);
-            super::execute(config_file_path, &mut cache, dry_run, false, &mut logger).unwrap();
+            super::execute(config_file_path, &mut cache, dry_run, true, &mut logger).unwrap();
 
             cache
         });
@@ -256,7 +256,7 @@ mod tests {
                 config_file_path_thread,
                 &mut cache,
                 dry_run,
-                false,
+                true,
                 &mut logger,
             )
             .unwrap();
@@ -312,7 +312,7 @@ mod tests {
             let mut cache = Cache::open_in_memory().unwrap();
             let dry_run = false;
             let mut logger = Logger::new(dry_run);
-            super::execute(config_file_path, &mut cache, dry_run, false, &mut logger).unwrap();
+            super::execute(config_file_path, &mut cache, dry_run, true, &mut logger).unwrap();
 
             cache
         });
@@ -351,7 +351,7 @@ mod tests {
                 config_file_path_thread,
                 &mut cache,
                 dry_run,
-                false,
+                true,
                 &mut logger,
             )
             .unwrap();
@@ -391,7 +391,7 @@ mod tests {
             let mut cache = Cache::open_in_memory().unwrap();
             let dry_run = false;
             let mut logger = Logger::new(dry_run);
-            super::execute(config_file_path, &mut cache, dry_run, false, &mut logger).unwrap();
+            super::execute(config_file_path, &mut cache, dry_run, true, &mut logger).unwrap();
 
             cache
         });
@@ -424,7 +424,7 @@ mod tests {
             let mut cache = Cache::open_in_memory().unwrap();
             let dry_run = false;
             let mut logger = Logger::new(dry_run);
-            super::execute(config_file_path, &mut cache, dry_run, false, &mut logger).unwrap();
+            super::execute(config_file_path, &mut cache, dry_run, true, &mut logger).unwrap();
 
             cache
         });
