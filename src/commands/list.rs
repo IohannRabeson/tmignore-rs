@@ -1,10 +1,33 @@
-use std::error::Error;
+use std::{error::Error, io::Write};
 
 use crate::cache::Cache;
 
-pub fn execute(cache: Cache) -> Result<(), Box<dyn Error>> {
+pub fn execute(cache: Cache, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
     for path in cache.paths() {
-        println!("{}", path.display());
+        write!(writer, "{}\n", path.display())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::cache::Cache;
+
+    #[test]
+    fn test_execute() {
+        let mut cache = Cache::open_in_memory().unwrap();
+        cache.reset([PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]);
+        let mut writer = Vec::new();
+
+        super::execute(cache, &mut writer).unwrap();
+
+        let text = String::from_utf8(writer).unwrap();
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(3, lines.len());
+        assert_eq!("a", lines[0]);
+        assert_eq!("b", lines[1]);
+        assert_eq!("c", lines[2]);
+    }
 }
