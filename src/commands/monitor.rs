@@ -380,9 +380,9 @@ mod tests {
         let file_a_path = temp_dir_path.join("a");
         let file_b_path = temp_dir_path.join("b");
 
-        let mut config = crate::commands::tests::create_config(temp_dir.path());
+        let mut config = crate::commands::tests::create_config(&temp_dir_path);
         config.monitor_interval_secs = Some(1);
-        let config_file_path = temp_dir.path().join("config.json");
+        let config_file_path = temp_dir_path.join("config.json");
         config.save_to_file(&config_file_path).unwrap();
 
         let handle = thread::spawn(move || {
@@ -408,15 +408,14 @@ mod tests {
 
     #[test]
     fn test_monitor_renamed_file() {
-        let temp_dir = crate::commands::tests::create_repository("test_monitor_removed_file");
+        let temp_dir = crate::commands::tests::create_repository("test_monitor_renamed_file");
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let file_a_path = temp_dir_path.join("a");
         let file_b_path = temp_dir_path.join("b");
         let file_c_path = temp_dir_path.join("c");
-
-        let mut config = crate::commands::tests::create_config(temp_dir.path());
+        let mut config = crate::commands::tests::create_config(&temp_dir_path);
         config.monitor_interval_secs = Some(1);
-        let config_file_path = temp_dir.path().join("config.json");
+        let config_file_path = temp_dir_path.join("config.json");
         config.save_to_file(&config_file_path).unwrap();
 
         let handle = thread::spawn(move || {
