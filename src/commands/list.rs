@@ -2,9 +2,9 @@ use std::{error::Error, io::Write};
 
 use crate::cache::Cache;
 
-pub fn execute(cache: Cache, writer: &mut impl Write) -> Result<(), Box<dyn Error>> {
+pub fn execute(cache: Cache, writer: &mut impl Write, separator: char) -> Result<(), Box<dyn Error>> {
     for path in cache.paths() {
-        write!(writer, "{}\n", path.display())?;
+        write!(writer, "{}{}", path.display(), separator)?;
     }
     Ok(())
 }
@@ -21,7 +21,7 @@ mod tests {
         cache.reset([PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]);
         let mut writer = Vec::new();
 
-        super::execute(cache, &mut writer).unwrap();
+        super::execute(cache, &mut writer, '\n').unwrap();
 
         let text = String::from_utf8(writer).unwrap();
         let lines: Vec<_> = text.lines().collect();
