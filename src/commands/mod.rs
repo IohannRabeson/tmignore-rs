@@ -175,13 +175,17 @@ pub(crate) mod tests {
             .build()
             .unwrap();
 
-        std::process::Command::new("git")
-            .arg("init")
-            .arg(temp_dir.path())
-            .output()
-            .unwrap();
+        init_git_repository(temp_dir.path());
 
         temp_dir
+    }
+
+    pub(crate) fn init_git_repository(directory_path: impl AsRef<Path>) {
+        std::process::Command::new("git")
+            .arg("init")
+            .arg(directory_path.as_ref())
+            .output()
+            .unwrap();
     }
 
     pub(crate) fn create_config(search_directory: impl AsRef<Path>) -> Config {

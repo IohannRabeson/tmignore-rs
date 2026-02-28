@@ -63,7 +63,6 @@ pub fn execute(
     while !signal.load(std::sync::atomic::Ordering::Relaxed) {
         match fs_event_receiver.recv_timeout(Duration::from_millis(250)) {
             Ok(event) => {
-                println!("{:?}", event);
                 if let Ok(event) = event {
                     if matches!(
                         event.kind,
@@ -82,8 +81,8 @@ pub fn execute(
                     }
 
                     if accept_event(&config, &event) {
-                        let repositories_paths = find_repositories(&event);
-                        println!("Event accepted: {:?}", repositories_paths);
+                        let repositories_paths = find_repositories(&config.search_directories, &event);
+
                         for path in repositories_paths {
                             repositories_to_scan.insert(path);
                         }
@@ -139,12 +138,18 @@ pub fn execute(
     Ok(())
 }
 
-fn find_repositories(event: &notify::Event) -> BTreeSet<PathBuf> {
+/// Search the repositories related to an event.
+/// The repositories listed are in one of the search directories.
+fn find_repositories(search_directories: &BTreeSet<PathBuf>, event: &notify::Event) -> BTreeSet<PathBuf> {
     let mut results = BTreeSet::new();
 
     for path in &event.paths {
         if let Some(repository_path) = git::find_parent_repository(path) {
-            results.insert(repository_path);
+            if search_directories.iter().any(|search_directory|{
+                repository_path.starts_with(search_directory)
+            }) {
+                results.insert(repository_path);
+            }
         }
     }
 
@@ -199,9 +204,11 @@ fn create_watcher<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::{os::unix::fs::PermissionsExt, path::Path, thread, time::Duration};
+    use std::{os::unix::fs::PermissionsExt, path::{Path, PathBuf}, thread, time::Duration};
 
-    use crate::{Logger, cache::Cache, commands::monitor::accept_event, config::Config};
+    use temp_dir_builder::TempDirectoryBuilder;
+
+    use crate::{Logger, cache::Cache, commands::{monitor::accept_event, tests::init_git_repository}, config::Config};
 
     #[test]
     fn test_monitor_basic() {
@@ -439,6 +446,50 @@ mod tests {
         let paths = cache.paths();
         assert_eq!(1, paths.len());
         assert_eq!(file_a_path, paths[0]);
+    }
+
+    #[test]
+    fn test_monitor_add_a_repository() {
+        let root_folder_path = PathBuf::from("test_monitor_add_a_repository");
+        if root_folder_path.exists() && root_folder_path.is_dir() {
+            std::fs::remove_dir_all(&root_folder_path).unwrap();
+        }
+        let temp_dir = TempDirectoryBuilder::default().root_folder(root_folder_path).build().unwrap();
+        let root_folder_path = temp_dir.path().canonicalize().unwrap();
+        let mut config = crate::commands::tests::create_config(&root_folder_path);
+        let config_file_path = root_folder_path.join("config.json");
+        config.monitor_interval_secs = Some(0);
+        config.save_to_file(&config_file_path).unwrap();
+
+        let handle = thread::spawn(move || {
+            let mut cache = Cache::open_in_memory().unwrap();
+            let dry_run = false;
+            let mut logger = Logger::new(dry_run);
+            super::execute(config_file_path, &mut cache, dry_run, true, &mut logger).unwrap();
+
+            cache
+        });
+        thread::sleep(Duration::from_millis(200));
+        let new_repository_path = root_folder_path.join("new repository");
+        std::fs::create_dir_all(&new_repository_path).unwrap();
+        init_git_repository(&new_repository_path);
+        let gitignore_file_path = new_repository_path.join(".gitignore");
+        let file_a_path = new_repository_path.join("a");
+        let file_b_path = new_repository_path.join("b");
+        std::fs::File::create(&file_a_path).unwrap();
+        std::fs::write(gitignore_file_path, "a\nb\n").unwrap();
+        std::fs::File::create(&file_b_path).unwrap();
+        thread::sleep(Duration::from_millis(200));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
+
+        let cache = handle.join().unwrap();
+        let paths = cache.paths();
+        println!("{:?}", paths);
+        assert_eq!(2, paths.len());
+        assert!(paths.contains(&file_a_path));
+        assert!(paths.contains(&file_b_path));
     }
 
     #[test]
