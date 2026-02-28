@@ -24,6 +24,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Watch for file changes and keep the exclusion list up to date
+    ///
+    /// Begins with a complete scan to ensure the exclusion list is up to date.
+    /// If the configuration file is modified, it is reloaded and a
+    /// complete scan is triggered.
+    Monitor {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        details: bool,
+    },
     /// Scan for paths to add or remove from the backup exclusion list
     Run {
         #[arg(long)]
@@ -38,17 +49,6 @@ enum Commands {
     },
     /// Reset the backup exclusion list
     Reset {
-        #[arg(long)]
-        dry_run: bool,
-        #[arg(long)]
-        details: bool,
-    },
-    /// Watch for file changes and keep the exclusion list up to date
-    ///
-    /// Begins with a complete scan to ensure the exclusion list is up to date.
-    /// If the configuration file is modified, it is reloaded and a
-    /// complete scan is triggered.
-    Monitor {
         #[arg(long)]
         dry_run: bool,
         #[arg(long)]
@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut logger = Logger::new(false);
             let cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
             let separator = if zero_separator { '\0' } else { '\n' };
-            
+
             commands::list::execute(cache, &mut std::io::stdout(), separator)
         },
         Commands::Reset { dry_run, details } => {
