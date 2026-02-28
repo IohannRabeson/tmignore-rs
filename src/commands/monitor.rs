@@ -9,7 +9,7 @@ use std::{
 use crossbeam_channel::Sender;
 use notify::Watcher;
 
-use crate::{Logger, cache::Cache, config::Config, git};
+use crate::{Logger, cache::Cache, commands::TimeMachine, config::Config, git};
 
 struct EventHandler {
     sender: Sender<notify::Result<notify::Event>>,
@@ -116,8 +116,9 @@ pub fn execute(
                     &mut exclusions,
                 )?;
                 let diff = cache.find_diff_in_directory(&exclusions, repository_to_scan);
-                let paths_failed_to_add =
-                    super::apply_diff_and_print(&diff, dry_run, details, logger);
+                let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
+                    &diff, dry_run, details, logger,
+                );
 
                 for path in paths_failed_to_add {
                     exclusions.remove(path);

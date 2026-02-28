@@ -15,7 +15,26 @@ struct ApplyError<'a> {
     added: bool,
 }
 
-fn apply_diff_and_print<'a>(
+trait TimeMachineTrait {
+    fn add_exclusion(path: impl AsRef<Path>) -> Result<(), std::io::Error>;
+    fn remove_exclusion(path: impl AsRef<Path>) -> Result<(), std::io::Error>;
+}
+
+struct TimeMachine;
+
+impl TimeMachineTrait for TimeMachine {
+    fn add_exclusion(path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+        timemachine::add_exclusion(path)
+    }
+
+    fn remove_exclusion(path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+        timemachine::remove_exclusion(path)
+    }
+}
+
+/// Calls TM::add_exclusion and TM::remove_exclusion depending on the diff.
+/// Returns the list of paths failed to be added.
+fn apply_diff_and_print<'a, TM: TimeMachineTrait>(
     diff: &'a crate::diff::Diff,
     dry_run: bool,
     details: bool,
@@ -25,7 +44,7 @@ fn apply_diff_and_print<'a>(
     let mut add_failed_paths = BTreeSet::new();
 
     for path in &diff.added {
-        if !dry_run && let Err(error) = timemachine::add_exclusion(path) {
+        if !dry_run && let Err(error) = TM::add_exclusion(path) {
             add_failed_paths.insert(path);
             errors.push(ApplyError {
                 error,
@@ -38,7 +57,7 @@ fn apply_diff_and_print<'a>(
     for path in &diff.removed {
         if !dry_run
             && path.exists()
-            && let Err(error) = timemachine::remove_exclusion(path)
+            && let Err(error) = TM::remove_exclusion(path)
         {
             errors.push(ApplyError {
                 error,
@@ -135,7 +154,12 @@ pub(crate) mod tests {
 
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
-    use crate::{commands::create_whitelist, config::Config};
+    use crate::{
+        Logger,
+        commands::{TimeMachineTrait, apply_diff_and_print, create_whitelist},
+        config::Config,
+        diff::Diff,
+    };
 
     pub(crate) fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
         let root_directory = root_directory.as_ref();
@@ -175,5 +199,48 @@ pub(crate) mod tests {
         let patterns = BTreeSet::from([String::from("[z-a].txt")]);
         let result = create_whitelist(&patterns).unwrap();
         assert!(result.is_empty());
+    }
+
+    struct MockTimeMachineError;
+
+    impl TimeMachineTrait for MockTimeMachineError {
+        fn add_exclusion(_path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+            Err(std::io::Error::new(std::io::ErrorKind::StorageFull, "fail"))
+        }
+
+        fn remove_exclusion(_path: impl AsRef<Path>) -> Result<(), std::io::Error> {
+            Err(std::io::Error::new(std::io::ErrorKind::StorageFull, "fail"))
+        }
+    }
+
+    #[test]
+    fn test_apply_diff_add_print_error() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_empty_file("a")
+            .build()
+            .unwrap();
+        let mut logger = Logger::new(false);
+        let diff = Diff {
+            added: BTreeSet::from([temp_dir.path().join("a")]),
+            removed: BTreeSet::new(),
+        };
+        let error_paths =
+            apply_diff_and_print::<MockTimeMachineError>(&diff, false, false, &mut logger);
+
+        assert_eq!(1, error_paths.len());
+    }
+
+    #[test]
+    fn test_apply_diff_remove_print_error() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_empty_file("a")
+            .build()
+            .unwrap();
+        let mut logger = Logger::new(false);
+        let diff = Diff {
+            removed: BTreeSet::from([temp_dir.path().join("a")]),
+            added: BTreeSet::new(),
+        };
+        let _ = apply_diff_and_print::<MockTimeMachineError>(&diff, false, false, &mut logger);
     }
 }
