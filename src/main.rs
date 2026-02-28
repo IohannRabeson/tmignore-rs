@@ -7,10 +7,7 @@ mod legacy_cache;
 mod timemachine;
 
 use clap::{Parser, Subcommand};
-use std::{
-    error::Error,
-    path::Path,
-};
+use std::{error::Error, path::Path};
 
 use crate::{
     cache::{Cache, OpenOrCreate, OpenOrCreateError},
@@ -100,7 +97,10 @@ enum OpenCacheError {
     OpenOrCreate(#[from] OpenOrCreateError),
 }
 
-fn open_cache(cache_file_path: impl AsRef<Path>, legacy_cache_file_path: impl AsRef<Path>) -> Result<Cache, OpenCacheError> {
+fn open_cache(
+    cache_file_path: impl AsRef<Path>,
+    legacy_cache_file_path: impl AsRef<Path>,
+) -> Result<Cache, OpenCacheError> {
     let cache_file_path = cache_file_path.as_ref();
 
     std::fs::create_dir_all(
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_open_cache_create_no_legacy() {
-        let temp_dir= TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let cache_file_path = temp_dir.path().join("cache.db");
         let result = open_cache(cache_file_path, temp_dir.path().join("doesnotexist")).unwrap();
 
@@ -164,8 +164,11 @@ mod tests {
     #[test]
     fn test_open_cache_create_legacy() {
         let cache_content = r#"{"paths":["yo"]}"#;
-        let legacy_cache_name= "legacy.json";
-        let temp_dir= TempDirectoryBuilder::default().add_text_file(legacy_cache_name, cache_content).build().unwrap();
+        let legacy_cache_name = "legacy.json";
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file(legacy_cache_name, cache_content)
+            .build()
+            .unwrap();
         let cache_file_path = temp_dir.path().join("cache.db");
         let legacy_file_path = temp_dir.path().join(legacy_cache_name);
         let result = open_cache(cache_file_path, &legacy_file_path).unwrap();
@@ -176,7 +179,7 @@ mod tests {
 
     #[test]
     fn test_open_cache_existing() {
-        let temp_dir= TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let cache_file_path = temp_dir.path().join("cache.db");
         let legacy_cache_path = temp_dir.path().join("dummy");
         {
