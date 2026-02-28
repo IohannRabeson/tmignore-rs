@@ -13,6 +13,11 @@ The most important command is the `monitor` command:
 ```
 tmignore-rs monitor
 ```
+It will monitor the filesystem and will update the list of paths to exclude from Time Machine backups almost instantly, allowing you to 
+ definitively forget about it.
+ 
+This command is very light, excepted the initial scan, it should never affect the performances of you Mac.
+
 ## Show help
 ```
 tmignore-rs --help
@@ -23,15 +28,16 @@ Makes Time Machine respect .gitignore files
 Usage: tmignore-rs <COMMAND>
 
 Commands:
+  monitor  Watch for file changes and keep the exclusion list up to date
   run      Scan for paths to add or remove from the backup exclusion list
   list     Print the backup exclusion list
   reset    Reset the backup exclusion list
-  monitor  Watch for file changes and keep the exclusion list up to date
   help     Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help
   -V, --version  Print version
+
 ```
 You can also get help about a specific command:
 ```
