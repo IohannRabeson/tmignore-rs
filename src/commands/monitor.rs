@@ -103,7 +103,7 @@ pub fn execute(
                 .monitor_interval_secs
                 .unwrap_or(Config::DEFAULT_MONITOR_INTERVAL_SECS),
         );
-        if !repositories_to_scan.is_empty() && elapsed >= run_interval {
+        if !repositories_to_scan.is_empty() && (elapsed >= run_interval || signal.load(std::sync::atomic::Ordering::Relaxed)) {
             for repository_to_scan in &repositories_to_scan {
                 logger.log(format!(
                     "Scanning repository '{}'",
