@@ -32,7 +32,10 @@ enum Commands {
         details: bool,
     },
     /// Print the backup exclusion list
-    List,
+    List {
+        #[arg(short = '0', long)]
+        zero_separator: bool,
+    },
     /// Reset the backup exclusion list
     Reset {
         #[arg(long)]
@@ -71,11 +74,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             commands::run::execute(&config, &mut cache, dry_run, details, &mut logger)
         }
-        Commands::List => {
+        Commands::List { zero_separator } => {
             let mut logger = Logger::new(false);
             let cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
-
-            commands::list::execute(cache, &mut std::io::stdout())
+            let separator = if zero_separator { '\0' } else { '\n' };
+            
+            commands::list::execute(cache, &mut std::io::stdout(), separator)
         },
         Commands::Reset { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
