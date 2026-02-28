@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeSet,
     fs::File,
-    io::{BufReader, Read, Write},
+    io::{BufReader, Read},
     path::{Path, PathBuf},
 };
 
@@ -29,6 +29,7 @@ pub enum LoadError {
     Validation(#[from] ValidationError),
 }
 
+#[cfg(test)]
 #[derive(thiserror::Error, Debug)]
 pub enum SaveError {
     #[error(transparent)]
@@ -102,13 +103,15 @@ impl Config {
         Ok(config)
     }
 
+    #[cfg(test)]
     pub fn save_to_file(&self, file_path: impl AsRef<Path>) -> Result<(), SaveError> {
         let file = File::create(file_path)?;
         self.save(file)?;
         Ok(())
     }
 
-    pub fn save(&self, writer: impl Write) -> Result<(), SaveError> {
+    #[cfg(test)]
+    pub fn save(&self, writer: impl std::io::Write) -> Result<(), SaveError> {
         serde_json::to_writer_pretty(writer, self)?;
         Ok(())
     }

@@ -131,11 +131,11 @@ fn find_paths_to_exclude_from_backup(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::path::Path;
+    use std::{collections::BTreeSet, path::Path};
 
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
-    use crate::config::Config;
+    use crate::{commands::create_whitelist, config::Config};
 
     pub(crate) fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
         let root_directory = root_directory.as_ref();
@@ -168,5 +168,12 @@ pub(crate) mod tests {
             .insert(search_directory.as_ref().to_path_buf());
 
         config
+    }
+
+    #[test]
+    fn test_create_whitelist_invalid() {
+        let patterns = BTreeSet::from([String::from("[z-a].txt")]);
+        let result = create_whitelist(&patterns).unwrap();
+        assert!(result.is_empty());
     }
 }
