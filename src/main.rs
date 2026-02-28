@@ -9,7 +9,7 @@ mod timemachine;
 use clap::{Parser, Subcommand};
 use std::{
     error::Error,
-    path::PathBuf,
+    path::Path,
 };
 
 use crate::{
@@ -58,10 +58,14 @@ enum Commands {
 
 fn main() -> Result<(), Box<dyn Error>> {
     const CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
+    const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
+    const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
 
     let cli = Cli::parse();
     let config_file_path = shellexpand::tilde(CONFIG_FILE_PATH).to_string();
-    let mut cache = open_cache()?;
+    let cache_file_path = shellexpand::tilde(CACHE_FILE_PATH).to_string();
+    let legacy_cache_file_path = shellexpand::tilde(LEGACY_CACHE_FILE_PATH).to_string();
+    let mut cache = open_cache(cache_file_path, legacy_cache_file_path)?;
 
     match cli.command {
         Commands::Run { dry_run, details } => {
@@ -96,9 +100,9 @@ enum OpenCacheError {
     OpenOrCreate(#[from] OpenOrCreateError),
 }
 
-fn open_cache() -> Result<Cache, OpenCacheError> {
-    let cache_file_path =
-        PathBuf::from(shellexpand::tilde("~/Library/Caches/tmignore-rs/cache.db").to_string());
+fn open_cache(cache_file_path: impl AsRef<Path>, legacy_cache_file_path: impl AsRef<Path>) -> Result<Cache, OpenCacheError> {
+    let cache_file_path = cache_file_path.as_ref();
+
     std::fs::create_dir_all(
         cache_file_path
             .parent()
@@ -107,7 +111,7 @@ fn open_cache() -> Result<Cache, OpenCacheError> {
 
     Ok(match Cache::open_or_create(cache_file_path)? {
         OpenOrCreate::Created(mut cache) => {
-            let paths_to_import = LegacyCache::import()?;
+            let paths_to_import = LegacyCache::import(legacy_cache_file_path)?;
             cache.reset(paths_to_import);
             cache
         }
@@ -130,5 +134,58 @@ impl Logger {
         } else {
             println!("{}", str.as_ref());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use temp_dir_builder::TempDirectoryBuilder;
+
+    use crate::{OpenCacheError, open_cache};
+
+    #[test]
+    fn test_open_cache_no_parent_dir() {
+        let result = open_cache("/", "dummy");
+
+        assert!(matches!(result, Err(OpenCacheError::NoCacheDirectory)));
+    }
+
+    #[test]
+    fn test_open_cache_create_no_legacy() {
+        let temp_dir= TempDirectoryBuilder::default().build().unwrap();
+        let cache_file_path = temp_dir.path().join("cache.db");
+        let result = open_cache(cache_file_path, temp_dir.path().join("doesnotexist")).unwrap();
+
+        assert!(result.paths().is_empty());
+    }
+
+    #[test]
+    fn test_open_cache_create_legacy() {
+        let cache_content = r#"{"paths":["yo"]}"#;
+        let legacy_cache_name= "legacy.json";
+        let temp_dir= TempDirectoryBuilder::default().add_text_file(legacy_cache_name, cache_content).build().unwrap();
+        let cache_file_path = temp_dir.path().join("cache.db");
+        let legacy_file_path = temp_dir.path().join(legacy_cache_name);
+        let result = open_cache(cache_file_path, &legacy_file_path).unwrap();
+        let paths = result.paths();
+        assert_eq!(1, paths.len());
+        assert_eq!(PathBuf::from("yo"), paths[0]);
+    }
+
+    #[test]
+    fn test_open_cache_existing() {
+        let temp_dir= TempDirectoryBuilder::default().build().unwrap();
+        let cache_file_path = temp_dir.path().join("cache.db");
+        let legacy_cache_path = temp_dir.path().join("dummy");
+        {
+            let mut cache = open_cache(&cache_file_path, &legacy_cache_path).unwrap();
+            cache.add_paths([PathBuf::from("yo")].into_iter());
+        }
+        let cache = open_cache(&cache_file_path, &legacy_cache_path).unwrap();
+        let paths = cache.paths();
+        assert_eq!(1, paths.len());
+        assert_eq!(PathBuf::from("yo"), paths[0]);
     }
 }
