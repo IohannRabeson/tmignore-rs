@@ -138,6 +138,10 @@ pub(crate) mod tests {
     use crate::config::Config;
 
     pub(crate) fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
+        let root_directory = root_directory.as_ref();
+        if root_directory.exists() && root_directory.is_dir() {
+            std::fs::remove_dir_all(&root_directory).unwrap();
+        }
         let temp_dir = TempDirectoryBuilder::default()
             .root_folder(root_directory)
             .add_text_file(".gitignore", "a\nb\n")
