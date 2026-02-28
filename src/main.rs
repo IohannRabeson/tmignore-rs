@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut logger = Logger::new(false);
             let cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
 
-            commands::list::execute(cache)
+            commands::list::execute(cache, &mut std::io::stdout())
         },
         Commands::Reset { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
