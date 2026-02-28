@@ -7,17 +7,14 @@ mod legacy_cache;
 mod timemachine;
 
 use clap::{Parser, Subcommand};
-use regex::RegexSet;
 use std::{
-    collections::BTreeSet,
     error::Error,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use crate::{
     cache::{Cache, OpenOrCreate, OpenOrCreateError},
     config::Config,
-    git::FindIgnoredFileError,
     legacy_cache::LegacyCache,
 };
 

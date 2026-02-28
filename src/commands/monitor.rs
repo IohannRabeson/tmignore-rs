@@ -40,14 +40,18 @@ pub fn execute(
     details: bool,
     logger: &mut Logger,
 ) -> Result<(), Box<dyn Error>> {
-    let config_file_path = config_file_path.as_ref().to_path_buf();
+    let config_file_path = config_file_path.as_ref().canonicalize()?.to_path_buf();
     let mut config = Config::load_or_create_file(&config_file_path)?;
     let signal = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGTERM, signal.clone())?;
     signal_hook::flag::register(signal_hook::consts::SIGINT, signal.clone())?;
     let (fs_event_sender, fs_event_receiver) =
         crossbeam_channel::bounded::<notify::Result<notify::Event>>(256);
-    let _watcher = create_watcher(fs_event_sender, config.search_directories.iter());
+    let mut _watcher = create_watcher(
+        fs_event_sender.clone(),
+        config.search_directories.iter(),
+        &config_file_path,
+    );
     let mut elapsed = Duration::ZERO;
     let mut now = Instant::now();
     let mut repositories_to_scan = BTreeSet::new();
@@ -59,13 +63,19 @@ pub fn execute(
     while !signal.load(std::sync::atomic::Ordering::Relaxed) {
         match fs_event_receiver.recv_timeout(Duration::from_millis(250)) {
             Ok(event) => {
+                println!("{:?}", event);
                 if let Ok(event) = event {
                     if matches!(
                         event.kind,
-                        notify::EventKind::Modify(notify::event::ModifyKind::Data(_))
+                        notify::EventKind::Create(notify::event::CreateKind::File)
                     ) && event.paths.contains(&config_file_path)
                     {
                         config.reload_file(&config_file_path)?;
+                        _watcher = create_watcher(
+                            fs_event_sender.clone(),
+                            config.search_directories.iter(),
+                            &config_file_path,
+                        );
                         whitelist = super::create_whitelist(&config.whitelist_patterns)?;
                         println!("Configuration reloaded");
                         super::run::execute(&config, cache, dry_run, details, logger)?;
@@ -73,10 +83,12 @@ pub fn execute(
 
                     if accept_event(&config, &event) {
                         let repositories_paths = find_repositories(&event);
-
+                        println!("Event accepted: {:?}", repositories_paths);
                         for path in repositories_paths {
                             repositories_to_scan.insert(path);
                         }
+                    } else {
+                        println!("Event rejected");
                     }
                 }
             }
@@ -140,12 +152,13 @@ fn accept_event(config: &Config, event: &notify::Event) -> bool {
     match &event.kind {
         notify::EventKind::Create(_) => (),
         notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => (),
+        notify::EventKind::Remove(_) => (),
         notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => {
+            // If there is no path that ends with ".gitignore" then reject the event
             if !event.paths.iter().any(|path| path.ends_with(".gitignore")) {
                 return false;
             }
         }
-        notify::EventKind::Remove(_) => (),
         _ => return false,
     }
 
@@ -163,6 +176,7 @@ fn accept_event(config: &Config, event: &notify::Event) -> bool {
 fn create_watcher<'a>(
     sender: Sender<notify::Result<notify::Event>>,
     search_directories: impl Iterator<Item = &'a PathBuf>,
+    configuration_file_path: impl AsRef<Path>,
 ) -> notify::Result<notify::RecommendedWatcher> {
     let mut watcher = notify::recommended_watcher(EventHandler::new(sender))?;
     let mut watcher_paths = watcher.paths_mut();
@@ -170,8 +184,268 @@ fn create_watcher<'a>(
     for directory_path in search_directories {
         watcher_paths.add(directory_path, notify::RecursiveMode::Recursive)?;
     }
+    watcher_paths.add(
+        configuration_file_path.as_ref(),
+        notify::RecursiveMode::NonRecursive,
+    )?;
 
     watcher_paths.commit()?;
 
     Ok(watcher)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{os::unix::fs::PermissionsExt, path::Path, thread, time::Duration};
+
+    use crate::{Logger, cache::Cache, commands::monitor::accept_event, config::Config};
+
+    #[test]
+    fn test_monitor_basic() {
+        let temp_dir = crate::commands::tests::create_repository("test_monitor_basic");
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let file_a_path = temp_dir_path.join("a");
+        let file_b_path = temp_dir_path.join("b");
+
+        let config = crate::commands::tests::create_config(temp_dir.path());
+        let config_file_path = temp_dir.path().join("config.json");
+        config.save_to_file(&config_file_path).unwrap();
+
+        let handle = thread::spawn(move || {
+            let mut cache = Cache::open_in_memory().unwrap();
+            let dry_run = false;
+            let mut logger = Logger::new(dry_run);
+            super::execute(config_file_path, &mut cache, dry_run, false, &mut logger).unwrap();
+
+            cache
+        });
+        thread::sleep(Duration::from_millis(200));
+
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
+
+        let cache = handle.join().unwrap();
+        let paths = cache.paths();
+        assert_eq!(2, paths.len());
+        assert!(paths.contains(&file_a_path));
+        assert!(paths.contains(&file_b_path));
+    }
+
+    #[test]
+    fn test_monitor_update_config() {
+        let temp_dir = crate::commands::tests::create_repository("test_monitor_update_config");
+        let empty_directory = temp_dir.path().join("empty");
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let file_a_path = temp_dir_path.join("a");
+        let file_b_path = temp_dir_path.join("b");
+        std::fs::create_dir_all(&empty_directory).unwrap();
+        let mut config = crate::commands::tests::create_config(&empty_directory);
+        config.monitor_interval_secs = Some(1);
+        let config_file_path = temp_dir.path().join("config.json");
+        config.save_to_file(&config_file_path).unwrap();
+        let config_file_path_thread = config_file_path.clone();
+        let handle = thread::spawn(move || {
+            let mut cache = Cache::open_in_memory().unwrap();
+            let dry_run = false;
+            let mut logger = Logger::new(dry_run);
+            super::execute(
+                config_file_path_thread,
+                &mut cache,
+                dry_run,
+                false,
+                &mut logger,
+            )
+            .unwrap();
+
+            cache
+        });
+        thread::sleep(Duration::from_millis(200));
+        config.search_directories.clear();
+        config
+            .search_directories
+            .insert(temp_dir.path().to_path_buf());
+        config.save_to_file(&config_file_path).unwrap();
+        thread::sleep(Duration::from_millis(1200));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
+
+        let cache = handle.join().unwrap();
+        let paths = cache.paths();
+        assert_eq!(2, paths.len());
+        assert!(paths.contains(&file_a_path));
+        assert!(paths.contains(&file_b_path));
+    }
+
+    fn set_permission(path: impl AsRef<Path>, mode: u32) -> Result<(), std::io::Error> {
+        let path = path.as_ref();
+
+        if !path.is_file() {
+            return Ok(());
+        }
+
+        let f = std::fs::File::open(path)?;
+        let metadata = f.metadata()?;
+        let mut permissions = metadata.permissions();
+
+        permissions.set_mode(mode);
+        f.set_permissions(permissions)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_monitor_file_not_readable() {
+        let temp_dir = crate::commands::tests::create_repository("test_monitor_file_not_readable");
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let file_a_path = temp_dir_path.join("a");
+        let file_b_path = temp_dir_path.join("b");
+        set_permission(file_b_path, 0).unwrap();
+        let config = crate::commands::tests::create_config(temp_dir.path());
+        let config_file_path = temp_dir.path().join("config.json");
+        config.save_to_file(&config_file_path).unwrap();
+
+        let handle = thread::spawn(move || {
+            let mut cache = Cache::open_in_memory().unwrap();
+            let dry_run = false;
+            let mut logger = Logger::new(dry_run);
+            super::execute(config_file_path, &mut cache, dry_run, false, &mut logger).unwrap();
+
+            cache
+        });
+        thread::sleep(Duration::from_millis(200));
+
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
+
+        let cache = handle.join().unwrap();
+        let paths = cache.paths();
+        assert_eq!(1, paths.len());
+        assert_eq!(paths[0], file_a_path);
+    }
+
+    #[test]
+    fn test_monitor_update_config_error() {
+        let temp_dir =
+            crate::commands::tests::create_repository("test_monitor_update_config_error");
+        let empty_directory = temp_dir.path().join("empty");
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let file_a_path = temp_dir_path.join("a");
+        let file_b_path = temp_dir_path.join("b");
+        set_permission(file_b_path, 0).unwrap();
+        std::fs::create_dir_all(&empty_directory).unwrap();
+        let mut config = crate::commands::tests::create_config(&empty_directory);
+        config.monitor_interval_secs = Some(1);
+        let config_file_path = temp_dir.path().join("config.json");
+        config.save_to_file(&config_file_path).unwrap();
+        let config_file_path_thread = config_file_path.clone();
+        let handle = thread::spawn(move || {
+            let mut cache = Cache::open_in_memory().unwrap();
+            let dry_run = false;
+            let mut logger = Logger::new(dry_run);
+            super::execute(
+                config_file_path_thread,
+                &mut cache,
+                dry_run,
+                false,
+                &mut logger,
+            )
+            .unwrap();
+
+            cache
+        });
+        thread::sleep(Duration::from_millis(200));
+        config.search_directories.clear();
+        config
+            .search_directories
+            .insert(temp_dir.path().to_path_buf());
+        config.save_to_file(&config_file_path).unwrap();
+        thread::sleep(Duration::from_millis(1200));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
+
+        let cache = handle.join().unwrap();
+        let paths = cache.paths();
+        assert_eq!(1, paths.len());
+        assert_eq!(file_a_path, paths[0]);
+    }
+
+    #[test]
+    fn test_monitor_removed_file() {
+        let temp_dir = crate::commands::tests::create_repository("test_monitor_removed_file");
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let file_a_path = temp_dir_path.join("a");
+        let file_b_path = temp_dir_path.join("b");
+
+        let mut config = crate::commands::tests::create_config(temp_dir.path());
+        config.monitor_interval_secs = Some(1);
+        let config_file_path = temp_dir.path().join("config.json");
+        config.save_to_file(&config_file_path).unwrap();
+
+        let handle = thread::spawn(move || {
+            let mut cache = Cache::open_in_memory().unwrap();
+            let dry_run = false;
+            let mut logger = Logger::new(dry_run);
+            super::execute(config_file_path, &mut cache, dry_run, false, &mut logger).unwrap();
+
+            cache
+        });
+        thread::sleep(Duration::from_millis(200));
+        std::fs::remove_file(file_b_path).unwrap();
+        thread::sleep(Duration::from_millis(1200));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
+
+        let cache = handle.join().unwrap();
+        let paths = cache.paths();
+        assert_eq!(1, paths.len());
+        assert_eq!(file_a_path, paths[0]);
+    }
+
+    #[test]
+    fn test_monitor_renamed_file() {
+        let temp_dir = crate::commands::tests::create_repository("test_monitor_removed_file");
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let file_a_path = temp_dir_path.join("a");
+        let file_b_path = temp_dir_path.join("b");
+        let file_c_path = temp_dir_path.join("c");
+
+        let mut config = crate::commands::tests::create_config(temp_dir.path());
+        config.monitor_interval_secs = Some(1);
+        let config_file_path = temp_dir.path().join("config.json");
+        config.save_to_file(&config_file_path).unwrap();
+
+        let handle = thread::spawn(move || {
+            let mut cache = Cache::open_in_memory().unwrap();
+            let dry_run = false;
+            let mut logger = Logger::new(dry_run);
+            super::execute(config_file_path, &mut cache, dry_run, false, &mut logger).unwrap();
+
+            cache
+        });
+        thread::sleep(Duration::from_millis(200));
+        std::fs::rename(file_b_path, file_c_path).unwrap();
+        thread::sleep(Duration::from_millis(1200));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
+
+        let cache = handle.join().unwrap();
+        let paths = cache.paths();
+        assert_eq!(1, paths.len());
+        assert_eq!(file_a_path, paths[0]);
+    }
+
+    #[test]
+    fn accept_event_ignored() {
+        let mut config = Config::default();
+        config.ignored_directories.insert("a".into());
+        let event = notify::Event::new(notify::EventKind::Remove(notify::event::RemoveKind::File))
+            .add_path("a".into());
+
+        assert_eq!(false, accept_event(&config, &event));
+    }
 }
