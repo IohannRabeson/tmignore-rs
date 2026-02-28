@@ -11,10 +11,7 @@ pub struct LegacyCache {
 }
 
 impl LegacyCache {
-    pub fn import() -> Result<Vec<PathBuf>, std::io::Error> {
-        let cache_file_path =
-            shellexpand::tilde("~/Library/Caches/tmignore/cache.json").to_string();
-
+    pub fn import(cache_file_path: impl AsRef<Path>) -> Result<Vec<PathBuf>, std::io::Error> {
         Self::load_file(cache_file_path)
     }
 
