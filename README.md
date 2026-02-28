@@ -1,7 +1,9 @@
 # tmignore-rs
 Makes Time Machine respect .gitignore files
-This tool is a drop-in replacement for [tmignore](https://github.com/samuelmeuli/tmignore). 
-It will import the tmignore cache the first time it will launched.
+This tool is a drop-in replacement for [tmignore](https://github.com/samuelmeuli/tmignore) but with
+a brand new command 'monitor' that is updating in real time the cache if changes in the filesystem are detected.
+
+It will happilly import the tmignore cache the first time it will launched.
 
 ## Requirements
 This program runs on MacOS only and it requires Git to be installed.
