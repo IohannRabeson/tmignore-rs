@@ -62,23 +62,30 @@ fn main() -> Result<(), Box<dyn Error>> {
     let config_file_path = shellexpand::tilde(CONFIG_FILE_PATH).to_string();
     let cache_file_path = shellexpand::tilde(CACHE_FILE_PATH).to_string();
     let legacy_cache_file_path = shellexpand::tilde(LEGACY_CACHE_FILE_PATH).to_string();
-    let mut cache = open_cache(cache_file_path, legacy_cache_file_path)?;
 
     match cli.command {
         Commands::Run { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
+            let mut cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
             let config = Config::load_or_create_file(&config_file_path)?;
 
             commands::run::execute(&config, &mut cache, dry_run, details, &mut logger)
         }
-        Commands::List => commands::list::execute(cache),
+        Commands::List => {
+            let mut logger = Logger::new(false);
+            let cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
+
+            commands::list::execute(cache)
+        },
         Commands::Reset { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
+            let mut cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
 
             commands::reset::execute(&mut cache, dry_run, details, &mut logger)
         }
         Commands::Monitor { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
+            let mut cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
 
             commands::monitor::execute(&config_file_path, &mut cache, dry_run, details, &mut logger)
         }
@@ -100,6 +107,7 @@ enum OpenCacheError {
 fn open_cache(
     cache_file_path: impl AsRef<Path>,
     legacy_cache_file_path: impl AsRef<Path>,
+    logger: &mut Logger,
 ) -> Result<Cache, OpenCacheError> {
     let cache_file_path = cache_file_path.as_ref();
 
@@ -111,7 +119,7 @@ fn open_cache(
 
     Ok(match Cache::open_or_create(cache_file_path)? {
         OpenOrCreate::Created(mut cache) => {
-            let paths_to_import = LegacyCache::import(legacy_cache_file_path)?;
+            let paths_to_import = LegacyCache::import(legacy_cache_file_path, logger)?;
             cache.reset(paths_to_import);
             cache
         }
@@ -143,11 +151,12 @@ mod tests {
 
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::{OpenCacheError, open_cache};
+    use crate::{Logger, OpenCacheError, open_cache};
 
     #[test]
     fn test_open_cache_no_parent_dir() {
-        let result = open_cache("/", "dummy");
+        let mut logger = Logger::new(false);
+        let result = open_cache("/", "dummy", &mut logger);
 
         assert!(matches!(result, Err(OpenCacheError::NoCacheDirectory)));
     }
@@ -156,7 +165,8 @@ mod tests {
     fn test_open_cache_create_no_legacy() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let cache_file_path = temp_dir.path().join("cache.db");
-        let result = open_cache(cache_file_path, temp_dir.path().join("doesnotexist")).unwrap();
+        let mut logger = Logger::new(false);
+        let result = open_cache(cache_file_path, temp_dir.path().join("doesnotexist"), &mut logger).unwrap();
 
         assert!(result.paths().is_empty());
     }
@@ -171,7 +181,8 @@ mod tests {
             .unwrap();
         let cache_file_path = temp_dir.path().join("cache.db");
         let legacy_file_path = temp_dir.path().join(legacy_cache_name);
-        let result = open_cache(cache_file_path, &legacy_file_path).unwrap();
+        let mut logger = Logger::new(false);
+        let result = open_cache(cache_file_path, &legacy_file_path, &mut logger).unwrap();
         let paths = result.paths();
         assert_eq!(1, paths.len());
         assert_eq!(PathBuf::from("yo"), paths[0]);
@@ -182,11 +193,12 @@ mod tests {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let cache_file_path = temp_dir.path().join("cache.db");
         let legacy_cache_path = temp_dir.path().join("dummy");
+        let mut logger = Logger::new(false);
         {
-            let mut cache = open_cache(&cache_file_path, &legacy_cache_path).unwrap();
+            let mut cache = open_cache(&cache_file_path, &legacy_cache_path, &mut logger).unwrap();
             cache.add_paths([PathBuf::from("yo")].into_iter());
         }
-        let cache = open_cache(&cache_file_path, &legacy_cache_path).unwrap();
+        let cache = open_cache(&cache_file_path, &legacy_cache_path, &mut logger).unwrap();
         let paths = cache.paths();
         assert_eq!(1, paths.len());
         assert_eq!(PathBuf::from("yo"), paths[0]);
