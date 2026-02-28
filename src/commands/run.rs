@@ -55,16 +55,20 @@ pub(crate) mod tests {
 
     #[test]
     fn test_command() {
-        let temp_dir = crate::commands::tests::create_repository("run_command_test_command");
+        let temp_dir = crate::commands::tests::create_repository("test_run_command");
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = false;
         let mut logger = Logger::new(dry_run);
         super::execute(&config, &mut cache, dry_run, false, &mut logger).unwrap();
-        let a_file_path = temp_dir.path().join("a");
-        let b_file_path = temp_dir.path().join("b");
-        let c_file_path = temp_dir.path().join("c");
-        assert_eq!(2, cache.paths().len());
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let a_file_path = temp_dir_path.join("a");
+        let b_file_path = temp_dir_path.join("b");
+        let c_file_path = temp_dir_path.join("c");
+        let paths = cache.paths();
+        assert_eq!(2, paths.len());
+        assert_eq!(a_file_path, paths[0]);
+        assert_eq!(b_file_path, paths[1]);
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
             a_file_path
         ));

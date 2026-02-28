@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeSet,
     fs::File,
-    io::{BufReader, Read},
+    io::{BufReader, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -27,6 +27,14 @@ pub enum LoadError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Validation(#[from] ValidationError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum SaveError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -92,6 +100,17 @@ impl Config {
         Self::expand(&mut config);
         Self::validate(&config)?;
         Ok(config)
+    }
+
+    pub fn save_to_file(&self, file_path: impl AsRef<Path>) -> Result<(), SaveError> {
+        let file = File::create(file_path)?;
+        self.save(file)?;
+        Ok(())
+    }
+
+    pub fn save(&self, writer: impl Write) -> Result<(), SaveError> {
+        serde_json::to_writer_pretty(writer, self)?;
+        Ok(())
     }
 
     fn expand(config: &mut Config) {

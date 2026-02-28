@@ -820,6 +820,7 @@ dependencies = [
  "crossbeam-channel",
  "fnmatch-regex",
  "ignore",
+ "libc",
  "notify",
  "regex",
  "rusqlite",
