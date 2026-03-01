@@ -1,0 +1,24 @@
+name: Coverage
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v5
+    - run: rustup toolchain install stable --profile minimal
+    - run: cargo install --locked cargo-tarpaulin
+    - run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
+    - name: Upload to codecov.io
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{secrets.CODECOV_TOKEN}}
+        fail_ci_if_error: true
