@@ -390,7 +390,7 @@ mod tests {
         let file_b_path = temp_dir_path.join("b");
 
         let mut config = crate::commands::tests::create_config(&temp_dir_path);
-        config.monitor_interval_secs = Some(1);
+        config.monitor_interval_secs = Some(0);
         let config_file_path = temp_dir_path.join("config.json");
         config.save_to_file(&config_file_path).unwrap();
 
