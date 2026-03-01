@@ -1,4 +1,4 @@
-# tmignore-rs
+# tmignore-rs [![codecov](https://codecov.io/gh/IohannRabeson/tmignore-rs/graph/badge.svg?token=B5Q69GVFGN)](https://codecov.io/gh/IohannRabeson/tmignore-rs)
 Makes Time Machine respect .gitignore files
 This tool is a drop-in replacement for [tmignore](https://github.com/samuelmeuli/tmignore) but with
 a brand new command 'monitor' that is updating in real time the cache if changes in the filesystem are detected.
@@ -94,3 +94,6 @@ scripts/codesign-for-instruments.sh target/release-with-debug/tmignore-rs
 ## Tests
 I had an issue using the temp folder returned by std::env::temp_dir(). This folder
 is excluded from Time machine backup by default making testing impossible.
+
+## Coverage
+![Coverage chart](https://codecov.io/gh/IohannRabeson/tmignore-rs/graphs/tree.svg?token=B5Q69GVFGN)
