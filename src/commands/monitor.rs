@@ -479,7 +479,7 @@ mod tests {
         std::fs::File::create(&file_a_path).unwrap();
         std::fs::write(gitignore_file_path, "a\nb\n").unwrap();
         std::fs::File::create(&file_b_path).unwrap();
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(1200));
         unsafe {
             libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
         }
