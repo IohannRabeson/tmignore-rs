@@ -73,4 +73,24 @@ pub(crate) mod tests {
         remove_exclusion(&test_file).unwrap();
         assert_eq!(false, is_excluded_from_time_machine(&test_file));
     }
+
+    #[test]
+    fn test_add_exclusion_directory() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .root_folder(
+                std::env::current_dir()
+                    .unwrap()
+                    .join("temp_dir_for_testing_test_add_exclusion_directory"),
+            )
+            .add_empty_file("dir/test.txt")
+            .build()
+            .unwrap();
+        let test_dir = temp_dir.path().join("dir");
+        let test_file = test_dir.join("test.txt");
+        assert_eq!(false, is_excluded_from_time_machine(&test_dir));
+        assert_eq!(false, is_excluded_from_time_machine(&test_file));
+        add_exclusion(&test_dir).unwrap();
+        assert_eq!(true, is_excluded_from_time_machine(&test_dir));
+        assert_eq!(true, is_excluded_from_time_machine(&test_file));
+    }
 }
