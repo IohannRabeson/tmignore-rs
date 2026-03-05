@@ -11,6 +11,7 @@ use std::{error::Error, path::Path};
 
 use crate::{
     cache::{Cache, OpenOrCreate, OpenOrCreateError},
+    commands::monitor::Monitor,
     config::Config,
     legacy_cache::LegacyCache,
 };
@@ -80,7 +81,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let separator = if zero_separator { '\0' } else { '\n' };
 
             commands::list::execute(cache, &mut std::io::stdout(), separator)
-        },
+        }
         Commands::Reset { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
             let mut cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
@@ -90,8 +91,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         Commands::Monitor { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
             let mut cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
+            let mut monitor = Monitor::new(&config_file_path)?;
 
-            commands::monitor::execute(&config_file_path, &mut cache, dry_run, details, &mut logger)
+            commands::monitor::execute(
+                &config_file_path,
+                &mut cache,
+                dry_run,
+                details,
+                &mut logger,
+                &mut monitor,
+            )
         }
     }?;
 
@@ -170,7 +179,12 @@ mod tests {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let cache_file_path = temp_dir.path().join("cache.db");
         let mut logger = Logger::new(false);
-        let result = open_cache(cache_file_path, temp_dir.path().join("doesnotexist"), &mut logger).unwrap();
+        let result = open_cache(
+            cache_file_path,
+            temp_dir.path().join("doesnotexist"),
+            &mut logger,
+        )
+        .unwrap();
 
         assert!(result.paths().is_empty());
     }
