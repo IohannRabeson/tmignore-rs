@@ -19,7 +19,7 @@ impl LegacyCache {
             return Ok(vec![]);
         }
         logger.log(format!("Importing legacy cache file '{}'...", cache_file_path.display()));
-        let file = std::fs::File::open(&cache_file_path)?;
+        let file = std::fs::File::open(cache_file_path)?;
         let cache: Self = serde_json::from_reader(BufReader::new(file))?;
         logger.log(format!("Imported successfully! You can now delete '{}' if you wish.",
             cache_file_path.display()));
