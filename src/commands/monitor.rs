@@ -158,7 +158,7 @@ pub enum Event {
     Shutdown,
 }
 
-trait MonitorTrait {
+pub trait MonitorTrait {
     /// Set the watched directories.
     /// The previous directories are cleared.
     fn set_watched_directories(&mut self, directory_paths: &BTreeSet<PathBuf>)

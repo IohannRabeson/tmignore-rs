@@ -33,7 +33,7 @@ pub enum OpenOrCreateError {
     Sqlite(#[from] rusqlite::Error),
 }
 
-fn path_to_bytes<'a>(path: &'a Path) -> &'a [u8] {
+fn path_to_bytes(path: &Path) -> &[u8] {
     path.as_os_str().as_bytes()
 }
 
