@@ -282,7 +282,7 @@ impl MonitorTrait for Monitor {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{BTreeSet, VecDeque},
+        collections::BTreeSet,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
         thread::{self, JoinHandle},
@@ -300,7 +300,6 @@ mod tests {
             monitor::{self, Event, Monitor, MonitorTrait},
             tests::init_git_repository,
         },
-        config::Config,
     };
 
     struct MockMonitor {
@@ -517,7 +516,6 @@ mod tests {
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let file_a_path = temp_dir_path.join("a");
         let file_b_path = temp_dir_path.join("b");
-
         let config = crate::commands::tests::create_config(&temp_dir_path);
         let config_file_path = temp_dir_path.join("config.json");
         config.save_to_file(&config_file_path).unwrap();
@@ -726,5 +724,20 @@ mod tests {
             libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
         }
         assert!(handle.join().unwrap());
+    }
+
+    #[test]
+    fn test_set_watched_directories_error() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_directory("repository")
+            .add_directory("repository/.git")
+            .add_empty_file("config.json")
+            .build()
+            .unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let config_file_path = temp_dir_path.join("config.json");
+        let mut monitor = Monitor::new(config_file_path).unwrap();
+        let errors = monitor.set_watched_directories(&BTreeSet::from([temp_dir_path.join("does not exist")]));
+        assert_eq!(1, errors.len());
     }
 }
