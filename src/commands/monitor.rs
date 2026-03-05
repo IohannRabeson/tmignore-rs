@@ -255,7 +255,6 @@ impl MonitorTrait for Monitor {
 
         match self.event_receiver.recv_timeout(timeout) {
             Ok(Ok(event)) => {
-                println!("Event: {:?} {:?}", event.kind, event.paths);
                 if matches!(
                     event.kind,
                     notify::EventKind::Modify(notify::event::ModifyKind::Data(notify::event::DataChange::Content))
