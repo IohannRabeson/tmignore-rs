@@ -273,7 +273,12 @@ impl MonitorTrait for Monitor {
             }
             Ok(Err(_)) => (),
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => (),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return Some(Event::Shutdown),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                // To be able to be disconnected, you must drop self.watcher somehow.
+                // And once you dropped self.watcher you can't call self.get_event() anymore because
+                // self has been partially moved.
+                unreachable!()
+            },
         }
         None
     }
