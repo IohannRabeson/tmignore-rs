@@ -92,8 +92,11 @@ scripts/codesign-for-instruments.sh target/release-with-debug/tmignore-rs
 ```
 
 ## Tests
-I had an issue using the temp folder returned by std::env::temp_dir(). This folder
-is excluded from Time machine backup by default making testing impossible.
+I had an issue using the temp folder returned by std::env::temp_dir().  
+This folder is excluded from Time machine backup by default making some testing impossible.
 
 ## Coverage
+I'm using [Tarpaulin](https://github.com/xd009642/tarpaulin) to measure test coverage.
+When developing run tarpaulin before doing changes, then run it with your changes and tarpaulin will tell you how the coverage progressed.
+
 ![Coverage chart](https://codecov.io/gh/IohannRabeson/tmignore-rs/graphs/tree.svg?token=B5Q69GVFGN)
