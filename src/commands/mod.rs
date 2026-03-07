@@ -3,71 +3,57 @@ pub mod monitor;
 pub mod reset;
 pub mod run;
 
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, path::{Path, PathBuf}};
 
 use regex::RegexSet;
 
-use crate::{Logger, git, timemachine};
-
-struct ApplyError<'a> {
-    error: std::io::Error,
-    path: &'a Path,
-    added: bool,
-}
+use crate::{Logger, git, timemachine::{self, BreakingError, Error}};
 
 trait TimeMachineTrait {
-    fn add_exclusion(path: impl AsRef<Path>) -> Result<(), std::io::Error>;
-    fn remove_exclusion(path: impl AsRef<Path>) -> Result<(), std::io::Error>;
+    fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError>;
+    fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError>;
 }
 
 struct TimeMachine;
 
 impl TimeMachineTrait for TimeMachine {
-    fn add_exclusion(path: impl AsRef<Path>) -> Result<(), std::io::Error> {
-        timemachine::add_exclusion(path)
+    fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError> {
+        timemachine::add_exclusions(paths)
     }
 
-    fn remove_exclusion(path: impl AsRef<Path>) -> Result<(), std::io::Error> {
-        timemachine::remove_exclusion(path)
+    fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError> {
+        timemachine::remove_exclusions(paths)
     }
 }
 
 /// Calls TM::add_exclusion and TM::remove_exclusion depending on the diff.
 /// Returns the list of paths failed to be added.
-fn apply_diff_and_print<'a, TM: TimeMachineTrait>(
-    diff: &'a crate::diff::Diff,
+fn apply_diff_and_print<TM: TimeMachineTrait>(
+    diff: &crate::diff::Diff,
     dry_run: bool,
     details: bool,
     logger: &mut Logger,
-) -> Vec<&'a Path> {
-    let mut errors = Vec::new();
+) -> Result<Vec<PathBuf>, BreakingError> {
+    
     let mut add_failed_paths = BTreeSet::new();
 
-    for path in &diff.added {
-        if !dry_run && let Err(error) = TM::add_exclusion(path) {
-            add_failed_paths.insert(path);
-            errors.push(ApplyError {
-                error,
-                path,
-                added: true,
-            });
+    let mut add_errors = Vec::new();
+    if !dry_run {
+        let mut exclusion_errors = TM::add_exclusions(diff.added.iter())?;
+        for exclusion_error in &exclusion_errors {
+            add_failed_paths.insert(exclusion_error.path.clone());
         }
+        add_errors.append(&mut exclusion_errors);
     }
 
-    for path in &diff.removed {
-        if !dry_run
-            && path.exists()
-            && let Err(error) = TM::remove_exclusion(path)
-        {
-            errors.push(ApplyError {
-                error,
-                path,
-                added: false,
-            });
-        }
+    let mut remove_errors = Vec::new();
+    if !dry_run {
+        let mut exclusion_errors = TM::remove_exclusions(diff.removed.iter())?;
+        
+        remove_errors.append(&mut exclusion_errors);
     }
 
-    let add_count = diff.added.len() - add_failed_paths.len();
+    let add_count = diff.added.len() - add_errors.len();
     let remove_count = diff.removed.len();
 
     if add_count > 0 {
@@ -102,15 +88,14 @@ fn apply_diff_and_print<'a, TM: TimeMachineTrait>(
         }
     }
 
-    for error in &errors {
-        eprintln!("Error: {}: {}", error.path.display(), error.error);
+    for error in add_errors.iter().chain(remove_errors.iter()) {
+        eprintln!("Error: {}: {}", error.path.display(), error.message);
     }
 
-    errors
+    Ok(add_errors
         .into_iter()
-        .filter(|error| error.added)
-        .map(|entry| entry.path)
-        .collect()
+        .map(|error| error.path.clone())
+        .collect())
 }
 
 fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, regex::Error> {
@@ -150,7 +135,7 @@ fn find_paths_to_exclude_from_backup(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{collections::BTreeSet, path::Path};
+    use std::{collections::BTreeSet, path::{Path, PathBuf}};
 
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
@@ -158,7 +143,7 @@ pub(crate) mod tests {
         Logger,
         commands::{TimeMachineTrait, apply_diff_and_print, create_whitelist},
         config::Config,
-        diff::Diff,
+        diff::Diff, timemachine::{BreakingError, Error},
     };
 
     pub(crate) fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
@@ -207,13 +192,17 @@ pub(crate) mod tests {
 
     struct MockTimeMachineError;
 
-    impl TimeMachineTrait for MockTimeMachineError {
-        fn add_exclusion(_path: impl AsRef<Path>) -> Result<(), std::io::Error> {
-            Err(std::io::Error::new(std::io::ErrorKind::StorageFull, "fail"))
+    impl TimeMachineTrait for MockTimeMachineError {      
+        fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError> {
+            Ok(paths.map(|path|{
+                Error { path: path.clone(), message: "fail".into() }
+            }).collect())
         }
-
-        fn remove_exclusion(_path: impl AsRef<Path>) -> Result<(), std::io::Error> {
-            Err(std::io::Error::new(std::io::ErrorKind::StorageFull, "fail"))
+        
+        fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError> {
+            Ok(paths.map(|path|{
+                Error { path: path.clone(), message: "fail".into() }
+            }).collect())
         }
     }
 
@@ -229,7 +218,7 @@ pub(crate) mod tests {
             removed: BTreeSet::new(),
         };
         let error_paths =
-            apply_diff_and_print::<MockTimeMachineError>(&diff, false, false, &mut logger);
+            apply_diff_and_print::<MockTimeMachineError>(&diff, false, false, &mut logger).unwrap();
 
         assert_eq!(1, error_paths.len());
     }

@@ -97,10 +97,10 @@ pub fn execute(
                                 cache.find_diff_in_directory(&exclusions, repository_to_scan);
                             let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
                                 &diff, dry_run, details, logger,
-                            );
+                            )?;
 
                             for path in paths_failed_to_add {
-                                exclusions.remove(path);
+                                exclusions.remove(&path);
                             }
 
                             if !dry_run {
