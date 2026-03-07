@@ -10,7 +10,7 @@ pub fn execute(
 ) -> Result<(), Box<dyn Error>> {
     let diff = cache.find_diff(&BTreeSet::new());
 
-    super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details, logger);
+    super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details, logger)?;
 
     if !dry_run {
         cache.reset([]);
