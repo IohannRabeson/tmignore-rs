@@ -66,20 +66,21 @@ Here is the default configuration created automatically the first time you run t
   "monitor_interval_secs": 5
 }
 ```
-### `searchPaths`
+### `search_directories`
 The list of the directories to scan.
 
-### `ignoredPaths`
+### `ignored_directories`
 The list of directories to ignore.
 
-### `threads`
-The `threads` parameter is optional, if missing the value 0 is used. 0 means the count of threads is not limited.
-
-### `whitelist`
-The `whitelist` array expects glob-style patterns:  
+### `whitelist_patterns`
+The list of entries that should always be included in backup.
+The `whitelist_patterns` array expects glob-style patterns:  
  - `*.broguerec` matches all files with the `.broguerec` extension
  - `*/BrogueRunHistory.txt` matches all files named `BrogueRunHistory.txt`
 See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
+
+### `threads`
+The `threads` parameter is optional, if missing the value 0 is used. 0 means the count of threads is not limited.
 
 ## Profiling
 There is a dedicated profile named `release-with-debug`, you can use it with:

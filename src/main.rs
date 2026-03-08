@@ -4,7 +4,9 @@ mod config;
 mod diff;
 mod git;
 mod legacy_cache;
+mod legacy_config;
 mod timemachine;
+mod json;
 
 use clap::{Parser, Subcommand};
 use std::{error::Error, path::Path};
@@ -58,14 +60,18 @@ enum Commands {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    const CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
+    const CONFIG_FILE_PATH: &str = "~/.config/tmignore-rs/config.json";
     const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
+    const LEGACY_CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
     const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
 
     let cli = Cli::parse();
     let config_file_path = shellexpand::tilde(CONFIG_FILE_PATH).to_string();
     let cache_file_path = shellexpand::tilde(CACHE_FILE_PATH).to_string();
+    let legacy_config_file_path = shellexpand::tilde(LEGACY_CONFIG_FILE_PATH).to_string();
     let legacy_cache_file_path = shellexpand::tilde(LEGACY_CACHE_FILE_PATH).to_string();
+
+    import_legacy_config_file(&legacy_config_file_path, &config_file_path)?;
 
     match cli.command {
         Commands::Run { dry_run, details } => {
@@ -138,6 +144,23 @@ fn open_cache(
         }
         OpenOrCreate::Opened(cache) => cache,
     })
+}
+
+fn import_legacy_config_file(legacy_config_file_path: impl AsRef<Path>, config_file_path: impl AsRef<Path>) -> Result<(), json::Error> {
+    let legacy_config_file_path = legacy_config_file_path.as_ref();
+    let config_file_path = config_file_path.as_ref();
+    if !legacy_config_file_path.is_file() || config_file_path.is_file() {
+        return Ok(())
+    }
+    println!("Importing legacy cache '{}'...", legacy_config_file_path.display());
+    let legacy_config = json::load_json_file(&legacy_config_file_path)?;
+    let new_config = Config::from(&legacy_config);
+    if let Some(parent) = config_file_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    json::save_json_file(&config_file_path, &new_config)?;
+    println!("Done.");
+    Ok(())
 }
 
 struct Logger {
@@ -220,5 +243,10 @@ mod tests {
         let paths = cache.paths();
         assert_eq!(1, paths.len());
         assert_eq!(PathBuf::from("yo"), paths[0]);
+    }
+
+    #[test]
+    fn test_import_legacy_config_file() {
+        let legacy_cache = r#""#;
     }
 }
