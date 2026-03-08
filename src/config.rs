@@ -7,16 +7,20 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::legacy_config::LegacyConfig;
+
 #[derive(Serialize, Deserialize)]
 pub struct Config {
-    #[serde(rename = "searchPaths")]
+    /// The list of the directories to scan.
     pub search_directories: BTreeSet<PathBuf>,
-    #[serde(rename = "ignoredPaths")]
+    /// The list of directories to ignore.
     pub ignored_directories: BTreeSet<PathBuf>,
-    #[serde(rename = "whitelist")]
+    /// The list of patterns filtering the entries that should always be included in backup.
     pub whitelist_patterns: BTreeSet<String>,
-    pub threads: Option<usize>,
-    pub monitor_interval_secs: Option<u64>,
+    /// Count of threads used for scanning the file system.
+    pub threads: usize,
+    /// Monitoring interval in seconds.
+    pub monitor_interval_secs: u64,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -38,6 +42,17 @@ pub enum SaveError {
     Json(#[from] serde_json::Error),
 }
 
+impl From<&LegacyConfig> for Config {
+    fn from(legacy_config: &LegacyConfig) -> Self {
+        Self {
+            search_directories: legacy_config.search_directories.clone(),
+            ignored_directories: legacy_config.ignored_directories.clone(),
+            whitelist_patterns: legacy_config.whitelist_patterns.clone(),
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub struct ValidationError {
     pub fails: Vec<ValidationFail>,
@@ -55,10 +70,10 @@ impl std::fmt::Display for ValidationError {
 
 #[derive(thiserror::Error, Debug)]
 pub enum ValidationFail {
-    #[error("File in searchPaths: {0}")]
+    #[error("File in search_directories: {0}")]
     FileInSearchPaths(PathBuf),
-    #[error("File in ignoredPaths: {0}")]
-    FileInIgnoredPaths(PathBuf),
+    #[error("File in ignored_directories: {0}")]
+    FileInIgnoredDirectories(PathBuf),
     #[error("Not found {0}")]
     NotFound(PathBuf),
     #[error("No search directories")]
@@ -148,7 +163,7 @@ impl Config {
 
         for path in &config.ignored_directories {
             if path.is_file() {
-                fails.push(ValidationFail::FileInIgnoredPaths(path.clone()));
+                fails.push(ValidationFail::FileInIgnoredDirectories(path.clone()));
             }
         }
 
@@ -191,8 +206,8 @@ impl Default for Config {
                 "~/Pictures/Photos Library.photoslibrary".into(),
             ]),
             whitelist_patterns: BTreeSet::new(),
-            threads: Some(Self::DEFAULT_THREADS),
-            monitor_interval_secs: Some(Self::DEFAULT_MONITOR_INTERVAL_SECS),
+            threads: Self::DEFAULT_THREADS,
+            monitor_interval_secs: Self::DEFAULT_MONITOR_INTERVAL_SECS,
         }
     }
 }
@@ -229,9 +244,11 @@ mod tests {
     #[test]
     fn test_expand_loaded() {
         let json = r#"
-{ "searchPaths": ["~"],
-  "ignoredPaths": [],
-  "whitelist": [] }
+{ "search_directories": ["~"],
+  "ignored_directories": [],
+  "whitelist_patterns": [],
+  "threads": 4,
+  "monitor_interval_secs": 5 }
 "#;
         let config = Config::load(json.as_bytes()).unwrap();
         let search_directories: Vec<_> = config.search_directories.iter().collect();
@@ -243,9 +260,11 @@ mod tests {
     #[test]
     fn test_expand_reloaded() {
         let json = r#"
-{ "searchPaths": ["~"],
-  "ignoredPaths": [],
-  "whitelist": [] }
+{ "search_directories": ["~"],
+  "ignored_directories": [],
+  "whitelist_patterns": [],
+  "threads": 4,
+  "monitor_interval_secs": 5 }
 "#;
         let mut config = Config::load(json.as_bytes()).unwrap();
         config.reload(json.as_bytes()).unwrap();
@@ -259,8 +278,8 @@ mod tests {
     fn test_missing_required_field() {
         let json = r#"
 {
-"ignoredPaths": [],
-"whitelist": [] }
+"ignored_directories": [],
+"whitelist_patterns": [] }
 "#;
         let result = Config::load(json.as_bytes());
 
@@ -271,9 +290,11 @@ mod tests {
     fn test_search_paths_does_not_exist() {
         let json = r#"
 {
-"searchPaths": ["/does_not_exist"],
-"ignoredPaths": [],
-"whitelist": [] }
+"search_directories": ["/does_not_exist"],
+"ignored_directories": [],
+"whitelist_patterns": [],
+"threads": 4,
+"monitor_interval_secs": 5 }
 "#;
         let result = Config::load(json.as_bytes());
 
@@ -284,9 +305,11 @@ mod tests {
     fn test_no_search_paths() {
         let json = r#"
 {
-"searchPaths": [],
-"ignoredPaths": [],
-"whitelist": [] }
+"search_directories": [],
+"ignored_directories": [],
+"whitelist_patterns": [],
+"threads": 4,
+"monitor_interval_secs": 5 }
 "#;
         let result = Config::load(json.as_bytes());
 
@@ -296,15 +319,19 @@ mod tests {
     #[test]
     fn test_reload() {
         let json = r#"
-{ "searchPaths": ["~"],
-  "ignoredPaths": [],
-  "whitelist": [] }
+{ "search_directories": ["~"],
+  "ignored_directories": [],
+  "whitelist_patterns": [],
+  "threads": 4,
+  "monitor_interval_secs": 5 }
 "#;
         let mut config = Config::load(json.as_bytes()).unwrap();
         let json = r#"
-{ "searchPaths": ["~"],
-  "ignoredPaths": ["~"],
-  "whitelist": [] }
+{ "search_directories": ["~"],
+  "ignored_directories": ["~"],
+  "whitelist_patterns": [],
+  "threads": 4,
+  "monitor_interval_secs": 5 }
 "#;
         config.reload(json.as_bytes()).unwrap();
 
@@ -314,15 +341,19 @@ mod tests {
     #[test]
     fn test_reload_error() {
         let json = r#"
-{ "searchPaths": ["~"],
-  "ignoredPaths": [],
-  "whitelist": [] }
+{ "search_directories": ["~"],
+  "ignored_directories": [],
+  "whitelist_patterns": [],
+  "threads": 4,
+  "monitor_interval_secs": 5 }
 "#;
         let mut config = Config::load(json.as_bytes()).unwrap();
         let invalid_json = r#"
-{ "searchPaths": [],
-  "ignoredPaths": [],
-  "whitelist": [] }
+{ "search_directories": [],
+  "ignored_directories": [],
+  "whitelist_patterns": [],
+  "threads": 4,
+  "monitor_interval_secs": 5 }
 "#;
         assert!(config.reload(invalid_json.as_bytes()).is_err());
         assert_eq!(1, config.search_directories.len());

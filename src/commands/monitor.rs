@@ -44,8 +44,7 @@ pub fn execute(
     let mut config = Config::load_or_create_file(&config_file_path)?;
     let mut run_interval = Duration::from_secs(
         config
-            .monitor_interval_secs
-            .unwrap_or(Config::DEFAULT_MONITOR_INTERVAL_SECS),
+            .monitor_interval_secs,
     );
     let mut elapsed = Duration::ZERO;
     let mut now = Instant::now();
@@ -73,8 +72,7 @@ pub fn execute(
                         config.reload_file(&config_file_path)?;
                         run_interval = Duration::from_secs(
                             config
-                                .monitor_interval_secs
-                                .unwrap_or(Config::DEFAULT_MONITOR_INTERVAL_SECS),
+                                .monitor_interval_secs,
                         );
                         whitelist = super::create_whitelist(&config.whitelist_patterns)?;
                         monitor.set_watched_directories(&config.search_directories);
@@ -477,7 +475,7 @@ mod tests {
         set_permission(file_b_path, 0).unwrap();
         std::fs::create_dir_all(&empty_directory).unwrap();
         let mut config = crate::commands::tests::create_config(&empty_directory);
-        config.monitor_interval_secs = Some(1);
+        config.monitor_interval_secs = 1;
         let config_file_path = temp_dir.path().join("config.json");
         config.save_to_file(&config_file_path).unwrap();
         let config_file_path_thread = config_file_path.clone();
@@ -551,7 +549,7 @@ mod tests {
         let file_b_path = temp_dir_path.join("b");
         let file_d_path = temp_dir_path.join("d");
         let mut config = crate::commands::tests::create_config(&temp_dir_path);
-        config.monitor_interval_secs = Some(1);
+        config.monitor_interval_secs = 1;
         let config_file_path = temp_dir_path.join("config.json");
         config.save_to_file(&config_file_path).unwrap();
         let (mut monitor, event_sender) = MockMonitor::new();
@@ -588,7 +586,7 @@ mod tests {
         let root_folder_path = temp_dir.path().canonicalize().unwrap();
         let mut config = crate::commands::tests::create_config(&root_folder_path);
         let config_file_path = root_folder_path.join("config.json");
-        config.monitor_interval_secs = Some(0);
+        config.monitor_interval_secs = 0;
         config.save_to_file(&config_file_path).unwrap();
         let (mut monitor, event_sender) = MockMonitor::new();
         let handle = thread::spawn(move || {

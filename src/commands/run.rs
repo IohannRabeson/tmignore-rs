@@ -23,7 +23,7 @@ pub fn execute(
     if let Some((rx, thread_handle)) = git::find_repositories(
         &config.search_directories,
         &config.ignored_directories,
-        config.threads.unwrap_or_default(),
+        config.threads,
     ) {
         while let Ok(repository_path) = rx.recv() {
             repositories.insert(repository_path.clone());
