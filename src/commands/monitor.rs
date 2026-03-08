@@ -42,10 +42,7 @@ pub fn execute(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_file_path = config_file_path.as_ref().canonicalize()?.to_path_buf();
     let mut config = Config::load_or_create_file(&config_file_path)?;
-    let mut run_interval = Duration::from_secs(
-        config
-            .monitor_interval_secs,
-    );
+    let mut run_interval = Duration::from_secs(config.monitor_interval_secs);
     let mut elapsed = Duration::ZERO;
     let mut now = Instant::now();
     let mut whitelist = super::create_whitelist(&config.whitelist_patterns)?;
@@ -70,10 +67,7 @@ pub fn execute(
                 match event {
                     Event::ReloadConfiguration => {
                         config.reload_file(&config_file_path)?;
-                        run_interval = Duration::from_secs(
-                            config
-                                .monitor_interval_secs,
-                        );
+                        run_interval = Duration::from_secs(config.monitor_interval_secs);
                         whitelist = super::create_whitelist(&config.whitelist_patterns)?;
                         monitor.set_watched_directories(&config.search_directories);
                         logger.log("Configuration reloaded");
@@ -255,7 +249,9 @@ impl MonitorTrait for Monitor {
             Ok(Ok(event)) => {
                 if matches!(
                     event.kind,
-                    notify::EventKind::Modify(notify::event::ModifyKind::Data(notify::event::DataChange::Content))
+                    notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                        notify::event::DataChange::Content
+                    ))
                 ) && event.paths.contains(&self.configuration_file_path)
                 {
                     return Some(Event::ReloadConfiguration);
@@ -275,7 +271,7 @@ impl MonitorTrait for Monitor {
                 // And once you dropped self.watcher you can't call self.get_event() anymore because
                 // self has been partially moved.
                 unreachable!()
-            },
+            }
         }
         None
     }
@@ -416,7 +412,6 @@ mod tests {
         assert!(paths.contains(&file_b_path));
     }
 
-    
     fn set_permission(path: impl AsRef<Path>, mode: u32) -> Result<(), std::io::Error> {
         let path = path.as_ref();
 
@@ -448,13 +443,25 @@ mod tests {
             let mut cache = Cache::open_in_memory().unwrap();
             let dry_run = false;
             let mut logger = Logger::new(dry_run);
-            super::execute(config_file_path, &mut cache, dry_run, true, &mut logger, &mut monitor).unwrap();
+            super::execute(
+                config_file_path,
+                &mut cache,
+                dry_run,
+                true,
+                &mut logger,
+                &mut monitor,
+            )
+            .unwrap();
 
             cache
         });
         thread::sleep(Duration::from_millis(200));
         event_sender.send(Event::ReloadConfiguration).unwrap();
-        event_sender.send(Event::ScanRepositories(BTreeSet::from([temp_dir_path.clone()]))).unwrap();
+        event_sender
+            .send(Event::ScanRepositories(BTreeSet::from([
+                temp_dir_path.clone()
+            ])))
+            .unwrap();
         event_sender.send(Event::Shutdown).unwrap();
 
         let cache = handle.join().unwrap();
@@ -463,7 +470,6 @@ mod tests {
         assert_eq!(paths[0], file_a_path);
     }
 
-    
     #[test]
     fn test_monitor_update_config_error() {
         let temp_dir =
@@ -526,13 +532,25 @@ mod tests {
             let mut cache = Cache::open_in_memory().unwrap();
             let dry_run = false;
             let mut logger = Logger::new(dry_run);
-            super::execute(config_file_path, &mut cache, dry_run, true, &mut logger, &mut monitor).unwrap();
+            super::execute(
+                config_file_path,
+                &mut cache,
+                dry_run,
+                true,
+                &mut logger,
+                &mut monitor,
+            )
+            .unwrap();
 
             cache
         });
         thread::sleep(Duration::from_millis(200));
         std::fs::remove_file(file_b_path).unwrap();
-        event_sender.send(Event::ScanRepositories(BTreeSet::from([temp_dir_path.clone()]))).unwrap();
+        event_sender
+            .send(Event::ScanRepositories(BTreeSet::from([
+                temp_dir_path.clone()
+            ])))
+            .unwrap();
         event_sender.send(Event::Shutdown).unwrap();
 
         let cache = handle.join().unwrap();
@@ -557,13 +575,25 @@ mod tests {
             let mut cache = Cache::open_in_memory().unwrap();
             let dry_run = false;
             let mut logger = Logger::new(dry_run);
-            super::execute(config_file_path, &mut cache, dry_run, true, &mut logger, &mut monitor).unwrap();
+            super::execute(
+                config_file_path,
+                &mut cache,
+                dry_run,
+                true,
+                &mut logger,
+                &mut monitor,
+            )
+            .unwrap();
 
             cache
         });
         thread::sleep(Duration::from_millis(200));
         std::fs::rename(file_b_path, file_d_path).unwrap();
-        event_sender.send(Event::ScanRepositories(BTreeSet::from([temp_dir_path.clone()]))).unwrap();
+        event_sender
+            .send(Event::ScanRepositories(BTreeSet::from([
+                temp_dir_path.clone()
+            ])))
+            .unwrap();
         thread::sleep(Duration::from_millis(1200));
         event_sender.send(Event::Shutdown).unwrap();
 
@@ -593,7 +623,15 @@ mod tests {
             let mut cache = Cache::open_in_memory().unwrap();
             let dry_run = false;
             let mut logger = Logger::new(dry_run);
-            super::execute(config_file_path, &mut cache, dry_run, true, &mut logger, &mut monitor).unwrap();
+            super::execute(
+                config_file_path,
+                &mut cache,
+                dry_run,
+                true,
+                &mut logger,
+                &mut monitor,
+            )
+            .unwrap();
 
             cache
         });
@@ -607,7 +645,11 @@ mod tests {
         std::fs::File::create(&file_a_path).unwrap();
         std::fs::write(gitignore_file_path, "a\nb\n").unwrap();
         std::fs::File::create(&file_b_path).unwrap();
-        event_sender.send(Event::ScanRepositories(BTreeSet::from([new_repository_path.clone()]))).unwrap();
+        event_sender
+            .send(Event::ScanRepositories(BTreeSet::from([
+                new_repository_path.clone(),
+            ])))
+            .unwrap();
         thread::sleep(Duration::from_millis(1200));
         event_sender.send(Event::Shutdown).unwrap();
 
@@ -739,7 +781,8 @@ mod tests {
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let config_file_path = temp_dir_path.join("config.json");
         let mut monitor = Monitor::new(config_file_path).unwrap();
-        let errors = monitor.set_watched_directories(&BTreeSet::from([temp_dir_path.join("does not exist")]));
+        let errors = monitor
+            .set_watched_directories(&BTreeSet::from([temp_dir_path.join("does not exist")]));
         assert_eq!(1, errors.len());
     }
 }
