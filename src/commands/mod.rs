@@ -3,25 +3,39 @@ pub mod monitor;
 pub mod reset;
 pub mod run;
 
-use std::{collections::BTreeSet, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use regex::RegexSet;
 
-use crate::{Logger, git, timemachine::{self, BreakingError, Error}};
+use crate::{
+    Logger, git,
+    timemachine::{self, BreakingError, Error},
+};
 
 trait TimeMachineTrait {
-    fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError>;
-    fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError>;
+    fn add_exclusions<'a>(
+        paths: impl Iterator<Item = &'a PathBuf>,
+    ) -> Result<Vec<Error>, BreakingError>;
+    fn remove_exclusions<'a>(
+        paths: impl Iterator<Item = &'a PathBuf>,
+    ) -> Result<Vec<Error>, BreakingError>;
 }
 
 struct TimeMachine;
 
 impl TimeMachineTrait for TimeMachine {
-    fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError> {
+    fn add_exclusions<'a>(
+        paths: impl Iterator<Item = &'a PathBuf>,
+    ) -> Result<Vec<Error>, BreakingError> {
         timemachine::add_exclusions(paths)
     }
 
-    fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError> {
+    fn remove_exclusions<'a>(
+        paths: impl Iterator<Item = &'a PathBuf>,
+    ) -> Result<Vec<Error>, BreakingError> {
         timemachine::remove_exclusions(paths)
     }
 }
@@ -34,7 +48,6 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     details: bool,
     logger: &mut Logger,
 ) -> Result<Vec<PathBuf>, BreakingError> {
-    
     let mut add_failed_paths = BTreeSet::new();
 
     let mut add_errors = Vec::new();
@@ -49,7 +62,7 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     let mut remove_errors = Vec::new();
     if !dry_run {
         let mut exclusion_errors = TM::remove_exclusions(diff.removed.iter())?;
-        
+
         remove_errors.append(&mut exclusion_errors);
     }
 
@@ -135,7 +148,10 @@ fn find_paths_to_exclude_from_backup(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{collections::BTreeSet, path::{Path, PathBuf}};
+    use std::{
+        collections::BTreeSet,
+        path::{Path, PathBuf},
+    };
 
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
@@ -143,7 +159,8 @@ pub(crate) mod tests {
         Logger,
         commands::{TimeMachineTrait, apply_diff_and_print, create_whitelist},
         config::Config,
-        diff::Diff, timemachine::{BreakingError, Error},
+        diff::Diff,
+        timemachine::{BreakingError, Error},
     };
 
     pub(crate) fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
@@ -192,17 +209,27 @@ pub(crate) mod tests {
 
     struct MockTimeMachineError;
 
-    impl TimeMachineTrait for MockTimeMachineError {      
-        fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError> {
-            Ok(paths.map(|path|{
-                Error { path: path.clone(), message: "fail".into() }
-            }).collect())
+    impl TimeMachineTrait for MockTimeMachineError {
+        fn add_exclusions<'a>(
+            paths: impl Iterator<Item = &'a PathBuf>,
+        ) -> Result<Vec<Error>, BreakingError> {
+            Ok(paths
+                .map(|path| Error {
+                    path: path.clone(),
+                    message: "fail".into(),
+                })
+                .collect())
         }
-        
-        fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError> {
-            Ok(paths.map(|path|{
-                Error { path: path.clone(), message: "fail".into() }
-            }).collect())
+
+        fn remove_exclusions<'a>(
+            paths: impl Iterator<Item = &'a PathBuf>,
+        ) -> Result<Vec<Error>, BreakingError> {
+            Ok(paths
+                .map(|path| Error {
+                    path: path.clone(),
+                    message: "fail".into(),
+                })
+                .collect())
         }
     }
 

@@ -8,15 +8,17 @@ const ADDEXCLUSION: &str = "addexclusion";
 const REMOVEEXCLUSION: &str = "removeexclusion";
 
 fn max_command_line_size() -> usize {
-    use nix::unistd::{sysconf, SysconfVar};
-   
-   match sysconf(SysconfVar::ARG_MAX) {
-    Ok(Some(value)) => value as usize,
-    _ => usize::MAX,
-   }
+    use nix::unistd::{SysconfVar, sysconf};
+
+    match sysconf(SysconfVar::ARG_MAX) {
+        Ok(Some(value)) => value as usize,
+        _ => usize::MAX,
+    }
 }
 
-pub fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError> {
+pub fn add_exclusions<'a>(
+    paths: impl Iterator<Item = &'a PathBuf>,
+) -> Result<Vec<Error>, BreakingError> {
     let mut errors = vec![];
     let command_size = TMUTIL.len() + ADDEXCLUSION.len() + 2;
     let max_length = max_command_line_size();
@@ -28,15 +30,21 @@ pub fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Ve
         errors.append(&mut result.errors);
     }
 
-    errors.append(&mut discarded.into_iter().map(|discarded_path|{
-        Error {
-            path: discarded_path.clone(), message: String::from("Path too long")
-        }
-    }).collect());
+    errors.append(
+        &mut discarded
+            .into_iter()
+            .map(|discarded_path| Error {
+                path: discarded_path.clone(),
+                message: String::from("Path too long"),
+            })
+            .collect(),
+    );
     Ok(errors)
 }
 
-pub fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<Error>, BreakingError> {
+pub fn remove_exclusions<'a>(
+    paths: impl Iterator<Item = &'a PathBuf>,
+) -> Result<Vec<Error>, BreakingError> {
     let mut errors = vec![];
     let command_size = TMUTIL.len() + REMOVEEXCLUSION.len() + 2;
     let max_length = max_command_line_size();
@@ -48,16 +56,23 @@ pub fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result
         errors.append(&mut result.errors);
     }
 
-    errors.append(&mut discarded.into_iter().map(|discarded_path|{
-        Error {
-            path: discarded_path.clone(), message: String::from("Path too long")
-        }
-    }).collect());
+    errors.append(
+        &mut discarded
+            .into_iter()
+            .map(|discarded_path| Error {
+                path: discarded_path.clone(),
+                message: String::from("Path too long"),
+            })
+            .collect(),
+    );
     Ok(errors)
 }
 
 mod tmutil {
-    use std::{path::{Path, PathBuf}, string::FromUtf8Error};
+    use std::{
+        path::{Path, PathBuf},
+        string::FromUtf8Error,
+    };
 
     use crate::timemachine::{ADDEXCLUSION, REMOVEEXCLUSION, TMUTIL};
 
@@ -73,7 +88,7 @@ mod tmutil {
     }
 
     pub struct TmutilResult {
-        pub errors: Vec<Error>
+        pub errors: Vec<Error>,
     }
 
     #[derive(thiserror::Error, Debug)]
@@ -81,29 +96,31 @@ mod tmutil {
         #[error(transparent)]
         Io(#[from] std::io::Error),
         #[error(transparent)]
-        Utf8(#[from] FromUtf8Error)
+        Utf8(#[from] FromUtf8Error),
     }
 
-    pub fn call_tmutil(verb: TmutilVerb, paths: &[impl AsRef<Path>]) -> Result<TmutilResult, BreakingError> {
+    pub fn call_tmutil(
+        verb: TmutilVerb,
+        paths: &[impl AsRef<Path>],
+    ) -> Result<TmutilResult, BreakingError> {
         let output = std::process::Command::new(TMUTIL)
             .arg(match verb {
                 TmutilVerb::AddExclusion => ADDEXCLUSION,
                 TmutilVerb::RemoveExclusion => REMOVEEXCLUSION,
             })
-            .args(paths.iter().map(|path|path.as_ref().to_owned()))
+            .args(paths.iter().map(|path| path.as_ref().to_owned()))
             .output()?;
         let stderr = String::from_utf8(output.stderr)?;
         let errors = parse_tmutil_errors(&stderr);
 
-        Ok(TmutilResult {
-            errors,
-        })
+        Ok(TmutilResult { errors })
     }
 
     fn parse_tmutil_errors(stderr: &str) -> Vec<Error> {
-        stderr.lines().filter_map(|line|{
-            parse_tmutil_error(line)
-        }).collect()
+        stderr
+            .lines()
+            .filter_map(|line| parse_tmutil_error(line))
+            .collect()
     }
 
     fn parse_tmutil_error(line: &str) -> Option<Error> {
@@ -116,7 +133,7 @@ mod tmutil {
             message: message.to_string(),
         })
     }
-    
+
     #[cfg(test)]
     mod tests {
         use std::path::PathBuf;
@@ -125,20 +142,23 @@ mod tmutil {
 
         use crate::timemachine::tmutil::Error;
 
-    #[rstest]
-    #[case("/Users/hey/doesnt_exist: Error (100002) while attempting to change exclusion setting.", Some(Error {
+        #[rstest]
+        #[case("/Users/hey/doesnt_exist: Error (100002) while attempting to change exclusion setting.", Some(Error {
         path: PathBuf::from("/Users/hey/doesnt_exist"),
         message: String::from("Error (100002) while attempting to change exclusion setting."),
     }))]
-    fn test_parse_tmutil_error(#[case] input: &str, #[case] expected: Option<Error>) {
-        let result = super::parse_tmutil_error(input);
+        fn test_parse_tmutil_error(#[case] input: &str, #[case] expected: Option<Error>) {
+            let result = super::parse_tmutil_error(input);
 
-        assert_eq!(expected, result);
+            assert_eq!(expected, result);
+        }
     }
 }
-}
 
-fn batches_paths<'a>(paths: impl Iterator<Item = &'a PathBuf>, max_size_batch: usize) -> (Vec<Vec<&'a PathBuf>>, Vec<&'a PathBuf>) {
+fn batches_paths<'a>(
+    paths: impl Iterator<Item = &'a PathBuf>,
+    max_size_batch: usize,
+) -> (Vec<Vec<&'a PathBuf>>, Vec<&'a PathBuf>) {
     let mut current_batch = vec![];
     let mut current_batch_size = 0usize;
     let mut batches = vec![];
@@ -152,14 +172,14 @@ fn batches_paths<'a>(paths: impl Iterator<Item = &'a PathBuf>, max_size_batch: u
             continue;
         }
 
-        let next_batch_size = current_batch_size + path_size + if current_batch_size > 0 { 1 } else { 0 };
+        let next_batch_size =
+            current_batch_size + path_size + if current_batch_size > 0 { 1 } else { 0 };
         if next_batch_size > max_size_batch {
             batches.push(current_batch.clone());
             current_batch.clear();
             current_batch.push(path);
             current_batch_size = path_size;
-        }
-        else {
+        } else {
             current_batch.push(path);
             if current_batch_size > 0 {
                 // Count the space needed as separator
@@ -177,7 +197,10 @@ fn batches_paths<'a>(paths: impl Iterator<Item = &'a PathBuf>, max_size_batch: u
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{path::{Path, PathBuf}, process::Command};
+    use std::{
+        path::{Path, PathBuf},
+        process::Command,
+    };
 
     use temp_dir_builder::TempDirectoryBuilder;
 
@@ -280,7 +303,11 @@ pub(crate) mod tests {
     #[test]
     fn test_batches_paths_path_too_long() {
         let too_long_path = PathBuf::from("abcd");
-        let inputs = [PathBuf::from("a"), too_long_path.clone(), PathBuf::from("c")];
+        let inputs = [
+            PathBuf::from("a"),
+            too_long_path.clone(),
+            PathBuf::from("c"),
+        ];
         let max_size = 3usize;
         let (batches, discarded) = super::batches_paths(inputs.iter(), max_size);
 
