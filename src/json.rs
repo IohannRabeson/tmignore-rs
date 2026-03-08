@@ -19,7 +19,7 @@ pub fn load_json_file<T: DeserializeOwned>(file_path: impl AsRef<Path>) -> Resul
 pub fn save_json_file(file_path: impl AsRef<Path>, value: &impl Serialize) -> Result<(), Error> {
     let file = std::fs::File::create(file_path)?;
 
-    serde_json::to_writer_pretty(file,  value)?;
+    serde_json::to_writer_pretty(file, value)?;
 
     Ok(())
 }
@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn test_json_save_load() {
-        let test = Test{ value: 123 };
+        let test = Test { value: 123 };
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let file_path = temp_dir.path().join("test.json");
         save_json_file(&file_path, &test).unwrap();

@@ -3,20 +3,15 @@ mod commands;
 mod config;
 mod diff;
 mod git;
+mod json;
 mod legacy_cache;
 mod legacy_config;
 mod timemachine;
-mod json;
 
 use clap::{Parser, Subcommand};
 use std::{error::Error, path::Path};
 
-use crate::{
-    cache::{Cache, OpenOrCreate, OpenOrCreateError},
-    commands::monitor::Monitor,
-    config::Config,
-    legacy_cache::LegacyCache,
-};
+use crate::{cache::Cache, commands::monitor::Monitor, config::Config, legacy_cache::LegacyCache};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -72,31 +67,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     let legacy_cache_file_path = shellexpand::tilde(LEGACY_CACHE_FILE_PATH).to_string();
 
     import_legacy_config_file(&legacy_config_file_path, &config_file_path)?;
+    import_legacy_cache_file(&legacy_cache_file_path, &cache_file_path)?;
 
     match cli.command {
         Commands::Run { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
-            let mut cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
+            let mut cache = Cache::open(cache_file_path)?;
             let config = Config::load_or_create_file(&config_file_path)?;
 
             commands::run::execute(&config, &mut cache, dry_run, details, &mut logger)
         }
         Commands::List { zero_separator } => {
-            let mut logger = Logger::new(false);
-            let cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
+            let cache = Cache::open(cache_file_path)?;
             let separator = if zero_separator { '\0' } else { '\n' };
 
             commands::list::execute(cache, &mut std::io::stdout(), separator)
         }
         Commands::Reset { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
-            let mut cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
+            let mut cache = Cache::open(cache_file_path)?;
 
             commands::reset::execute(&mut cache, dry_run, details, &mut logger)
         }
         Commands::Monitor { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
-            let mut cache = open_cache(cache_file_path, legacy_cache_file_path, &mut logger)?;
+            let mut cache = Cache::open(cache_file_path)?;
             let mut monitor = Monitor::new(&config_file_path)?;
 
             commands::monitor::execute(
@@ -113,46 +108,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[derive(thiserror::Error, Debug)]
-enum OpenCacheError {
-    #[error("No cache directory")]
-    NoCacheDirectory,
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error(transparent)]
-    OpenOrCreate(#[from] OpenOrCreateError),
-}
-
-fn open_cache(
-    cache_file_path: impl AsRef<Path>,
-    legacy_cache_file_path: impl AsRef<Path>,
-    logger: &mut Logger,
-) -> Result<Cache, OpenCacheError> {
-    let cache_file_path = cache_file_path.as_ref();
-
-    std::fs::create_dir_all(
-        cache_file_path
-            .parent()
-            .ok_or(OpenCacheError::NoCacheDirectory)?,
-    )?;
-
-    Ok(match Cache::open_or_create(cache_file_path)? {
-        OpenOrCreate::Created(mut cache) => {
-            let paths_to_import = LegacyCache::import(legacy_cache_file_path, logger)?;
-            cache.reset(paths_to_import);
-            cache
-        }
-        OpenOrCreate::Opened(cache) => cache,
-    })
-}
-
-fn import_legacy_config_file(legacy_config_file_path: impl AsRef<Path>, config_file_path: impl AsRef<Path>) -> Result<(), json::Error> {
+fn import_legacy_config_file(
+    legacy_config_file_path: impl AsRef<Path>,
+    config_file_path: impl AsRef<Path>,
+) -> Result<(), json::Error> {
     let legacy_config_file_path = legacy_config_file_path.as_ref();
     let config_file_path = config_file_path.as_ref();
     if !legacy_config_file_path.is_file() || config_file_path.is_file() {
-        return Ok(())
+        return Ok(());
     }
-    println!("Importing legacy cache '{}'...", legacy_config_file_path.display());
+    println!(
+        "Importing legacy cache '{}'...",
+        legacy_config_file_path.display()
+    );
     let legacy_config = json::load_json_file(&legacy_config_file_path)?;
     let new_config = Config::from(&legacy_config);
     if let Some(parent) = config_file_path.parent() {
@@ -160,6 +128,25 @@ fn import_legacy_config_file(legacy_config_file_path: impl AsRef<Path>, config_f
     }
     json::save_json_file(&config_file_path, &new_config)?;
     println!("Done.");
+    Ok(())
+}
+
+fn import_legacy_cache_file(
+    legacy_cache_file_path: impl AsRef<Path>,
+    cache_file_path: impl AsRef<Path>,
+) -> Result<(), Box<dyn Error>> {
+    let legacy_cache_file_path = legacy_cache_file_path.as_ref();
+    let cache_file_path = cache_file_path.as_ref();
+
+    if !legacy_cache_file_path.is_file() || cache_file_path.is_file() {
+        return Ok(());
+    }
+
+    let legacy_cache: LegacyCache = json::load_json_file(&legacy_cache_file_path)?;
+    let mut cache = Cache::create(cache_file_path)?;
+
+    cache.reset(legacy_cache.paths);
+
     Ok(())
 }
 
@@ -185,68 +172,59 @@ impl Logger {
 mod tests {
     use std::path::PathBuf;
 
+    use serde_json::json;
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::{Logger, OpenCacheError, open_cache};
+    use crate::{cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file};
 
     #[test]
-    fn test_open_cache_no_parent_dir() {
-        let mut logger = Logger::new(false);
-        let result = open_cache("/", "dummy", &mut logger);
-
-        assert!(matches!(result, Err(OpenCacheError::NoCacheDirectory)));
-    }
-
-    #[test]
-    fn test_open_cache_create_no_legacy() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let cache_file_path = temp_dir.path().join("cache.db");
-        let mut logger = Logger::new(false);
-        let result = open_cache(
-            cache_file_path,
-            temp_dir.path().join("doesnotexist"),
-            &mut logger,
-        )
-        .unwrap();
-
-        assert!(result.paths().is_empty());
-    }
-
-    #[test]
-    fn test_open_cache_create_legacy() {
-        let cache_content = r#"{"paths":["yo"]}"#;
-        let legacy_cache_name = "legacy.json";
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_text_file(legacy_cache_name, cache_content)
-            .build()
-            .unwrap();
-        let cache_file_path = temp_dir.path().join("cache.db");
-        let legacy_file_path = temp_dir.path().join(legacy_cache_name);
-        let mut logger = Logger::new(false);
-        let result = open_cache(cache_file_path, &legacy_file_path, &mut logger).unwrap();
-        let paths = result.paths();
-        assert_eq!(1, paths.len());
-        assert_eq!(PathBuf::from("yo"), paths[0]);
-    }
-
-    #[test]
-    fn test_open_cache_existing() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let cache_file_path = temp_dir.path().join("cache.db");
-        let legacy_cache_path = temp_dir.path().join("dummy");
-        let mut logger = Logger::new(false);
-        {
-            let mut cache = open_cache(&cache_file_path, &legacy_cache_path, &mut logger).unwrap();
-            cache.add_paths([PathBuf::from("yo")].into_iter());
-        }
-        let cache = open_cache(&cache_file_path, &legacy_cache_path, &mut logger).unwrap();
-        let paths = cache.paths();
-        assert_eq!(1, paths.len());
-        assert_eq!(PathBuf::from("yo"), paths[0]);
+    fn test_import_legacy_config_file_dont_exist() {
+        import_legacy_config_file("don't exist", "don't exist").unwrap();
     }
 
     #[test]
     fn test_import_legacy_config_file() {
-        let legacy_cache = r#""#;
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let legacy_cache_content = json!({"searchPaths": [
+            temp_dir.path()
+          ],
+          "ignoredPaths": [
+            "a"
+          ],
+          "whitelist": [
+            "*.hey"
+          ]
+        })
+        .to_string();
+        let dir_path = temp_dir.path().to_path_buf();
+        let legacy_config_file_path = dir_path.join("legacy.json");
+        let config_file_path = dir_path.join("config.json");
+        std::fs::write(&legacy_config_file_path, legacy_cache_content).unwrap();
+        import_legacy_config_file(&legacy_config_file_path, &config_file_path).unwrap();
+        let config = Config::load_from_file(&config_file_path).unwrap();
+        assert!(config.search_directories.contains(&dir_path));
+        assert!(config.ignored_directories.contains(&PathBuf::from("a")));
+        assert!(config.whitelist_patterns.contains("*.hey"));
+    }
+
+    #[test]
+    fn test_import_legacy_cache_file_dont_exist() {
+        import_legacy_cache_file("dont exist", "dont exist").unwrap();
+    }
+
+    #[test]
+    fn test_import_legacy_cache_file() {
+        let legacy_content = r#"{"paths":["a", "b"]}"#;
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file("legacy.json", legacy_content)
+            .build()
+            .unwrap();
+        let cache_file_path = temp_dir.path().join("cache.db");
+        import_legacy_cache_file(temp_dir.path().join("legacy.json"), &cache_file_path).unwrap();
+        let cache = Cache::load_from_file(&cache_file_path).unwrap();
+        let paths = cache.paths();
+        assert_eq!(2, paths.len());
+        assert!(paths.contains(&PathBuf::from("a")));
+        assert!(paths.contains(&PathBuf::from("b")));
     }
 }

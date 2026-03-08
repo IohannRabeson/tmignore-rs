@@ -16,15 +16,12 @@ pub struct Cache {
     connection: RefCell<Connection>,
 }
 
-pub enum OpenOrCreate {
-    Opened(Cache),
-    Created(Cache),
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum OpenOrCreateError {
     #[error("File does not exist")]
     FileDoesNotExist,
+    #[error("No parent directory")]
+    NoParentDirectory,
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -38,21 +35,35 @@ fn path_to_bytes(path: &Path) -> &[u8] {
 }
 
 impl Cache {
-    pub fn open_or_create(path: impl AsRef<Path>) -> Result<OpenOrCreate, OpenOrCreateError> {
-        let path = path.as_ref();
-        Ok(match Self::load_from_file(path) {
-            Ok(cache) => OpenOrCreate::Opened(cache),
-            Err(OpenOrCreateError::FileDoesNotExist) => {
-                let mut cache = Self {
-                    connection: RefCell::new(Connection::open(path)?),
-                };
-
-                cache.setup()?;
-
-                OpenOrCreate::Created(cache)
-            }
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenOrCreateError> {
+        let file_path = path.as_ref();
+        Ok(match Self::load_from_file(file_path) {
+            Ok(cache) => cache,
+            Err(OpenOrCreateError::FileDoesNotExist) => Self::create(file_path)?,
             Err(error) => return Err(error),
         })
+    }
+
+    pub fn create(file_path: impl AsRef<Path>) -> Result<Self, OpenOrCreateError> {
+        let file_path = file_path.as_ref();
+
+        std::fs::create_dir_all(
+            file_path
+                .parent()
+                .ok_or(OpenOrCreateError::NoParentDirectory)?,
+        )?;
+
+        if file_path.is_file() {
+            std::fs::remove_file(file_path)?;
+        }
+
+        let mut cache = Self {
+            connection: RefCell::new(Connection::open(file_path)?),
+        };
+
+        cache.setup()?;
+
+        Ok(cache)
     }
 
     pub fn load_from_file(file_path: impl AsRef<Path>) -> Result<Cache, OpenOrCreateError> {
@@ -219,6 +230,10 @@ impl Cache {
 mod tests {
     use std::{collections::BTreeSet, path::PathBuf};
 
+    use temp_dir_builder::TempDirectoryBuilder;
+
+    use crate::cache::OpenOrCreateError;
+
     use super::Cache;
 
     #[test]
@@ -288,5 +303,35 @@ mod tests {
 
         assert_eq!(1, cache.paths().len());
         assert_eq!(Some(&PathBuf::from("world")), cache.paths().first());
+    }
+
+    #[test]
+    fn test_open_cache_no_parent_dir() {
+        let result = Cache::open("/");
+
+        assert!(matches!(result, Err(OpenOrCreateError::NoParentDirectory)));
+    }
+
+    #[test]
+    fn test_open_cache_create_no_legacy() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let cache_file_path = temp_dir.path().join("cache.db");
+        let result = Cache::open(cache_file_path).unwrap();
+
+        assert!(result.paths().is_empty());
+    }
+
+    #[test]
+    fn test_open_cache_existing() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let cache_file_path = temp_dir.path().join("cache.db");
+        {
+            let mut cache = Cache::open(&cache_file_path).unwrap();
+            cache.add_paths([PathBuf::from("yo")].into_iter());
+        }
+        let cache = Cache::open(&cache_file_path).unwrap();
+        let paths = cache.paths();
+        assert_eq!(1, paths.len());
+        assert_eq!(PathBuf::from("yo"), paths[0]);
     }
 }
