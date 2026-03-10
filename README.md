@@ -1,9 +1,9 @@
 # tmignore-rs [![codecov](https://codecov.io/gh/IohannRabeson/tmignore-rs/graph/badge.svg?token=B5Q69GVFGN)](https://codecov.io/gh/IohannRabeson/tmignore-rs)
-Makes Time Machine respect .gitignore files
+Makes Time Machine respect .gitignore files.  
 This tool is a drop-in replacement for [tmignore](https://github.com/samuelmeuli/tmignore) but with
-a brand new command 'monitor' that is updating in real time the cache if changes in the filesystem are detected.
+a brand new command 'monitor' that is updating in (almost) real time the cache if changes in the filesystem are detected.
 
-It will happilly import the tmignore cache the first time it will launched.
+It will happilly import the tmignore cache and configuration the first time it will launched.
 
 ## Requirements
 This program runs on MacOS only and it requires Git to be installed.
