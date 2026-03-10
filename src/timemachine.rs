@@ -12,6 +12,8 @@ use core_foundation::base::OSStatus;
 // It catched my attention, and I found https://developer.apple.com/documentation/coreservices/1445043-csbackupsetitemexcluded
 // and at this point I decided to try it, I tested to do backups and it worked.
 // After that I tried to find what was happening after this call, and after some lines I found the call to `_sleep`.
+// mov	w0, #0x1
+// 000000010000ee88	bl	0x10002d9fc ; symbol stub for: _sleep
 #[link(name = "CoreServices", kind = "framework")]
 unsafe extern "C" {
     fn CSBackupSetItemExcluded(
