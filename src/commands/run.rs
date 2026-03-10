@@ -37,7 +37,7 @@ pub fn execute(
         let diff = cache.find_diff(&exclusions);
 
         let paths_failed_to_add =
-            super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details, logger)?;
+            super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details, logger);
 
         for path in paths_failed_to_add {
             exclusions.remove(&path);

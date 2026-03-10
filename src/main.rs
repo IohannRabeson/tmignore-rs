@@ -118,7 +118,7 @@ fn import_legacy_config_file(
         return Ok(());
     }
     println!(
-        "Importing legacy cache '{}'...",
+        "Importing legacy config '{}'...",
         legacy_config_file_path.display()
     );
     let legacy_config = json::load_json_file(&legacy_config_file_path)?;
@@ -127,7 +127,8 @@ fn import_legacy_config_file(
         std::fs::create_dir_all(parent)?;
     }
     json::save_json_file(&config_file_path, &new_config)?;
-    println!("Done.");
+    println!("Create new config file '{}'", config_file_path.display());
+    println!("You can delete '{}' now", legacy_config_file_path.display());
     Ok(())
 }
 
