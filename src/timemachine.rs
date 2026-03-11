@@ -1,16 +1,16 @@
+use core_foundation::base::OSStatus;
+use core_foundation::base::TCFType;
 use std::path::Path;
 use std::path::PathBuf;
-use core_foundation::base::TCFType;
-use core_foundation::base::OSStatus;
 
 // I was not happy with the performance of tmutil when adding / removing files and folders to exclude.
 // So I used otool to disassemble it, and I found it was in fact calling CSBackupSetItemExcluded.
 // I also found why tmutil is so slow, it actually waits 1 second after calling CSBackupSetItemExcluded, and then after it calls
 // _MDPerfCreateFileIndexingMarker.
-// I used `otool -tvV /usr/bin/tmutil` and then I used grep to search "exclude" and "exclusion", and I found:
+// I used `otool -tvV /usr/bin/tmutil` and grep to search "exclude" and "exclusion", and I found among few other things:
 // `000000010000ec30	bl	0x10002d41c ; symbol stub for: _CSBackupSetItemExcluded`.
-// It catched my attention, and I found https://developer.apple.com/documentation/coreservices/1445043-csbackupsetitemexcluded
-// and at this point I decided to try it, I tested to do backups and it worked.
+// It catched my attention. After reading https://developer.apple.com/documentation/coreservices/1445043-csbackupsetitemexcluded
+// I decided to try it, I tested to do few backups and it worked.
 // After that I tried to find what was happening after this call, and after some lines I found the call to `_sleep`.
 // mov	w0, #0x1
 // 000000010000ee88	bl	0x10002d9fc ; symbol stub for: _sleep
@@ -32,8 +32,8 @@ enum ExcludePathError {
 }
 
 fn exclude_path(path: impl AsRef<Path>, exclude: bool) -> Result<(), ExcludePathError> {
-    use core_foundation::url::CFURL;
     use core_foundation::string::CFString;
+    use core_foundation::url::CFURL;
     let path = path.as_ref();
 
     let url = CFURL::from_file_system_path(
@@ -46,7 +46,11 @@ fn exclude_path(path: impl AsRef<Path>, exclude: bool) -> Result<(), ExcludePath
         CSBackupSetItemExcluded(url.as_concrete_TypeRef(), if exclude { 1 } else { 0 }, 0)
     };
 
-    if status == 0 { Ok(()) } else { Err(ExcludePathError::Os(status)) }
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(ExcludePathError::Os(status))
+    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -55,9 +59,7 @@ pub struct Error {
     pub message: String,
 }
 
-pub fn add_exclusions<'a>(
-    paths: impl Iterator<Item = &'a PathBuf>,
-) -> Vec<Error> {
+pub fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error> {
     let mut errors = vec![];
 
     for path in paths {
@@ -72,11 +74,9 @@ pub fn add_exclusions<'a>(
     errors
 }
 
-pub fn remove_exclusions<'a>(
-    paths: impl Iterator<Item = &'a PathBuf>,
-) -> Vec<Error> {
+pub fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error> {
     let mut errors = vec![];
-    
+
     for path in paths {
         if let Err(error) = exclude_path(path, false) {
             errors.push(Error {
@@ -91,15 +91,18 @@ pub fn remove_exclusions<'a>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{
-        path::Path,
-        process::Command,
-    };
+    use std::{path::Path, process::Command};
 
     use temp_dir_builder::TempDirectoryBuilder;
 
     use crate::timemachine::{add_exclusions, remove_exclusions};
 
+    // Be careful, this test is not very reliable even if it uses the offical way (tmutil isexcluded) to
+    // know if a file is excluded. For example, as soon as you add the extended attribute
+    // com.apple.metadata:com_apple_backup_excludeItem with any values, this test will return true, but
+    // this is not enough to make an item excluded!
+    // To really check if it's true it's needed to do a backup and verify using the Finder
+    // by browsing the backup and checking if the items are present or not.
     pub(crate) fn is_excluded_from_time_machine(path: impl AsRef<Path>) -> bool {
         let path = path.as_ref();
 
