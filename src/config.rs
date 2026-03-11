@@ -23,12 +23,127 @@ pub struct Config {
     pub monitor_interval_secs: u64,
 }
 
+pub mod modifier {
+    use std::{
+        io::{BufReader, Read, Seek},
+        path::{Path, PathBuf},
+    };
+
+    use crate::config::{Config, LoadError, Modifier};
+
+    /// Create a modifier loading a PList file.
+    /// If the file does not exist or is not a file, then
+    /// a modifier doing nothing is returned.
+    pub fn time_machine_plist(file_path: impl AsRef<Path>) -> Result<impl Modifier, LoadError> {
+        let file_path = file_path.as_ref();
+        if !file_path.is_file() {
+            return Ok(PListLoader::new(None));
+        }
+        Ok(PListLoader::new(Some(std::fs::File::open(file_path)?)))
+    }
+
+    struct PListLoader<R> {
+        reader: Option<R>,
+    }
+
+    impl<R: Read + Seek> PListLoader<R> {
+        pub fn new(reader: Option<R>) -> Self {
+            Self { reader }
+        }
+    }
+
+    impl<R> Modifier for PListLoader<R>
+    where
+        R: Read + Seek,
+    {
+        fn modify(&mut self, config: &mut Config) -> Result<(), LoadError> {
+            if let Some(reader) = self.reader.as_mut() {
+                let buffer = BufReader::new(reader);
+                if let Some(root) = plist::Value::from_reader(buffer)?.as_dictionary()
+                    && let Some(skip_paths) = root
+                        .get("SkipPaths")
+                        .map(|value| value.as_array())
+                        .flatten()
+                {
+                    for value in skip_paths.iter() {
+                        if let Some(string) = value.as_string() {
+                            let path = PathBuf::from(string);
+
+                            config.ignored_directories.insert(path);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::{collections::BTreeSet, path::PathBuf};
+
+        use crate::config::{Config, modifier};
+
+        #[test]
+        fn test_time_machine_plist() {
+            use crate::config::Modifier;
+            let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let plist_test_file_path = manifest_dir.join("src/tests/test.plist");
+            let mut modifier = modifier::time_machine_plist(plist_test_file_path).unwrap();
+            let mut config = Config {
+                search_directories: BTreeSet::new(),
+                ignored_directories: BTreeSet::new(),
+                whitelist_patterns: BTreeSet::new(),
+                threads: 1,
+                monitor_interval_secs: 0,
+            };
+            modifier.modify(&mut config).unwrap();
+            assert_eq!(3, config.ignored_directories.len());
+            assert!(
+                config
+                    .ignored_directories
+                    .contains(&PathBuf::from("/Users/hey/Desktop"))
+            );
+            assert!(
+                config
+                    .ignored_directories
+                    .contains(&PathBuf::from("/Users/hey/.colima"))
+            );
+            assert!(
+                config
+                    .ignored_directories
+                    .contains(&PathBuf::from("/Users/hey/Downloads"))
+            );
+        }
+
+        #[test]
+        fn test_time_machine_plist_bad_plist() {
+            use crate::config::Modifier;
+            let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let plist_test_file_path = manifest_dir.join("src/tests/bad.plist");
+            let mut modifier = modifier::time_machine_plist(plist_test_file_path).unwrap();
+            let mut config = Config {
+                search_directories: BTreeSet::new(),
+                ignored_directories: BTreeSet::new(),
+                whitelist_patterns: BTreeSet::new(),
+                threads: 1,
+                monitor_interval_secs: 0,
+            };
+            let result = modifier.modify(&mut config);
+
+            assert!(result.is_err());
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum LoadError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Plist(#[from] plist::Error),
     #[error(transparent)]
     Validation(#[from] ValidationError),
 }
@@ -78,6 +193,10 @@ pub enum ValidationFail {
     NotFound(PathBuf),
     #[error("No search directories")]
     NoSearchDirectories,
+}
+
+pub trait Modifier {
+    fn modify(&mut self, config: &mut Config) -> Result<(), LoadError>;
 }
 
 impl Config {
@@ -190,6 +309,11 @@ impl Config {
         Self::validate(self)?;
         Ok(())
     }
+
+    pub fn modify(mut self, mut modifier: impl Modifier) -> Result<Self, LoadError> {
+        modifier.modify(&mut self)?;
+        Ok(self)
+    }
 }
 
 impl Default for Config {
@@ -216,7 +340,7 @@ impl Default for Config {
 mod tests {
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::config::{Config, LoadError};
+    use crate::config::{Config, LoadError, Modifier};
 
     #[test]
     fn test_expand_default() {
@@ -357,5 +481,31 @@ mod tests {
 "#;
         assert!(config.reload(invalid_json.as_bytes()).is_err());
         assert_eq!(1, config.search_directories.len());
+    }
+
+    struct TestModifier;
+
+    impl Modifier for TestModifier {
+        fn modify(&mut self, config: &mut Config) -> Result<(), LoadError> {
+            config.threads += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_config_modifier() {
+        let json = r#"
+{
+"search_directories": ["~"],
+"ignored_directories": [],
+"whitelist_patterns": [],
+"threads": 4,
+"monitor_interval_secs": 5 }
+"#;
+        let result = Config::load(json.as_bytes())
+            .unwrap()
+            .modify(TestModifier)
+            .unwrap();
+        assert!(result.threads == 5);
     }
 }

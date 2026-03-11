@@ -16,26 +16,18 @@ use crate::{
 };
 
 trait TimeMachineTrait {
-    fn add_exclusions<'a>(
-        paths: impl Iterator<Item = &'a PathBuf>,
-    ) -> Vec<Error>;
-    fn remove_exclusions<'a>(
-        paths: impl Iterator<Item = &'a PathBuf>,
-    ) -> Vec<Error>;
+    fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error>;
+    fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error>;
 }
 
 struct TimeMachine;
 
 impl TimeMachineTrait for TimeMachine {
-    fn add_exclusions<'a>(
-        paths: impl Iterator<Item = &'a PathBuf>,
-    ) -> Vec<Error> {
+    fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error> {
         timemachine::add_exclusions(paths)
     }
 
-    fn remove_exclusions<'a>(
-        paths: impl Iterator<Item = &'a PathBuf>,
-    ) -> Vec<Error> {
+    fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error> {
         timemachine::remove_exclusions(paths)
     }
 }
@@ -105,10 +97,7 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
         eprintln!("Error: {}: {}", error.path.display(), error.message);
     }
 
-    add_errors
-        .into_iter()
-        .map(|error| error.path)
-        .collect()
+    add_errors.into_iter().map(|error| error.path).collect()
 }
 
 fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, regex::Error> {
@@ -210,9 +199,7 @@ pub(crate) mod tests {
     struct MockTimeMachineError;
 
     impl TimeMachineTrait for MockTimeMachineError {
-        fn add_exclusions<'a>(
-            paths: impl Iterator<Item = &'a PathBuf>,
-        ) -> Vec<Error> {
+        fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error> {
             paths
                 .map(|path| Error {
                     path: path.clone(),
@@ -221,9 +208,7 @@ pub(crate) mod tests {
                 .collect()
         }
 
-        fn remove_exclusions<'a>(
-            paths: impl Iterator<Item = &'a PathBuf>,
-        ) -> Vec<Error> {
+        fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error> {
             paths
                 .map(|path| Error {
                     path: path.clone(),

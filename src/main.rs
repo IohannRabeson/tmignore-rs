@@ -54,12 +54,13 @@ enum Commands {
     },
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    const CONFIG_FILE_PATH: &str = "~/.config/tmignore-rs/config.json";
-    const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
-    const LEGACY_CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
-    const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
+const CONFIG_FILE_PATH: &str = "~/.config/tmignore-rs/config.json";
+const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
+const LEGACY_CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
+const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
+const TIME_MACHINE_PLIST_FILE_PATH: &str = "/Library/Preferences/com.apple.TimeMachine.plist";
 
+fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     let config_file_path = shellexpand::tilde(CONFIG_FILE_PATH).to_string();
     let cache_file_path = shellexpand::tilde(CACHE_FILE_PATH).to_string();
@@ -73,7 +74,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         Commands::Run { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
             let mut cache = Cache::open(cache_file_path)?;
-            let config = Config::load_or_create_file(&config_file_path)?;
+            let config = Config::load_or_create_file(&config_file_path)?.modify(
+                config::modifier::time_machine_plist(TIME_MACHINE_PLIST_FILE_PATH)?,
+            )?;
 
             commands::run::execute(&config, &mut cache, dry_run, details, &mut logger)
         }
@@ -96,6 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             commands::monitor::execute(
                 &config_file_path,
+                TIME_MACHINE_PLIST_FILE_PATH,
                 &mut cache,
                 dry_run,
                 details,
@@ -176,7 +180,9 @@ mod tests {
     use serde_json::json;
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::{cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file};
+    use crate::{
+        cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file,
+    };
 
     #[test]
     fn test_import_legacy_config_file_dont_exist() {

@@ -8,7 +8,13 @@ use std::{
 use crossbeam_channel::{Receiver, Sender};
 use notify::{FsEventWatcher, Watcher};
 
-use crate::{Logger, cache::Cache, commands::TimeMachine, config::Config, git};
+use crate::{
+    Logger,
+    cache::Cache,
+    commands::TimeMachine,
+    config::{self, Config},
+    git,
+};
 
 struct EventHandler {
     sender: Sender<notify::Result<notify::Event>>,
@@ -34,6 +40,7 @@ impl notify::EventHandler for EventHandler {
 /// If a .gitignore file is modified then a scan of the repository will be scheduled.
 pub fn execute(
     config_file_path: impl AsRef<Path>,
+    system_settings_plist_path: impl AsRef<Path>,
     cache: &mut Cache,
     dry_run: bool,
     details: bool,
@@ -41,7 +48,10 @@ pub fn execute(
     monitor: &mut impl MonitorTrait,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_file_path = config_file_path.as_ref().canonicalize()?.to_path_buf();
-    let mut config = Config::load_or_create_file(&config_file_path)?;
+    let system_settings_plist_path = system_settings_plist_path.as_ref();
+    let mut config = Config::load_or_create_file(&config_file_path)?.modify(
+        config::modifier::time_machine_plist(system_settings_plist_path)?,
+    )?;
     let mut run_interval = Duration::from_secs(config.monitor_interval_secs);
     let mut elapsed = Duration::ZERO;
     let mut now = Instant::now();
@@ -67,6 +77,9 @@ pub fn execute(
                 match event {
                     Event::ReloadConfiguration => {
                         config.reload_file(&config_file_path)?;
+                        config = config.modify(config::modifier::time_machine_plist(
+                            system_settings_plist_path,
+                        )?)?;
                         run_interval = Duration::from_secs(config.monitor_interval_secs);
                         whitelist = super::create_whitelist(&config.whitelist_patterns)?;
                         monitor.set_watched_directories(&config.search_directories);
@@ -349,6 +362,7 @@ mod tests {
             let mut logger = Logger::new(dry_run);
             super::execute(
                 config_file_path,
+                "",
                 &mut cache,
                 dry_run,
                 true,
@@ -387,6 +401,7 @@ mod tests {
             let mut logger = Logger::new(dry_run);
             super::execute(
                 config_file_path_thread,
+                "",
                 &mut cache,
                 dry_run,
                 true,
@@ -445,6 +460,7 @@ mod tests {
             let mut logger = Logger::new(dry_run);
             super::execute(
                 config_file_path,
+                "",
                 &mut cache,
                 dry_run,
                 true,
@@ -492,6 +508,7 @@ mod tests {
             let mut logger = Logger::new(dry_run);
             super::execute(
                 config_file_path_thread,
+                "",
                 &mut cache,
                 dry_run,
                 true,
@@ -534,6 +551,7 @@ mod tests {
             let mut logger = Logger::new(dry_run);
             super::execute(
                 config_file_path,
+                "",
                 &mut cache,
                 dry_run,
                 true,
@@ -577,6 +595,7 @@ mod tests {
             let mut logger = Logger::new(dry_run);
             super::execute(
                 config_file_path,
+                "",
                 &mut cache,
                 dry_run,
                 true,
@@ -625,6 +644,7 @@ mod tests {
             let mut logger = Logger::new(dry_run);
             super::execute(
                 config_file_path,
+                "",
                 &mut cache,
                 dry_run,
                 true,
