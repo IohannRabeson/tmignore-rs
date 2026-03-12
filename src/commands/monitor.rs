@@ -124,7 +124,6 @@ fn find_repositories(
 
     for path in &event.paths {
         if let Some(repository_path) = git::find_parent_repository(path) {
-            println!("search_directories {:?}", search_directories);
             if search_directories
                 .iter()
                 .any(|search_directory| repository_path.starts_with(search_directory))
