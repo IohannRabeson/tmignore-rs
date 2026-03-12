@@ -5,6 +5,8 @@ a brand new command 'monitor' that is updating in (almost) real time the cache i
 
 It will happilly import the tmignore cache and configuration the first time it will launched.
 
+Compared to tmignore it should be very fast, where tmignore was taking minutes it's now few seconds.
+
 ## Requirements
 This program runs on MacOS only and it requires Git to be installed.
 
@@ -80,21 +82,10 @@ The `whitelist_patterns` array expects glob-style patterns:
 See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
 
 ### `threads`
-The `threads` parameter is optional, if missing the value 0 is used. 0 means the count of threads is not limited.
+The `threads` count. 0 means the count of threads is not limited and the max will be choose.
 
-## Profiling
-There is a dedicated profile named `release-with-debug`, you can use it with:
-```
-cargo run --profile=release-with-debug
-```
-You might need to sign the binary to be able to use Instruments:
-```
-scripts/codesign-for-instruments.sh target/release-with-debug/tmignore-rs
-```
-
-## Tests
-I had an issue using the temp folder returned by std::env::temp_dir().  
-This folder is excluded from Time machine backup by default making some testing impossible.
+### `monitor_interval_secs`
+Monitoring interval in seconds.
 
 ## Coverage
 I'm using [Tarpaulin](https://github.com/xd009642/tarpaulin) to measure test coverage.

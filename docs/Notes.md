@@ -1,3 +1,17 @@
+# Profiling
+There is a dedicated profile named `release-with-debug`, you can use it with:
+```
+cargo run --profile=release-with-debug
+```
+You might need to sign the binary to be able to use Instruments:
+```
+scripts/codesign-for-instruments.sh target/release-with-debug/tmignore-rs
+```
+
+# Tests
+I had an issue using the temp folder returned by std::env::temp_dir().  
+This folder is excluded from Time machine backup by default making some testing impossible.
+
 # How to delete Time Machine backups
 In System Settings > Time Machine, you can remove the backup disk.
 It will ask if you want to forget it click Yes.
