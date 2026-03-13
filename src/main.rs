@@ -14,7 +14,8 @@ use std::{error::Error, path::Path};
 use crate::{cache::Cache, commands::monitor::Monitor, config::Config, legacy_cache::LegacyCache};
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(about, long_about = None)]
+#[command(version = concat!(env!("CARGO_PKG_VERSION"), "-", env!("VERGEN_GIT_SHA")))]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
