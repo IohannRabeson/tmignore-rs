@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use log::info;
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_config::LegacyConfig;
@@ -98,7 +99,7 @@ impl Config {
 
             serde_json::to_writer_pretty(file, &default_config)?;
 
-            println!("Created configuration file '{}'", file_path.display());
+            info!("Created configuration file '{}'", file_path.display());
 
             Self::expand(&mut default_config);
 
