@@ -10,6 +10,13 @@ Compared to tmignore it should be very fast, where tmignore was taking minutes i
 ## Requirements
 This program runs on MacOS only and it requires Git to be installed.
 
+## Installation
+The easiest is to use Homebrew:
+```
+brew tap iohannrabeson/tap
+brew install tmignore-rs
+```
+
 ## How to use it
 The most important command is the `monitor` command:
 ```
@@ -19,6 +26,10 @@ It will monitor the filesystem and will update the list of paths to exclude from
  definitively forget about it.
  
 This command is very light, excepted the initial scan, it should never affect the performances of you Mac.
+
+## Logs
+This application sends the logs to the Console application.  
+Use `tmignore-rs` as filter.  
 
 ## Show help
 ```
