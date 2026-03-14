@@ -9,6 +9,7 @@ mod legacy_config;
 mod timemachine;
 
 use clap::{Parser, Subcommand};
+use log::info;
 use std::{error::Error, path::Path};
 
 use crate::{cache::Cache, commands::monitor::Monitor, config::Config, legacy_cache::LegacyCache};
@@ -67,6 +68,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let legacy_config_file_path = shellexpand::tilde(LEGACY_CONFIG_FILE_PATH).to_string();
     let legacy_cache_file_path = shellexpand::tilde(LEGACY_CACHE_FILE_PATH).to_string();
 
+    setup_log()?;
     import_legacy_config_file(&legacy_config_file_path, &config_file_path)?;
     import_legacy_cache_file(&legacy_cache_file_path, &cache_file_path)?;
 
@@ -109,6 +111,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn setup_log() -> Result<(), log::SetLoggerError> {
+    let level = log::LevelFilter::Info;
+    let os_logger: Box<dyn log::Log> =
+        Box::new(oslog::OsLogger::new("com.irabeson.tmignore-rs"));
+
+    fern::Dispatch::new()
+        .level(level)
+        .chain(std::io::stdout())
+        .chain(os_logger)
+        .apply()?;
+    Ok(())
+}
+
 fn import_legacy_config_file(
     legacy_config_file_path: impl AsRef<Path>,
     config_file_path: impl AsRef<Path>,
@@ -118,7 +133,7 @@ fn import_legacy_config_file(
     if !legacy_config_file_path.is_file() || config_file_path.is_file() {
         return Ok(());
     }
-    println!(
+    info!(
         "Importing legacy config '{}'...",
         legacy_config_file_path.display()
     );
@@ -128,8 +143,8 @@ fn import_legacy_config_file(
         std::fs::create_dir_all(parent)?;
     }
     json::save_json_file(&config_file_path, &new_config)?;
-    println!("Create new config file '{}'", config_file_path.display());
-    println!("You can delete '{}' now", legacy_config_file_path.display());
+    info!("Create new config file '{}'", config_file_path.display());
+    info!("You can delete '{}' now", legacy_config_file_path.display());
     Ok(())
 }
 
@@ -163,9 +178,9 @@ impl Logger {
 
     pub fn log(&mut self, str: impl AsRef<str>) {
         if self.dry_run {
-            println!("[DRY RUN] {}", str.as_ref());
+            info!("[DRY RUN] {}", str.as_ref());
         } else {
-            println!("{}", str.as_ref());
+            info!("{}", str.as_ref());
         }
     }
 }
@@ -177,7 +192,9 @@ mod tests {
     use serde_json::json;
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::{cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file};
+    use crate::{
+        cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file,
+    };
 
     #[test]
     fn test_import_legacy_config_file_dont_exist() {
