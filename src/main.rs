@@ -9,7 +9,7 @@ mod legacy_config;
 mod timemachine;
 
 use clap::{Parser, Subcommand};
-use log::info;
+use log::{error, info};
 use std::{error::Error, path::Path};
 
 use crate::{cache::Cache, commands::monitor::Monitor, config::Config, legacy_cache::LegacyCache};
@@ -56,19 +56,18 @@ enum Commands {
     },
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    const CONFIG_FILE_PATH: &str = "~/.config/tmignore-rs/config.json";
-    const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
-    const LEGACY_CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
-    const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
+const CONFIG_FILE_PATH: &str = "~/.config/tmignore-rs/config.json";
+const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
+const LEGACY_CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
+const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
 
+fn program() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     let config_file_path = shellexpand::tilde(CONFIG_FILE_PATH).to_string();
     let cache_file_path = shellexpand::tilde(CACHE_FILE_PATH).to_string();
     let legacy_config_file_path = shellexpand::tilde(LEGACY_CONFIG_FILE_PATH).to_string();
     let legacy_cache_file_path = shellexpand::tilde(LEGACY_CACHE_FILE_PATH).to_string();
 
-    setup_log()?;
     import_legacy_config_file(&legacy_config_file_path, &config_file_path)?;
     import_legacy_cache_file(&legacy_cache_file_path, &cache_file_path)?;
 
@@ -111,17 +110,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn setup_log() -> Result<(), log::SetLoggerError> {
-    let level = log::LevelFilter::Info;
-    let os_logger: Box<dyn log::Log> =
-        Box::new(oslog::OsLogger::new("com.irabeson.tmignore-rs"));
-
-    fern::Dispatch::new()
-        .level(level)
-        .chain(std::io::stdout())
-        .chain(os_logger)
-        .apply()?;
-    Ok(())
+fn main() -> Result<(), Box<dyn Error>> {
+    match program() {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            error!("Error: {}", error);
+            Err(error)
+        }
+    }
 }
 
 fn import_legacy_config_file(
@@ -192,9 +188,7 @@ mod tests {
     use serde_json::json;
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::{
-        cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file,
-    };
+    use crate::{cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file};
 
     #[test]
     fn test_import_legacy_config_file_dont_exist() {
