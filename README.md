@@ -15,7 +15,11 @@ The easiest is to use Homebrew:
 ```
 brew tap iohannrabeson/tap
 brew install tmignore-rs
-brew services start iohannrabeson/tap/tmignore-rs
+brew services start tmignore-rs
+```
+You can stop the service using:
+```
+brew services stop tmignore-rs
 ```
 
 ## How to use it
