@@ -15,6 +15,7 @@ The easiest is to use Homebrew:
 ```
 brew tap iohannrabeson/tap
 brew install tmignore-rs
+brew services start iohannrabeson/tap/tmignore-rs
 ```
 
 ## How to use it
