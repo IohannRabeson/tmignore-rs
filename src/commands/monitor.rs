@@ -6,6 +6,7 @@ use std::{
 };
 
 use crossbeam_channel::{Receiver, Sender};
+use log::warn;
 use notify::{FsEventWatcher, Watcher};
 
 use crate::{Logger, cache::Cache, commands::TimeMachine, config::Config, git};
@@ -66,12 +67,19 @@ pub fn execute(
             for event in &pending_events {
                 match event {
                     Event::ReloadConfiguration => {
-                        config.reload_file(&config_file_path)?;
+                        match config.reload_file(&config_file_path) {
+                            Ok(()) => {
+                                whitelist = super::create_whitelist(&config.whitelist_patterns)?;
+                                monitor.set_watched_directories(&config.search_directories);
+                                logger.log("Configuration reloaded");
+                                super::run::execute(&config, cache, dry_run, details, logger)?;
+                            },
+                            Err(error) => {
+                                warn!("Failed to reload configuration '{}': {}", config_file_path.display(), error);
+                                warn!("Due to an error the configuration stay unchanged");
+                            },
+                        }
                         run_interval = Duration::from_secs(config.monitor_interval_secs);
-                        whitelist = super::create_whitelist(&config.whitelist_patterns)?;
-                        monitor.set_watched_directories(&config.search_directories);
-                        logger.log("Configuration reloaded");
-                        super::run::execute(&config, cache, dry_run, details, logger)?;
                     }
                     Event::ScanRepositories(repositories_to_scan) => {
                         for repository_to_scan in repositories_to_scan {
@@ -409,6 +417,39 @@ mod tests {
         assert_eq!(2, paths.len());
         assert!(paths.contains(&file_a_path));
         assert!(paths.contains(&file_b_path));
+    }
+
+    #[test]
+    fn test_monitor_update_config_invalid() {
+        let temp_dir = crate::commands::tests::create_repository("test_monitor_update_config_invalid");
+        let empty_directory = temp_dir.path().join("empty");
+        std::fs::create_dir_all(&empty_directory).unwrap();
+        let config = crate::commands::tests::create_config(&empty_directory);
+        let config_file_path = temp_dir.path().join("config.json");
+        config.save_to_file(&config_file_path).unwrap();
+        let config_file_path_thread = config_file_path.clone();
+        let (mut monitor, event_sender) = MockMonitor::new();
+        let handle = thread::spawn(move || {
+            let mut cache = Cache::open_in_memory().unwrap();
+            let dry_run = false;
+            let mut logger = Logger::new(dry_run);
+            super::execute(
+                config_file_path_thread,
+                &mut cache,
+                dry_run,
+                true,
+                &mut logger,
+                &mut monitor,
+            )
+            .unwrap();
+
+            cache
+        });
+        thread::sleep(Duration::from_millis(200));
+        std::fs::write(&config_file_path, "invalid json").unwrap();
+        event_sender.send(Event::ReloadConfiguration).unwrap();
+        event_sender.send(Event::Shutdown).unwrap();
+        let _cache = handle.join().unwrap();
     }
 
     fn set_permission(path: impl AsRef<Path>, mode: u32) -> Result<(), std::io::Error> {
