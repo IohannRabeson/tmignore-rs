@@ -25,6 +25,10 @@ tmignore-rs monitor
 ```
 It will monitor the filesystem and will update the list of paths to exclude from Time Machine backups almost instantly, allowing you to 
  definitively forget about it.
+
+This program loads `~/.config/tmignore-rs/config.json` as its configuration file, creating it on first run if it doesn't exist.  
+This configuration file is hot-reloaded so you don't need to restart tmignore-rs after modifying it.
+See [Configuration](#configuration) for more details.
  
 This command is very light, excepted the initial scan, it should never affect the performances of you Mac.
 
@@ -60,7 +64,9 @@ tmignore-rs monitor --help
 
 ## Configuration
 The configuration file is located at `~/.config/tmignore/config.json`.
-Here is the default configuration created automatically the first time you run tmignore-rs.
+Here is the default configuration created automatically the first time you run tmignore-rs.   
+If you were using [tmignore](https://github.com/samuelmeuli/tmignore) the configuration will be imported.
+
 ```
 {
   "searchPaths": [
