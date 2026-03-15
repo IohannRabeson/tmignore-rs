@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use log::info;
 use rusqlite::{Connection, params};
 
 use crate::diff::Diff;
@@ -69,6 +70,8 @@ impl Cache {
     pub fn load_from_file(file_path: impl AsRef<Path>) -> Result<Cache, OpenOrCreateError> {
         let file_path = file_path.as_ref();
 
+        info!("Load cache '{}'", file_path.display());
+        
         if !file_path.is_file() {
             return Err(OpenOrCreateError::FileDoesNotExist);
         }

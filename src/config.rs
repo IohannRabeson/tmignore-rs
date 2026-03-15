@@ -108,6 +108,8 @@ impl Config {
     }
 
     pub fn load_from_file(file_path: impl AsRef<Path>) -> Result<Self, LoadError> {
+        let file_path = file_path.as_ref();
+        info!("Load file configuration '{}'", file_path.display());
         Self::load(File::open(file_path)?)
     }
 
