@@ -13,7 +13,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - run: rustup toolchain install stable --profile minimal
     - run: cargo install --locked cargo-tarpaulin
     - run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
