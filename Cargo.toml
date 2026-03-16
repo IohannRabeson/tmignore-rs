@@ -31,7 +31,7 @@ vergen = { version = "9", default-features = false }
 vergen-git2 = { version = "9", default-features = false, features = ["build"] }
 
 [dev-dependencies]
-libc = "0.2.182"
+libc = "0.2"
 rstest = { version = "0.26.1", default-features = false, features = ["crate-name"] }
 temp-dir-builder = { git = "https://github.com/IohannRabeson/temp-dir-builder", rev = "0eb3527" }
 
