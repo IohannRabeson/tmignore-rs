@@ -3,6 +3,7 @@ name = "tmignore-rs"
 description = "Makes Time Machine respect .gitignore files"
 version = "0.1.1"
 edition = "2024"
+publish = false
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
