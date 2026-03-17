@@ -129,6 +129,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Ok(()) => Ok(()),
         Err(error) => {
             error!("Error: {}", error);
+            eprintln!("Error: {}", error);
             Err(error)
         }
     }
