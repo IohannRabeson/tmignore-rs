@@ -1,0 +1,39 @@
+name: Update Homebrew Formula
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tmignore-rs
+        uses: actions/checkout@v6
+
+      - name: Get version from Cargo.toml
+        id: version
+        run: |
+          version=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v6
+        with:
+          repository: IohannRabeson/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          sed -i "s/revision: \".*\"/revision: \"${{ github.sha }}\"/" homebrew-tap/Formula/tmignore-rs.rb
+          sed -i "s/version \".*\"/version \"${{ steps.version.outputs.version }}\"/" homebrew-tap/Formula/tmignore-rs.rb
+
+      - name: Push updated formula
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/tmignore-rs.rb
+          git commit -m "Update tmignore-rs to v${{ steps.version.outputs.version }}"
+          git push
