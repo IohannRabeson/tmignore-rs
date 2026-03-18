@@ -97,7 +97,8 @@ fn program() -> Result<(), Box<dyn Error>> {
         Commands::Monitor { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
             let mut cache = Cache::open(cache_file_path)?;
-            let mut monitor = Monitor::new(&config_file_path)?;
+            let global_gitignore = git::get_global_git_ignore();
+            let mut monitor = Monitor::new(&config_file_path, global_gitignore)?;
 
             commands::monitor::execute(
                 &config_file_path,
