@@ -20,6 +20,8 @@ use crate::{cache::Cache, commands::monitor::Monitor, config::Config, legacy_cac
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
@@ -68,7 +70,7 @@ fn program() -> Result<(), Box<dyn Error>> {
     let legacy_config_file_path = shellexpand::tilde(LEGACY_CONFIG_FILE_PATH).to_string();
     let legacy_cache_file_path = shellexpand::tilde(LEGACY_CACHE_FILE_PATH).to_string();
 
-    setup_log()?;
+    setup_log(cli.verbose)?;
     import_legacy_config_file(&legacy_config_file_path, &config_file_path)?;
     import_legacy_cache_file(&legacy_cache_file_path, &cache_file_path)?;
 
@@ -111,16 +113,24 @@ fn program() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn setup_log() -> Result<(), log::SetLoggerError> {
-    let level = log::LevelFilter::Info;
+fn setup_log(verbose: bool) -> Result<(), log::SetLoggerError> {
+    let level = if verbose { log::LevelFilter::Debug } else { log::LevelFilter::Info };
     let os_logger: Box<dyn log::Log> =
         Box::new(oslog::OsLogger::new("com.irabeson.tmignore-rs"));
 
     fern::Dispatch::new()
         .level(level)
+        .filter(|metadata|
+            metadata.target().starts_with("tmignore_rs")
+        )
         .chain(std::io::stdout())
         .chain(os_logger)
         .apply()?;
+
+    if verbose {
+        info!("Verbose mode enabled");
+    }
+
     Ok(())
 }
 
