@@ -17,6 +17,8 @@ brew tap iohannrabeson/tap
 brew install tmignore-rs
 brew services start tmignore-rs
 ```
+You have to do that only once, tmignore-rs will be started automatically on startup.
+
 You can stop the service using:
 ```
 brew services stop tmignore-rs
@@ -35,7 +37,8 @@ This configuration file is hot-reloaded so you don't need to restart tmignore-rs
 See [Configuration](#configuration) for more details.
  
 This command is very light, excepted the initial scan, it should never affect the performances of you Mac.
-
+### `run` command
+This command performs a scan of the directories 
 ## Logs
 This application sends the logs to the Console application.  
 Use `tmignore-rs` as filter.  
@@ -73,22 +76,28 @@ If you were using [tmignore](https://github.com/samuelmeuli/tmignore) the config
 
 ```
 {
-  "searchPaths": [
+  "search_directories": [
     "~"
   ],
-  "ignoredPaths": [
+  "ignored_directories": [
     "~/.Trash",
     "~/Applications",
     "~/Downloads",
     "~/Library",
-    "~/Music/iTunes",
     "~/Music/Music",
+    "~/Music/iTunes",
     "~/Pictures/Photos Library.photoslibrary"
   ],
-  "whitelist": [],
+  "whitelist_patterns": [
+    "*.broguerec",
+    "*.broguesave",
+    "*/BrogueHighScores.txt",
+    "*/BrogueRunHistory.txt"
+  ],
   "threads": 4,
   "monitor_interval_secs": 5
 }
+
 ```
 ### `search_directories`
 The list of the directories to scan.
