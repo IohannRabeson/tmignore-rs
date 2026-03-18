@@ -6,7 +6,7 @@ use std::{
 };
 
 use crossbeam_channel::{Receiver, Sender};
-use log::warn;
+use log::{debug, warn};
 use notify::{FsEventWatcher, Watcher};
 
 use crate::{Logger, cache::Cache, commands::TimeMachine, config::Config, git};
@@ -73,11 +73,15 @@ pub fn execute(
                                 monitor.set_watched_directories(&config.search_directories);
                                 logger.log("Configuration reloaded");
                                 super::run::execute(&config, cache, dry_run, details, logger)?;
-                            },
+                            }
                             Err(error) => {
-                                warn!("Failed to reload configuration '{}': {}", config_file_path.display(), error);
+                                warn!(
+                                    "Failed to reload configuration '{}': {}",
+                                    config_file_path.display(),
+                                    error
+                                );
                                 warn!("Due to an error the configuration stay unchanged");
-                            },
+                            }
                         }
                         run_interval = Duration::from_secs(config.monitor_interval_secs);
                     }
@@ -169,6 +173,7 @@ pub struct Monitor {
     watcher: FsEventWatcher,
     watched_paths: BTreeSet<PathBuf>,
     configuration_file_path: PathBuf,
+    global_gitignore: Option<PathBuf>,
     event_receiver: Receiver<notify::Result<notify::Event>>,
     signal_flag: Arc<AtomicBool>,
 }
@@ -182,7 +187,10 @@ pub enum MonitorError {
 }
 
 impl Monitor {
-    pub fn new(configuration_file_path: impl AsRef<Path>) -> Result<Self, MonitorError> {
+    pub fn new(
+        configuration_file_path: impl AsRef<Path>,
+        global_gitignore: Option<PathBuf>,
+    ) -> Result<Self, MonitorError> {
         let configuration_file_path = configuration_file_path.as_ref().to_path_buf();
         let (event_sender, event_receiver) =
             crossbeam_channel::bounded::<notify::Result<notify::Event>>(256);
@@ -191,6 +199,13 @@ impl Monitor {
             &configuration_file_path,
             notify::RecursiveMode::NonRecursive,
         )?;
+        if let Some(global_gitignore) = global_gitignore.as_ref() {
+            watcher.watch(global_gitignore, notify::RecursiveMode::NonRecursive)?;
+            debug!(
+                "Watch global gitignore file '{}'",
+                global_gitignore.display()
+            );
+        }
         let signal_flag = Arc::new(AtomicBool::new(false));
 
         signal_hook::flag::register(signal_hook::consts::SIGTERM, signal_flag.clone())?;
@@ -199,6 +214,7 @@ impl Monitor {
         Ok(Self {
             watcher,
             configuration_file_path,
+            global_gitignore,
             watched_paths: BTreeSet::new(),
             event_receiver,
             signal_flag,
@@ -254,12 +270,11 @@ impl MonitorTrait for Monitor {
 
         match self.event_receiver.recv_timeout(timeout) {
             Ok(Ok(event)) => {
-                if matches!(
-                    event.kind,
-                    notify::EventKind::Modify(notify::event::ModifyKind::Data(
-                        notify::event::DataChange::Content
-                    ))
-                ) && event.paths.contains(&self.configuration_file_path)
+                if event.paths.contains(&self.configuration_file_path)
+                    || self
+                        .global_gitignore
+                        .as_ref()
+                        .is_some_and(|global_gitignore| event.paths.contains(global_gitignore))
                 {
                     return Some(Event::ReloadConfiguration);
                 }
@@ -421,7 +436,8 @@ mod tests {
 
     #[test]
     fn test_monitor_update_config_invalid() {
-        let temp_dir = crate::commands::tests::create_repository("test_monitor_update_config_invalid");
+        let temp_dir =
+            crate::commands::tests::create_repository("test_monitor_update_config_invalid");
         let empty_directory = temp_dir.path().join("empty");
         std::fs::create_dir_all(&empty_directory).unwrap();
         let config = crate::commands::tests::create_config(&empty_directory);
@@ -721,11 +737,12 @@ mod tests {
 
     fn spawn_monitor_thread_and_wait_for_event(
         config_file_path: PathBuf,
+        global_gitignore: Option<PathBuf>,
         repository_path: PathBuf,
         event: Event,
     ) -> JoinHandle<bool> {
         std::thread::spawn(move || {
-            let mut monitor = Monitor::new(&config_file_path).unwrap();
+            let mut monitor = Monitor::new(&config_file_path, global_gitignore).unwrap();
             monitor.set_watched_directories(&BTreeSet::from([repository_path]));
 
             wait_for_event(&mut monitor, Duration::from_secs(20), &event)
@@ -758,6 +775,7 @@ mod tests {
         let config_file_path = temp_dir_path.join("config.json");
         let handle = spawn_monitor_thread_and_wait_for_event(
             config_file_path,
+            None,
             repository_path.clone(),
             Event::ScanRepositories(BTreeSet::from([repository_path.clone()])),
         );
@@ -779,6 +797,7 @@ mod tests {
         let config_file_path = temp_dir_path.join("config.json");
         let handle = spawn_monitor_thread_and_wait_for_event(
             config_file_path.clone(),
+            None,
             repository_path.clone(),
             Event::ReloadConfiguration,
         );
@@ -800,6 +819,7 @@ mod tests {
         let config_file_path = temp_dir_path.join("config.json");
         let handle = spawn_monitor_thread_and_wait_for_event(
             config_file_path,
+            None,
             repository_path.clone(),
             Event::Shutdown,
         );
@@ -820,9 +840,33 @@ mod tests {
             .unwrap();
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let config_file_path = temp_dir_path.join("config.json");
-        let mut monitor = Monitor::new(config_file_path).unwrap();
+        let mut monitor = Monitor::new(config_file_path, None).unwrap();
         let errors = monitor
             .set_watched_directories(&BTreeSet::from([temp_dir_path.join("does not exist")]));
         assert_eq!(1, errors.len());
+    }
+
+    #[test]
+    fn test_global_gitignore() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_empty_file("global_gitignore")
+            .add_directory("repository")
+            .add_directory("repository/.git")
+            .add_empty_file("config.json")
+            .build()
+            .unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let global_gitignore_path = temp_dir_path.join("global_gitignore");
+        let repository_path = temp_dir_path.join("repository");
+        let config_file_path = temp_dir_path.join("config.json");
+        let handle = spawn_monitor_thread_and_wait_for_event(
+            config_file_path,
+            Some(global_gitignore_path.clone()),
+            repository_path.clone(),
+            Event::ReloadConfiguration,
+        );
+        std::thread::sleep(Duration::from_millis(1000));
+        std::fs::write(global_gitignore_path, "yo").unwrap();
+        assert!(handle.join().unwrap());
     }
 }

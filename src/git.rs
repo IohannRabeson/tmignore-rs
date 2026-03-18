@@ -130,6 +130,31 @@ pub fn find_parent_repository(path: impl AsRef<Path>) -> Option<PathBuf> {
     }
 }
 
+/// Execute git config --get core.excludesFile
+pub fn get_global_git_ignore() -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .arg("config")
+        .arg("--get")
+        .arg("core.excludesFile")
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let stdout = stdout.trim();
+
+    if stdout.is_empty() {
+        return None;
+    }
+
+    let global_gitignore_path = PathBuf::from(stdout);
+
+    if !global_gitignore_path.is_file() {
+        return None
+    }
+
+    Some(global_gitignore_path)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
