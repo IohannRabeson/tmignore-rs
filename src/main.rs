@@ -115,15 +115,16 @@ fn program() -> Result<(), Box<dyn Error>> {
 }
 
 fn setup_log(verbose: bool) -> Result<(), log::SetLoggerError> {
-    let level = if verbose { log::LevelFilter::Debug } else { log::LevelFilter::Info };
-    let os_logger: Box<dyn log::Log> =
-        Box::new(oslog::OsLogger::new("com.irabeson.tmignore-rs"));
+    let level = if verbose {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
+    };
+    let os_logger: Box<dyn log::Log> = Box::new(oslog::OsLogger::new("com.irabeson.tmignore-rs"));
 
     fern::Dispatch::new()
         .level(level)
-        .filter(|metadata|
-            metadata.target().starts_with("tmignore_rs")
-        )
+        .filter(|metadata| metadata.target().starts_with("tmignore_rs"))
         .chain(std::io::stdout())
         .chain(os_logger)
         .apply()?;
@@ -214,7 +215,9 @@ mod tests {
     use serde_json::json;
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::{cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file};
+    use crate::{
+        cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file,
+    };
 
     #[test]
     fn test_import_legacy_config_file_dont_exist() {
