@@ -38,7 +38,7 @@ This command is very light, excepted the initial scan, it should never affect th
 
 ## Logs
 This application sends the logs to the Console application.  
-Use `tmignore-rs` as filter.  
+Use `tmignore-rs` as process filter.  
 
 ## Show help
 ```
