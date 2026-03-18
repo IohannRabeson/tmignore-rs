@@ -71,7 +71,7 @@ impl Cache {
         let file_path = file_path.as_ref();
 
         info!("Load cache '{}'", file_path.display());
-        
+
         if !file_path.is_file() {
             return Err(OpenOrCreateError::FileDoesNotExist);
         }

@@ -149,7 +149,7 @@ pub fn get_global_git_ignore() -> Option<PathBuf> {
     let global_gitignore_path = PathBuf::from(stdout);
 
     if !global_gitignore_path.is_file() {
-        return None
+        return None;
     }
 
     Some(global_gitignore_path)
