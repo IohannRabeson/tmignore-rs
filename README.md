@@ -25,6 +25,7 @@ brew services stop tmignore-rs
 ```
 
 ## How to use it
+### `monitor` command
 The most important command is the `monitor` command:
 ```
 tmignore-rs monitor
@@ -37,11 +38,17 @@ This configuration file is hot-reloaded so you don't need to restart tmignore-rs
 See [Configuration](#configuration) for more details.
  
 This command is very light, excepted the initial scan, it should never affect the performances of you Mac.
+If you want to test you can run it with the flag `--dry-run` to prevent avoid modifying anything.  
+But for testing, it's easier to use the `run` command.
+
 ### `run` command
-This command performs a scan of the directories 
+This command performs a scan of the directories. You can specify the number of threads to use during this phase, no need to set it high you will be limited by the I/O anyways.  
+Like `monitor`, the `run` command has an option `--dry-run`.
+If you want to run tmignore-rs manually times to times this is the command to use.
+
 ## Logs
 This application sends the logs to the Console application.  
-Use `tmignore-rs` as filter.  
+Use `tmignore-rs` as filter (select the filtering by process).  
 
 ## Show help
 ```
