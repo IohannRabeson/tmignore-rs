@@ -30,8 +30,7 @@ The most important command is the `monitor` command:
 ```
 tmignore-rs monitor
 ```
-It will monitor the filesystem and will update the list of paths to exclude from Time Machine backups almost instantly, allowing you to 
- definitively forget about it.
+It will monitor the filesystem and update the list of paths to exclude from Time Machine backups every 60 seconds.
 
 This program loads `~/.config/tmignore-rs/config.json` as its configuration file, creating it on first run if it doesn't exist.  
 This configuration file is hot-reloaded so you don't need to restart tmignore-rs after modifying it.
@@ -102,7 +101,7 @@ If you were using [tmignore](https://github.com/samuelmeuli/tmignore) the config
     "*/BrogueRunHistory.txt"
   ],
   "threads": 4,
-  "monitor_interval_secs": 5
+  "monitor_interval_secs": 60
 }
 
 ```
