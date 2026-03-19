@@ -116,7 +116,7 @@ See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
 The `threads` count. 0 means the count of threads is not limited and the max will be choose.
 
 ### `monitor_interval_secs`
-Monitoring interval in seconds.
+Monitoring interval in seconds. Default is 60 seconds. If you want to reduce the power consumption increase the interval.
 
 ## Coverage
 I'm using [Tarpaulin](https://github.com/xd009642/tarpaulin) to measure test coverage.
