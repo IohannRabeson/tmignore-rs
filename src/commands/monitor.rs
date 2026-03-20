@@ -824,7 +824,6 @@ mod tests {
             repository_path.clone(),
             Event::Shutdown,
         );
-        std::thread::sleep(Duration::from_millis(1000));
         unsafe {
             libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
         }
