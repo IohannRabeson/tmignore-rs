@@ -865,6 +865,7 @@ mod tests {
         crate::commands::tests::init_git_repository(&repository_path);
         let global_gitignore_path = temp_dir_path.join("global_gitignore");
         let config_file_path = temp_dir_path.join("config.json");
+        std::thread::sleep(Duration::from_millis(500));
         let handle = spawn_monitor_thread_and_wait_for_event(
             config_file_path,
             Some(global_gitignore_path.clone()),
