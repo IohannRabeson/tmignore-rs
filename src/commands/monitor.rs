@@ -756,6 +756,7 @@ mod tests {
     #[case(notify::Event::default().set_kind(notify::EventKind::Modify(notify::event::ModifyKind::Data(notify::event::DataChange::Content))).add_path("yop".into()), false)]
     #[case(notify::Event::default().set_kind(notify::EventKind::Modify(notify::event::ModifyKind::Name(notify::event::RenameMode::From))), true)]
     #[case(notify::Event::default().set_kind(notify::EventKind::Access(notify::event::AccessKind::Read)), false)]
+    #[case(notify::Event::default().set_kind(notify::EventKind::Other), false)]
     fn test_accept_event(#[case] event: notify::Event, #[case] accepted: bool) {
         let result = Monitor::accept_event(&event);
 
