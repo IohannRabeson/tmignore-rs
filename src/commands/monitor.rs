@@ -425,6 +425,7 @@ mod tests {
             .search_directories
             .insert(temp_dir.path().to_path_buf());
         config.save_to_file(&config_file_path).unwrap();
+        thread::sleep(Duration::from_millis(200));
         event_sender.send(Event::ReloadConfiguration).unwrap();
         event_sender.send(Event::Shutdown).unwrap();
         let cache = handle.join().unwrap();
@@ -741,10 +742,9 @@ mod tests {
         repository_path: PathBuf,
         event: Event,
     ) -> JoinHandle<bool> {
+        let mut monitor = Monitor::new(&config_file_path, global_gitignore).unwrap();
+        monitor.set_watched_directories(&BTreeSet::from([repository_path]));
         std::thread::spawn(move || {
-            let mut monitor = Monitor::new(&config_file_path, global_gitignore).unwrap();
-            monitor.set_watched_directories(&BTreeSet::from([repository_path]));
-
             wait_for_event(&mut monitor, Duration::from_secs(20), &event)
         })
     }
@@ -848,7 +848,12 @@ mod tests {
 
     #[test]
     fn test_global_gitignore() {
+        let dir_path = PathBuf::from("test_global_gitignore");
+        if dir_path.is_dir() {
+            std::fs::remove_dir_all(&dir_path).unwrap();
+        }
         let temp_dir = TempDirectoryBuilder::default()
+            .root_folder(dir_path)
             .add_empty_file("global_gitignore")
             .add_directory("repository")
             .add_directory("repository/.git")
@@ -856,8 +861,9 @@ mod tests {
             .build()
             .unwrap();
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let global_gitignore_path = temp_dir_path.join("global_gitignore");
         let repository_path = temp_dir_path.join("repository");
+        crate::commands::tests::init_git_repository(&repository_path);
+        let global_gitignore_path = temp_dir_path.join("global_gitignore");
         let config_file_path = temp_dir_path.join("config.json");
         let handle = spawn_monitor_thread_and_wait_for_event(
             config_file_path,
@@ -865,7 +871,6 @@ mod tests {
             repository_path.clone(),
             Event::ReloadConfiguration,
         );
-        std::thread::sleep(Duration::from_millis(1000));
         std::fs::write(global_gitignore_path, "yo").unwrap();
         assert!(handle.join().unwrap());
     }

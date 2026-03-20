@@ -182,6 +182,7 @@ pub(crate) mod tests {
 
     pub(crate) fn create_config(search_directory: impl AsRef<Path>) -> Config {
         let mut config = Config::default();
+        config.monitor_interval_secs = 1;
         config.search_directories.clear();
         config
             .search_directories

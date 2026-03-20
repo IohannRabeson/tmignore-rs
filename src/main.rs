@@ -20,8 +20,21 @@ use crate::{cache::Cache, commands::monitor::Monitor, config::Config, legacy_cac
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-    #[arg(short, long)]
+    /// Enable verbose logging
+    #[arg(long)]
     verbose: bool,
+    /// Specify the configuration file path
+    #[arg(long, default_value = CONFIG_FILE_PATH, hide = true)]
+    config: String,
+    /// Specify the cache file path
+    #[arg(long, default_value = CACHE_FILE_PATH, hide = true)]
+    cache: String,
+    /// Specify the legacy configuration file path
+    #[arg(long, default_value = LEGACY_CONFIG_FILE_PATH, hide = true)]
+    legacy_config: String,
+    /// Specify the legacy cache file path
+    #[arg(long, default_value = LEGACY_CACHE_FILE_PATH, hide = true)]
+    legacy_cache: String,
 }
 
 #[derive(Subcommand)]
@@ -63,12 +76,11 @@ const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
 const LEGACY_CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
 const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
 
-fn program() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
-    let config_file_path = shellexpand::tilde(CONFIG_FILE_PATH).to_string();
-    let cache_file_path = shellexpand::tilde(CACHE_FILE_PATH).to_string();
-    let legacy_config_file_path = shellexpand::tilde(LEGACY_CONFIG_FILE_PATH).to_string();
-    let legacy_cache_file_path = shellexpand::tilde(LEGACY_CACHE_FILE_PATH).to_string();
+fn program(cli: Cli) -> Result<(), Box<dyn Error>> {
+    let config_file_path = shellexpand::tilde(&cli.config).to_string();
+    let cache_file_path = shellexpand::tilde(&cli.cache).to_string();
+    let legacy_config_file_path = shellexpand::tilde(&cli.legacy_config).to_string();
+    let legacy_cache_file_path = shellexpand::tilde(&cli.legacy_cache).to_string();
 
     setup_log(cli.verbose)?;
     import_legacy_config_file(&legacy_config_file_path, &config_file_path)?;
@@ -137,7 +149,7 @@ fn setup_log(verbose: bool) -> Result<(), log::SetLoggerError> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    match program() {
+    match program(Cli::parse()) {
         Ok(()) => Ok(()),
         Err(error) => {
             error!("Error: {}", error);
@@ -210,13 +222,13 @@ impl Logger {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use serde_json::json;
-    use temp_dir_builder::TempDirectoryBuilder;
+    use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
     use crate::{
-        cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file,
+        Cli, cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file, program
     };
 
     #[test]
@@ -268,5 +280,69 @@ mod tests {
         assert_eq!(2, paths.len());
         assert!(paths.contains(&PathBuf::from("a")));
         assert!(paths.contains(&PathBuf::from("b")));
+    }
+
+    fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
+        let root_directory = root_directory.as_ref();
+        if root_directory.exists() && root_directory.is_dir() {
+            std::fs::remove_dir_all(&root_directory).unwrap();
+        }
+        let repository_path = root_directory.join("repository");
+        let mut config = Config::default();
+        config.search_directories.clear();
+        config.search_directories.insert(repository_path.clone());
+        let temp_dir = TempDirectoryBuilder::default()
+            .root_folder(root_directory)
+            .add_text_file("config.json", serde_json::to_string(&config).unwrap())
+            .add_text_file("repository/.gitignore", "a\nb\n")
+            .add_empty_file("repository/a")
+            .add_empty_file("repository/b")
+            .add_empty_file("repository/c")
+            .build()
+            .unwrap();
+        
+        crate::commands::tests::init_git_repository(repository_path);
+
+        temp_dir
+    }
+
+    #[test]
+    fn test_program_run() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let temp_dir_path = root.join("test_program_run");
+        let _temp_dir = create_repository(&temp_dir_path);
+        let config_file_path = temp_dir_path.join("config.json");
+        let cache_file_path = temp_dir_path.join("cache.db");
+        let cli = Cli {
+            command: crate::Commands::Run { dry_run: false, details: false },
+            verbose: false,
+            config: config_file_path.to_string_lossy().to_string(),
+            cache: cache_file_path.to_string_lossy().to_string(),
+            legacy_config: String::new(),
+            legacy_cache: String::new(),
+        };
+        let a_file_path = temp_dir_path.join("repository").join("a");
+        let b_file_path = temp_dir_path.join("repository").join("b");
+        let c_file_path = temp_dir_path.join("repository").join("c");
+
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &a_file_path
+        ));
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &b_file_path
+        ));
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &c_file_path
+        ));
+        program(cli).unwrap();
+        assert!(crate::timemachine::tests::is_excluded_from_time_machine(
+            &a_file_path
+        ));
+        assert!(crate::timemachine::tests::is_excluded_from_time_machine(
+            &b_file_path
+        ));
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &c_file_path
+        ));
     }
 }
