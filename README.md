@@ -56,7 +56,7 @@ tmignore-rs --help
 ```
 Makes Time Machine respect .gitignore files
 
-Usage: tmignore-rs <COMMAND>
+Usage: tmignore-rs [OPTIONS] <COMMAND>
 
 Commands:
   monitor  Watch for file changes and keep the exclusion list up to date
@@ -66,6 +66,7 @@ Commands:
   help     Print this message or the help of the given subcommand(s)
 
 Options:
+  -v, --verbose  Enable verbose logging
   -h, --help     Print help
   -V, --version  Print version
 
