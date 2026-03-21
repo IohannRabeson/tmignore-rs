@@ -311,6 +311,7 @@ mod tests {
 
     use crossbeam_channel::{Receiver, Sender};
     use rstest::rstest;
+    use serial_test::serial;
     use temp_dir_builder::TempDirectoryBuilder;
 
     use crate::{
@@ -764,6 +765,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_monitor_add_file() {
         let temp_dir = TempDirectoryBuilder::default()
             .add_directory("repository")
@@ -786,6 +788,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_monitor_reload_config() {
         let temp_dir = TempDirectoryBuilder::default()
             .add_directory("repository")
@@ -808,6 +811,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_monitor_shutdown() {
         let temp_dir = TempDirectoryBuilder::default()
             .add_directory("repository")
@@ -831,6 +835,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_set_watched_directories_error() {
         let temp_dir = TempDirectoryBuilder::default()
             .add_directory("repository")
@@ -847,6 +852,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_global_gitignore() {
         let dir_path = PathBuf::from("test_global_gitignore");
         if dir_path.is_dir() {
