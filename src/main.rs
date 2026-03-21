@@ -76,13 +76,15 @@ const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
 const LEGACY_CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
 const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
 
-fn program(cli: Cli) -> Result<(), Box<dyn Error>> {
+fn program(cli: Cli, enable_log: bool) -> Result<(), Box<dyn Error>> {
     let config_file_path = shellexpand::tilde(&cli.config).to_string();
     let cache_file_path = shellexpand::tilde(&cli.cache).to_string();
     let legacy_config_file_path = shellexpand::tilde(&cli.legacy_config).to_string();
     let legacy_cache_file_path = shellexpand::tilde(&cli.legacy_cache).to_string();
 
-    setup_log(cli.verbose)?;
+    if enable_log {
+        setup_log(cli.verbose)?;
+    }
     import_legacy_config_file(&legacy_config_file_path, &config_file_path)?;
     import_legacy_cache_file(&legacy_cache_file_path, &cache_file_path)?;
 
@@ -149,7 +151,7 @@ fn setup_log(verbose: bool) -> Result<(), log::SetLoggerError> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    match program(Cli::parse()) {
+    match program(Cli::parse(), true) {
         Ok(()) => Ok(()),
         Err(error) => {
             error!("Error: {}", error);
@@ -222,9 +224,10 @@ impl Logger {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::{path::{Path, PathBuf}, time::Duration};
 
     use serde_json::json;
+    use serial_test::serial;
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
     use crate::{
@@ -334,7 +337,9 @@ mod tests {
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &c_file_path
         ));
-        program(cli).unwrap();
+        if let Err(error) = program(cli, false) {
+            panic!("program returned an error: {}", error);
+        }
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
             &a_file_path
         ));
@@ -344,5 +349,78 @@ mod tests {
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &c_file_path
         ));
+    }
+
+    #[test]
+    #[serial]
+    fn test_program_monitor() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let temp_dir_path = root.join("test_program_monitor");
+        let _temp_dir = {
+            let root_directory = &temp_dir_path;
+            if root_directory.exists() && root_directory.is_dir() {
+                std::fs::remove_dir_all(&root_directory).unwrap();
+            }
+            let repository_path = root_directory.join("repository");
+            let mut config = Config::default();
+            config.monitor_interval_secs = 0;
+            config.search_directories.clear();
+            config.search_directories.insert(repository_path.clone());
+            let temp_dir = TempDirectoryBuilder::default()
+                .root_folder(root_directory)
+                .add_text_file("config.json", serde_json::to_string(&config).unwrap())
+                .add_text_file("repository/.gitignore", "a\nb\n")
+                .build()
+                .unwrap();
+    
+            crate::commands::tests::init_git_repository(repository_path);
+
+            temp_dir
+        };
+        let config_file_path = temp_dir_path.join("config.json");
+        let cache_file_path = temp_dir_path.join("cache.db");
+        let cli = Cli {
+            command: crate::Commands::Monitor { dry_run: false, details: false },
+            verbose: false,
+            config: config_file_path.to_string_lossy().to_string(),
+            cache: cache_file_path.to_string_lossy().to_string(),
+            legacy_config: String::new(),
+            legacy_cache: String::new(),
+        };
+        let a_file_path = temp_dir_path.join("repository").join("a");
+        let b_file_path = temp_dir_path.join("repository").join("b");
+        let c_file_path = temp_dir_path.join("repository").join("c");
+
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &a_file_path
+        ));
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &b_file_path
+        ));
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &c_file_path
+        ));
+        let handle = std::thread::spawn(||{
+            program(cli, false).unwrap()
+        });
+        std::thread::sleep(Duration::from_millis(500));
+        std::fs::write(&a_file_path, "").unwrap();
+        std::fs::write(&b_file_path, "").unwrap();
+        std::fs::write(&c_file_path, "").unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(crate::timemachine::tests::is_excluded_from_time_machine(
+            &a_file_path
+        ));
+        assert!(crate::timemachine::tests::is_excluded_from_time_machine(
+            &b_file_path
+        ));
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &c_file_path
+        ));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
+        
+        handle.join().unwrap();
     }
 }
