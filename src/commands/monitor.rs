@@ -513,7 +513,6 @@ mod tests {
 
             cache
         });
-        thread::sleep(Duration::from_millis(200));
         event_sender.send(Event::ReloadConfiguration).unwrap();
         event_sender
             .send(Event::ScanRepositories(BTreeSet::from([
@@ -521,7 +520,6 @@ mod tests {
             ])))
             .unwrap();
         event_sender.send(Event::Shutdown).unwrap();
-
         let cache = handle.join().unwrap();
         let paths = cache.paths();
         assert_eq!(1, paths.len());
@@ -577,6 +575,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_monitor_removed_file() {
         let temp_dir = crate::commands::tests::create_repository("test_monitor_removed_file");
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
@@ -585,7 +584,7 @@ mod tests {
         let config = crate::commands::tests::create_config(&temp_dir_path);
         let config_file_path = temp_dir_path.join("config.json");
         config.save_to_file(&config_file_path).unwrap();
-        let (mut monitor, event_sender) = MockMonitor::new();
+        let mut monitor = Monitor::new(&config_file_path, None).unwrap();
         let handle = thread::spawn(move || {
             let mut cache = Cache::open_in_memory().unwrap();
             let dry_run = false;
@@ -604,13 +603,10 @@ mod tests {
         });
         thread::sleep(Duration::from_millis(200));
         std::fs::remove_file(file_b_path).unwrap();
-        event_sender
-            .send(Event::ScanRepositories(BTreeSet::from([
-                temp_dir_path.clone()
-            ])))
-            .unwrap();
-        event_sender.send(Event::Shutdown).unwrap();
-
+        std::thread::sleep(Duration::from_millis(1000));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
         let cache = handle.join().unwrap();
         let paths = cache.paths();
         assert_eq!(1, paths.len());
@@ -618,6 +614,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_monitor_renamed_file() {
         let temp_dir = crate::commands::tests::create_repository("test_monitor_renamed_file");
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
@@ -628,7 +625,7 @@ mod tests {
         config.monitor_interval_secs = 1;
         let config_file_path = temp_dir_path.join("config.json");
         config.save_to_file(&config_file_path).unwrap();
-        let (mut monitor, event_sender) = MockMonitor::new();
+        let mut monitor = Monitor::new(&config_file_path, None).unwrap();
         let handle = thread::spawn(move || {
             let mut cache = Cache::open_in_memory().unwrap();
             let dry_run = false;
@@ -647,14 +644,10 @@ mod tests {
         });
         thread::sleep(Duration::from_millis(200));
         std::fs::rename(file_b_path, file_d_path).unwrap();
-        event_sender
-            .send(Event::ScanRepositories(BTreeSet::from([
-                temp_dir_path.clone()
-            ])))
-            .unwrap();
-        thread::sleep(Duration::from_millis(1200));
-        event_sender.send(Event::Shutdown).unwrap();
-
+        thread::sleep(Duration::from_millis(1000));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
         let cache = handle.join().unwrap();
         let paths = cache.paths();
         assert_eq!(1, paths.len());
@@ -662,6 +655,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_monitor_add_a_repository() {
         let root_folder_path = PathBuf::from("test_monitor_add_a_repository");
         if root_folder_path.exists() && root_folder_path.is_dir() {
@@ -676,7 +670,7 @@ mod tests {
         let config_file_path = root_folder_path.join("config.json");
         config.monitor_interval_secs = 0;
         config.save_to_file(&config_file_path).unwrap();
-        let (mut monitor, event_sender) = MockMonitor::new();
+        let mut monitor = Monitor::new(&config_file_path, None).unwrap();
         let handle = thread::spawn(move || {
             let mut cache = Cache::open_in_memory().unwrap();
             let dry_run = false;
@@ -703,13 +697,10 @@ mod tests {
         std::fs::File::create(&file_a_path).unwrap();
         std::fs::write(gitignore_file_path, "a\nb\n").unwrap();
         std::fs::File::create(&file_b_path).unwrap();
-        event_sender
-            .send(Event::ScanRepositories(BTreeSet::from([
-                new_repository_path.clone(),
-            ])))
-            .unwrap();
-        thread::sleep(Duration::from_millis(1200));
-        event_sender.send(Event::Shutdown).unwrap();
+        thread::sleep(Duration::from_millis(1000));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
 
         let cache = handle.join().unwrap();
         let paths = cache.paths();
@@ -776,13 +767,13 @@ mod tests {
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let repository_path = temp_dir_path.join("repository");
         let config_file_path = temp_dir_path.join("config.json");
+        std::thread::sleep(Duration::from_millis(500));
         let handle = spawn_monitor_thread_and_wait_for_event(
             config_file_path,
             None,
             repository_path.clone(),
             Event::ScanRepositories(BTreeSet::from([repository_path.clone()])),
         );
-        std::thread::sleep(Duration::from_millis(500));
         std::fs::File::create(repository_path.join("new_file")).unwrap();
         assert!(handle.join().unwrap());
     }
@@ -799,13 +790,13 @@ mod tests {
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let repository_path = temp_dir_path.join("repository");
         let config_file_path = temp_dir_path.join("config.json");
+        std::thread::sleep(Duration::from_millis(500));
         let handle = spawn_monitor_thread_and_wait_for_event(
             config_file_path.clone(),
             None,
             repository_path.clone(),
             Event::ReloadConfiguration,
         );
-        std::thread::sleep(Duration::from_millis(500));
         std::fs::write(&config_file_path, "Hey").unwrap();
         assert!(handle.join().unwrap());
     }
