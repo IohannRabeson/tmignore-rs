@@ -174,12 +174,12 @@ fn import_legacy_config_file(
         "Importing legacy config '{}'...",
         legacy_config_file_path.display()
     );
-    let legacy_config = json::load_json_file(&legacy_config_file_path)?;
+    let legacy_config = json::load_json_file(legacy_config_file_path)?;
     let new_config = Config::from(&legacy_config);
     if let Some(parent) = config_file_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    json::save_json_file(&config_file_path, &new_config)?;
+    json::save_json_file(config_file_path, &new_config)?;
     info!("Create new config file '{}'", config_file_path.display());
     info!("You can delete '{}' now", legacy_config_file_path.display());
     Ok(())
@@ -196,7 +196,7 @@ fn import_legacy_cache_file(
         return Ok(());
     }
 
-    let legacy_cache: LegacyCache = json::load_json_file(&legacy_cache_file_path)?;
+    let legacy_cache: LegacyCache = json::load_json_file(legacy_cache_file_path)?;
     let mut cache = Cache::create(cache_file_path)?;
 
     cache.reset(legacy_cache.paths);

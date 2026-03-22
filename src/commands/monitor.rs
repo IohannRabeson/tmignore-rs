@@ -135,14 +135,13 @@ fn find_repositories(
     let mut results = BTreeSet::new();
 
     for path in &event.paths {
-        if let Some(repository_path) = git::find_parent_repository(path) {
-            if search_directories
+        if let Some(repository_path) = git::find_parent_repository(path)
+            && search_directories
                 .iter()
                 .any(|search_directory| repository_path.starts_with(search_directory))
             {
                 results.insert(repository_path);
             }
-        }
     }
 
     results
