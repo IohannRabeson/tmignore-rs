@@ -153,13 +153,23 @@ pub(crate) mod tests {
         timemachine::Error,
     };
 
-    pub(crate) fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
-        let root_directory = root_directory.as_ref();
-        if root_directory.exists() && root_directory.is_dir() {
-            std::fs::remove_dir_all(&root_directory).unwrap();
+    /// Create a Git repository with some files.
+    /// 
+    /// When `root_directory` is None, the temporary directory is created in /tmp
+    /// which is excluded from Time Machine backup, meaning all children files and directories
+    /// will be considered excluded from Time Machine backup anyway (`tmutil isexcluded` will always returns "[Excluded]"),
+    pub(crate) fn create_repository(root_directory: Option<impl AsRef<Path>>) -> TempDirectory {
+        let root_directory = root_directory.as_ref().map(|path|path.as_ref());
+        if let Some(root_directory) = root_directory {
+            if root_directory.exists() && root_directory.is_dir() {
+                std::fs::remove_dir_all(&root_directory).unwrap();
+            }
         }
-        let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(root_directory)
+        let mut temp_dir_builder = TempDirectoryBuilder::default();
+        if let Some(root_directory) = root_directory {
+            temp_dir_builder = temp_dir_builder.root_folder(root_directory);
+        }
+        let temp_dir = temp_dir_builder
             .add_text_file(".gitignore", "a\nb\n")
             .add_empty_file("a")
             .add_empty_file("b")
