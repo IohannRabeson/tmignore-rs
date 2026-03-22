@@ -21,11 +21,13 @@ pub fn execute(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use crate::{Logger, cache::Cache};
 
     #[test]
     fn test_reset() {
-        let temp_dir = crate::commands::tests::create_repository("test_reset");
+        let temp_dir = crate::commands::tests::create_repository(None::<PathBuf>);
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = false;

@@ -57,7 +57,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_command() {
-        let temp_dir = crate::commands::tests::create_repository("test_run_command");
+        let temp_dir = crate::commands::tests::create_repository(Some("test_run_command"));
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = false;
@@ -85,7 +85,7 @@ pub(crate) mod tests {
     #[test]
     fn test_dry_run() {
         let temp_dir =
-            crate::commands::tests::create_repository("run_command_test_command_dry_run");
+            crate::commands::tests::create_repository(Some("run_command_test_command_dry_run"));
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = true;

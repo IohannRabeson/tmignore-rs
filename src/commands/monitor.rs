@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_monitor_basic() {
-        let temp_dir = crate::commands::tests::create_repository("test_monitor_basic");
+        let temp_dir = crate::commands::tests::create_repository(None::<PathBuf>);
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let file_a_path = temp_dir_path.join("a");
         let file_b_path = temp_dir_path.join("b");
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_monitor_update_config() {
-        let temp_dir = crate::commands::tests::create_repository("test_monitor_update_config");
+        let temp_dir = crate::commands::tests::create_repository(None::<PathBuf>);
         let empty_directory = temp_dir.path().join("empty");
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let file_a_path = temp_dir_path.join("a");
@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn test_monitor_update_config_invalid() {
         let temp_dir =
-            crate::commands::tests::create_repository("test_monitor_update_config_invalid");
+            crate::commands::tests::create_repository(None::<PathBuf>);
         let empty_directory = temp_dir.path().join("empty");
         std::fs::create_dir_all(&empty_directory).unwrap();
         let config = crate::commands::tests::create_config(&empty_directory);
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn test_monitor_file_not_readable() {
-        let temp_dir = crate::commands::tests::create_repository("test_monitor_file_not_readable");
+        let temp_dir = crate::commands::tests::create_repository(None::<PathBuf>);
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let file_a_path = temp_dir_path.join("a");
         let file_b_path = temp_dir_path.join("b");
@@ -529,7 +529,7 @@ mod tests {
     #[test]
     fn test_monitor_update_config_error() {
         let temp_dir =
-            crate::commands::tests::create_repository("test_monitor_update_config_error");
+            crate::commands::tests::create_repository(None::<PathBuf>);
         let empty_directory = temp_dir.path().join("empty");
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let file_a_path = temp_dir_path.join("a");
@@ -577,7 +577,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_monitor_removed_file() {
-        let temp_dir = crate::commands::tests::create_repository("test_monitor_removed_file");
+        let temp_dir = crate::commands::tests::create_repository(None::<PathBuf>);
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let file_a_path = temp_dir_path.join("a");
         let file_b_path = temp_dir_path.join("b");
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_monitor_renamed_file() {
-        let temp_dir = crate::commands::tests::create_repository("test_monitor_renamed_file");
+        let temp_dir = crate::commands::tests::create_repository(None::<PathBuf>);
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let file_a_path = temp_dir_path.join("a");
         let file_b_path = temp_dir_path.join("b");
@@ -657,12 +657,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_monitor_add_a_repository() {
-        let root_folder_path = PathBuf::from("test_monitor_add_a_repository");
-        if root_folder_path.exists() && root_folder_path.is_dir() {
-            std::fs::remove_dir_all(&root_folder_path).unwrap();
-        }
         let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(root_folder_path)
             .build()
             .unwrap();
         let root_folder_path = temp_dir.path().canonicalize().unwrap();
