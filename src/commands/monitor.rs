@@ -30,7 +30,7 @@ impl notify::EventHandler for EventHandler {
 /// This command monitors a set of directories for changes and keeps up to date the
 /// list of paths to exclude from Time Machine backups.
 /// It works by watching the search directories specified by the configuration file.
-/// Each 5 seconds by default the changes found in the file system are applied to the list of excluded files.
+/// Each 60 seconds by default the changes found in the file system are applied to the list of excluded files.
 /// The configuration file is watched, if it is modified it will be reloaded and a complete scan will start.
 /// If a .gitignore file is modified then a scan of the repository will be scheduled.
 pub fn execute(
