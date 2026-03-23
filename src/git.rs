@@ -7,6 +7,7 @@ use std::{
 };
 
 use crossbeam_channel::Receiver;
+use log::warn;
 
 const DOT_GIT_DIRECTORY_NAME: &str = ".git";
 
@@ -72,17 +73,7 @@ fn create_walk_builder(directories: &BTreeSet<PathBuf>, ignore: bool) -> ignore:
     builder
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum FindIgnoredFileError {
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error("Git command failed: {0}")]
-    CommandFailed(String),
-}
-
-pub fn find_ignored_files(
-    repository_directory: &Path,
-) -> Result<Vec<PathBuf>, FindIgnoredFileError> {
+pub fn find_ignored_files(repository_directory: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     if !repository_directory.exists() {
         return Ok(vec![]);
     }
@@ -101,9 +92,13 @@ pub fn find_ignored_files(
         .output()?;
 
     if !output.status.success() {
-        return Err(FindIgnoredFileError::CommandFailed(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
+        warn!(
+            "Failed to find ignored file in repository '{}': {}",
+            repository_directory.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        return Ok(vec![]);
     }
 
     Ok(output
@@ -274,5 +269,16 @@ mod tests {
             Some(&repository_path)
         );
         assert_eq!(find_parent_repository(&not_a_repo_sub), None);
+    }
+
+    #[test]
+    fn test_find_ignored_files_not_a_git_repository() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+
+        assert!(
+            super::find_ignored_files(temp_dir.path())
+                .unwrap()
+                .is_empty()
+        );
     }
 }
