@@ -419,13 +419,11 @@ mod tests {
 
             cache
         });
-        thread::sleep(Duration::from_millis(200));
         config.search_directories.clear();
         config
             .search_directories
             .insert(temp_dir.path().to_path_buf());
         config.save_to_file(&config_file_path).unwrap();
-        thread::sleep(Duration::from_millis(200));
         event_sender.send(Event::ReloadConfiguration).unwrap();
         event_sender.send(Event::Shutdown).unwrap();
         let cache = handle.join().unwrap();
