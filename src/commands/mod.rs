@@ -155,9 +155,9 @@ pub(crate) mod tests {
 
     /// Create a Git repository with some files.
     /// 
-    /// When `root_directory` is None, the temporary directory is created in /tmp
+    /// When `root_directory` is None, the temporary directory is created in `/tmp`
     /// which is excluded from Time Machine backup, meaning all children files and directories
-    /// will be considered excluded from Time Machine backup anyway (`tmutil isexcluded` will always returns "[Excluded]"),
+    /// will be considered excluded from Time Machine backup anyway (`tmutil isexcluded` will always returns "[Excluded]").
     pub(crate) fn create_repository(root_directory: Option<impl AsRef<Path>>) -> TempDirectory {
         let root_directory = root_directory.as_ref().map(|path|path.as_ref());
         if let Some(root_directory) = root_directory {
