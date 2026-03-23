@@ -399,6 +399,7 @@ mod tests {
         let file_b_path = temp_dir_path.join("b");
         std::fs::create_dir_all(&empty_directory).unwrap();
         let mut config = crate::commands::tests::create_config(&empty_directory);
+        config.monitor_interval_secs = 0;
         let config_file_path = temp_dir.path().join("config.json");
         config.save_to_file(&config_file_path).unwrap();
         let config_file_path_thread = config_file_path.clone();
@@ -439,7 +440,8 @@ mod tests {
             crate::commands::tests::create_repository(None::<PathBuf>);
         let empty_directory = temp_dir.path().join("empty");
         std::fs::create_dir_all(&empty_directory).unwrap();
-        let config = crate::commands::tests::create_config(&empty_directory);
+        let mut config = crate::commands::tests::create_config(&empty_directory);
+        config.monitor_interval_secs = 0;
         let config_file_path = temp_dir.path().join("config.json");
         config.save_to_file(&config_file_path).unwrap();
         let config_file_path_thread = config_file_path.clone();
@@ -460,6 +462,10 @@ mod tests {
 
             cache
         });
+        // Sleep to ensure the file is not written again before the scan finishes because
+        // at the scan phase, an invalid configuration will stop the program.
+        // Here we want to test the monitoring will not stop even if the configuration become invalid
+        // after the initial scan.
         thread::sleep(Duration::from_millis(200));
         std::fs::write(&config_file_path, "invalid json").unwrap();
         event_sender.send(Event::ReloadConfiguration).unwrap();
@@ -679,6 +685,8 @@ mod tests {
 
             cache
         });
+        // Ensure the monitor in the other thread is properly initialized
+        // before starting to create events.
         thread::sleep(Duration::from_millis(200));
         let new_repository_path = root_folder_path.join("new repository");
         std::fs::create_dir_all(&new_repository_path).unwrap();
