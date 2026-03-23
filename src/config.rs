@@ -123,8 +123,14 @@ impl Config {
 
     #[cfg(test)]
     pub fn save_to_file(&self, file_path: impl AsRef<Path>) -> Result<(), SaveError> {
-        let file = File::create(file_path)?;
+        // Create the file in a temporary directory then move the file to the final destination
+        // to prevent to send different events, one for the file creation and one when the file is written.
+        // This to help with test flakyness, it prevents tests to try to read an empty file.
+        let temp_dir = temp_dir_builder::TempDirectoryBuilder::default().build().unwrap();
+        let temp_file_path = temp_dir.path().join("temp_config");
+        let file = File::create(&temp_file_path)?;
         self.save(file)?;
+        std::fs::rename(&temp_file_path, file_path)?;
         Ok(())
     }
 
