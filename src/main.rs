@@ -367,7 +367,7 @@ mod tests {
             }
             let repository_path = root_directory.join("repository");
             let mut config = Config::default();
-            config.monitor_interval_secs = 0;
+            config.monitor_interval = Duration::ZERO;
             config.search_directories.clear();
             config.search_directories.insert(repository_path.clone());
             let temp_dir = TempDirectoryBuilder::default()
