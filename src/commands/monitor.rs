@@ -41,7 +41,7 @@ pub fn execute(
     logger: &mut Logger,
     monitor: &mut impl MonitorTrait,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config_file_path = config_file_path.as_ref().canonicalize()?.to_path_buf();
+    let config_file_path = config_file_path.as_ref().canonicalize()?.clone();
     let mut config = Config::load_or_create_file(&config_file_path)?;
     let mut run_interval = Duration::from_secs(config.monitor_interval_secs);
     let mut elapsed = Duration::ZERO;
@@ -60,7 +60,7 @@ pub fn execute(
             pending_events.insert(event);
         }
 
-        elapsed += Instant::now() - now;
+        elapsed += now.elapsed();
         now = Instant::now();
 
         if !pending_events.is_empty() && (elapsed >= run_interval || !run) {
@@ -135,14 +135,13 @@ fn find_repositories(
     let mut results = BTreeSet::new();
 
     for path in &event.paths {
-        if let Some(repository_path) = git::find_parent_repository(path) {
-            if search_directories
+        if let Some(repository_path) = git::find_parent_repository(path)
+            && search_directories
                 .iter()
                 .any(|search_directory| repository_path.starts_with(search_directory))
             {
                 results.insert(repository_path);
             }
-        }
     }
 
     results
@@ -252,7 +251,7 @@ impl MonitorTrait for Monitor {
         for path_to_add in directory_paths {
             match paths.add(path_to_add, notify::RecursiveMode::Recursive) {
                 Ok(()) => {
-                    self.watched_paths.insert(path_to_add.to_path_buf());
+                    self.watched_paths.insert(path_to_add.clone());
                 }
                 Err(error) => {
                     errors.push(error.into());

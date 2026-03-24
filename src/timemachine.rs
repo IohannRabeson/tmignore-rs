@@ -43,7 +43,7 @@ fn exclude_path(path: impl AsRef<Path>, exclude: bool) -> Result<(), ExcludePath
     );
 
     let status = unsafe {
-        CSBackupSetItemExcluded(url.as_concrete_TypeRef(), if exclude { 1 } else { 0 }, 0)
+        CSBackupSetItemExcluded(url.as_concrete_TypeRef(), u8::from(exclude), 0)
     };
 
     if status == 0 {
