@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 mod cache;
 mod commands;
 mod config;
