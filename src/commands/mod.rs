@@ -33,7 +33,7 @@ impl TimeMachineTrait for TimeMachine {
     }
 }
 
-/// Calls TM::add_exclusion and TM::remove_exclusion depending on the diff.
+/// Calls `TM::add_exclusion` and `TM::remove_exclusion` depending on the diff.
 /// Returns the list of paths failed to be added.
 fn apply_diff_and_print<TM: TimeMachineTrait>(
     diff: &crate::diff::Diff,
@@ -64,15 +64,13 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
 
     if add_count > 0 {
         logger.log(format!(
-            "Added {} paths to the backup exclusion list",
-            add_count
+            "Added {add_count} paths to the backup exclusion list"
         ));
     }
 
     if remove_count > 0 {
         logger.log(format!(
-            "Removed {} paths from the backup exclusion list",
-            remove_count
+            "Removed {remove_count} paths from the backup exclusion list"
         ));
     }
 
@@ -106,7 +104,7 @@ fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, r
         match fnmatch_regex::glob_to_regex_pattern(pattern) {
             Ok(pattern) => Some(pattern),
             Err(error) => {
-                error!("Error: invalid whitelist pattern '{}': {}", pattern, error);
+                error!("Error: invalid whitelist pattern '{pattern}': {error}");
                 None
             }
         }
@@ -114,7 +112,7 @@ fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, r
 }
 
 /// Find the paths in a repository to exclude from Time Machine backup.
-/// If a path matches at least one of the regexes in the `whitelist` RegexSet it will not be
+/// If a path matches at least one of the regexes in the `whitelist` `RegexSet` it will not be
 /// added to the `exclusion` set.
 fn find_paths_to_exclude_from_backup(
     repository_path: impl AsRef<Path>,
