@@ -162,7 +162,7 @@ impl Cache {
                 })
                 .unwrap();
 
-            for path in paths.into_iter().filter_map(|path| path.ok()) {
+            for path in paths.into_iter().filter_map(Result::ok) {
                 if !exclusions.contains(&path) {
                     diff.removed.insert(path.clone());
                 }
@@ -204,7 +204,7 @@ impl Cache {
                 })
                 .unwrap();
 
-            for path in paths.into_iter().filter_map(|path| path.ok()) {
+            for path in paths.into_iter().filter_map(Result::ok) {
                 if !exclusions.contains(&path) {
                     diff.removed.insert(path.clone());
                 }
@@ -225,7 +225,7 @@ impl Cache {
             })
             .unwrap();
 
-        paths.into_iter().filter_map(|path| path.ok()).collect()
+        paths.into_iter().filter_map(Result::ok).collect()
     }
 }
 
