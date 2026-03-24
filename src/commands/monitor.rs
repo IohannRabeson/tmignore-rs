@@ -222,9 +222,7 @@ impl Monitor {
 
     fn accept_event(event: &notify::Event) -> bool {
         match &event.kind {
-            notify::EventKind::Create(_) => (),
-            notify::EventKind::Remove(_) => (),
-            notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => (),
+            notify::EventKind::Create(_) | notify::EventKind::Remove(_) | notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => (),
             notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => {
                 // If there is no path that ends with ".gitignore" then reject the event
                 if !event.paths.iter().any(|path| path.ends_with(".gitignore")) {
@@ -285,8 +283,7 @@ impl MonitorTrait for Monitor {
                     }
                 }
             }
-            Ok(Err(_)) => (),
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => (),
+            Ok(Err(_)) | Err(crossbeam_channel::RecvTimeoutError::Timeout) => (),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 // To be able to be disconnected, you must drop self.watcher somehow.
                 // And once you dropped self.watcher you can't call self.get_event() anymore because

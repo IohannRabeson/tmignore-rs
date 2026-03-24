@@ -78,7 +78,7 @@ const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
 const LEGACY_CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
 const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
 
-fn program(cli: Cli, enable_log: bool) -> Result<(), Box<dyn Error>> {
+fn program(cli: &Cli, enable_log: bool) -> Result<(), Box<dyn Error>> {
     let config_file_path = shellexpand::tilde(&cli.config).to_string();
     let cache_file_path = shellexpand::tilde(&cli.cache).to_string();
     let legacy_config_file_path = shellexpand::tilde(&cli.legacy_config).to_string();
@@ -102,13 +102,15 @@ fn program(cli: Cli, enable_log: bool) -> Result<(), Box<dyn Error>> {
             let cache = Cache::open(cache_file_path)?;
             let separator = if zero_separator { '\0' } else { '\n' };
 
-            commands::list::execute(cache, &mut std::io::stdout(), separator)
+            commands::list::execute(&cache, &mut std::io::stdout(), separator)
         }
         Commands::Reset { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
             let mut cache = Cache::open(cache_file_path)?;
 
-            commands::reset::execute(&mut cache, dry_run, details, &mut logger)
+            commands::reset::execute(&mut cache, dry_run, details, &mut logger);
+
+            Ok(())
         }
         Commands::Monitor { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
@@ -153,7 +155,7 @@ fn setup_log(verbose: bool) -> Result<(), log::SetLoggerError> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    match program(Cli::parse(), true) {
+    match program(&Cli::parse(), true) {
         Ok(()) => Ok(()),
         Err(error) => {
             error!("Error: {error}");
@@ -339,7 +341,7 @@ mod tests {
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &c_file_path
         ));
-        if let Err(error) = program(cli, false) {
+        if let Err(error) = program(&cli, false) {
             panic!("program returned an error: {}", error);
         }
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
@@ -402,8 +404,8 @@ mod tests {
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &c_file_path
         ));
-        let handle = std::thread::spawn(||{
-            program(cli, false).unwrap()
+        let handle = std::thread::spawn(move ||{
+            program(&cli, false).unwrap()
         });
         std::thread::sleep(Duration::from_millis(500));
         std::fs::write(&a_file_path, "").unwrap();

@@ -3,7 +3,7 @@ use std::{error::Error, io::Write};
 use crate::cache::Cache;
 
 pub fn execute(
-    cache: Cache,
+    cache: &Cache,
     writer: &mut impl Write,
     separator: char,
 ) -> Result<(), Box<dyn Error>> {
@@ -25,7 +25,7 @@ mod tests {
         cache.reset([PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]);
         let mut writer = Vec::new();
 
-        super::execute(cache, &mut writer, '\n').unwrap();
+        super::execute(&cache, &mut writer, '\n').unwrap();
 
         let text = String::from_utf8(writer).unwrap();
         let lines: Vec<_> = text.lines().collect();
