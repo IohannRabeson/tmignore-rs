@@ -110,7 +110,7 @@ If you were using [tmignore](https://github.com/samuelmeuli/tmignore) the config
     "*/BrogueRunHistory.txt"
   ],
   "threads": 4,
-  "monitor_interval_secs": 60
+  "monitor_interval_secs": "1m"
 }
 
 ```
@@ -130,8 +130,10 @@ See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
 ### `threads`
 The `threads` count. 0 means the count of threads is not limited and the max will be choose.
 
-### `monitor_interval_secs`
-Monitoring interval in seconds. Default is 60 seconds. If you want to reduce the power consumption increase the interval.
+### `monitor_interval`
+Monitoring interval. Default is 1 minutes. 
+If you want to reduce the power consumption increase the interval.
+Example of values: `60s`, `10m`, `1h30m`.
 
 ## Coverage
 I'm using [Tarpaulin](https://github.com/xd009642/tarpaulin) to measure test coverage.

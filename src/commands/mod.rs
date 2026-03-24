@@ -138,7 +138,7 @@ fn find_paths_to_exclude_from_backup(
 pub(crate) mod tests {
     use std::{
         collections::BTreeSet,
-        path::{Path, PathBuf},
+        path::{Path, PathBuf}, time::Duration,
     };
 
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
@@ -190,7 +190,7 @@ pub(crate) mod tests {
 
     pub(crate) fn create_config(search_directory: impl AsRef<Path>) -> Config {
         let mut config = Config::default();
-        config.monitor_interval_secs = 1;
+        config.monitor_interval = Duration::from_secs(1);
         config.search_directories.clear();
         config
             .search_directories

@@ -43,7 +43,7 @@ pub fn execute(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_file_path = config_file_path.as_ref().canonicalize()?.clone();
     let mut config = Config::load_or_create_file(&config_file_path)?;
-    let mut run_interval = Duration::from_secs(config.monitor_interval_secs);
+    let mut run_interval = config.monitor_interval;
     let mut elapsed = Duration::ZERO;
     let mut now = Instant::now();
     let mut whitelist = super::create_whitelist(&config.whitelist_patterns)?;
@@ -83,7 +83,7 @@ pub fn execute(
                                 warn!("Due to an error the configuration stay unchanged");
                             }
                         }
-                        run_interval = Duration::from_secs(config.monitor_interval_secs);
+                        run_interval = config.monitor_interval;
                     }
                     Event::ScanRepositories(repositories_to_scan) => {
                         for repository_to_scan in repositories_to_scan {
@@ -396,7 +396,7 @@ mod tests {
         let file_b_path = temp_dir_path.join("b");
         std::fs::create_dir_all(&empty_directory).unwrap();
         let mut config = crate::commands::tests::create_config(&empty_directory);
-        config.monitor_interval_secs = 0;
+        config.monitor_interval = Duration::ZERO;
         let config_file_path = temp_dir.path().join("config.json");
         config.save_to_file(&config_file_path).unwrap();
         let config_file_path_thread = config_file_path.clone();
@@ -438,7 +438,7 @@ mod tests {
         let empty_directory = temp_dir.path().join("empty");
         std::fs::create_dir_all(&empty_directory).unwrap();
         let mut config = crate::commands::tests::create_config(&empty_directory);
-        config.monitor_interval_secs = 0;
+        config.monitor_interval = Duration::ZERO;
         let config_file_path = temp_dir.path().join("config.json");
         config.save_to_file(&config_file_path).unwrap();
         let config_file_path_thread = config_file_path.clone();
@@ -537,7 +537,7 @@ mod tests {
         set_permission(file_b_path, 0).unwrap();
         std::fs::create_dir_all(&empty_directory).unwrap();
         let mut config = crate::commands::tests::create_config(&empty_directory);
-        config.monitor_interval_secs = 1;
+        config.monitor_interval = Duration::from_secs(1);
         let config_file_path = temp_dir.path().join("config.json");
         config.save_to_file(&config_file_path).unwrap();
         let config_file_path_thread = config_file_path.clone();
@@ -622,7 +622,7 @@ mod tests {
         let file_b_path = temp_dir_path.join("b");
         let file_d_path = temp_dir_path.join("d");
         let mut config = crate::commands::tests::create_config(&temp_dir_path);
-        config.monitor_interval_secs = 1;
+        config.monitor_interval = Duration::from_secs(1);
         let config_file_path = temp_dir_path.join("config.json");
         config.save_to_file(&config_file_path).unwrap();
         let mut monitor = Monitor::new(&config_file_path, None).unwrap();
@@ -663,7 +663,7 @@ mod tests {
         let root_folder_path = temp_dir.path().canonicalize().unwrap();
         let mut config = crate::commands::tests::create_config(&root_folder_path);
         let config_file_path = root_folder_path.join("config.json");
-        config.monitor_interval_secs = 0;
+        config.monitor_interval = Duration::ZERO;
         config.save_to_file(&config_file_path).unwrap();
         let mut monitor = Monitor::new(&config_file_path, None).unwrap();
         let handle = thread::spawn(move || {
