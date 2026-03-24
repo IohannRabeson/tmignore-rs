@@ -45,6 +45,14 @@ This command performs a scan of the directories. You can specify the number of t
 Like `monitor`, the `run` command has an option `--dry-run`.
 If you want to run tmignore-rs manually times to times this is the command to use.
 
+### `reset` command
+This command removes everything from the backup exclusion list.
+
+### `list` command
+This command prints the backup exclusion list.
+
+There is a `-0` option if you want a null separated list.
+
 ## Logs
 This application sends the logs to the Console application.  
 Use `tmignore-rs` as filter (select the filtering by process).  
