@@ -1,7 +1,7 @@
 [package]
 name = "tmignore-rs"
 description = "Makes Time Machine respect .gitignore files"
-version = "0.1.5"
+version = "0.2.0"
 edition = "2024"
 publish = false
 
@@ -11,6 +11,7 @@ core-foundation = "0.10.1"
 crossbeam-channel = "0.5.15"
 fern = "0.7.1"
 fnmatch-regex = "0.3.0"
+humantime = "2.3.0"
 ignore = { version = "0.4", features = ["simd-accel"] }
 log = "0.4.29"
 notify = "8.2.0"
