@@ -1450,6 +1450,7 @@ dependencies = [
 name = "tmignore-rs"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "clap",
  "core-foundation",
  "crossbeam-channel",

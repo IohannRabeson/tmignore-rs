@@ -6,6 +6,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+anyhow = { version = "1", features = ["backtrace"] }
 clap = { version = "4.6", features = ["derive"] }
 core-foundation = "0.10.1"
 crossbeam-channel = "0.5.15"

@@ -12,7 +12,7 @@ mod timemachine;
 
 use clap::{Parser, Subcommand};
 use log::{error, info};
-use std::{error::Error, path::Path};
+use std::path::Path;
 
 use crate::{cache::Cache, commands::monitor::Monitor, config::Config, legacy_cache::LegacyCache};
 
@@ -78,7 +78,7 @@ const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
 const LEGACY_CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
 const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
 
-fn program(cli: &Cli, enable_log: bool) -> Result<(), Box<dyn Error>> {
+fn program(cli: &Cli, enable_log: bool) -> anyhow::Result<()> {
     let config_file_path = shellexpand::tilde(&cli.config).to_string();
     let cache_file_path = shellexpand::tilde(&cli.cache).to_string();
     let legacy_config_file_path = shellexpand::tilde(&cli.legacy_config).to_string();
@@ -132,7 +132,7 @@ fn program(cli: &Cli, enable_log: bool) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn setup_log(verbose: bool) -> Result<(), log::SetLoggerError> {
+fn setup_log(verbose: bool) -> anyhow::Result<()> {
     let level = if verbose {
         log::LevelFilter::Debug
     } else {
@@ -154,12 +154,12 @@ fn setup_log(verbose: bool) -> Result<(), log::SetLoggerError> {
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), anyhow::Error> {
     match program(&Cli::parse(), true) {
         Ok(()) => Ok(()),
         Err(error) => {
-            error!("Error: {error}");
-            eprintln!("Error: {error}");
+            error!("Error: {:#}", error);
+            eprintln!("Error: {:#}", error);
             Err(error)
         }
     }
@@ -168,7 +168,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn import_legacy_config_file(
     legacy_config_file_path: impl AsRef<Path>,
     config_file_path: impl AsRef<Path>,
-) -> Result<(), json::Error> {
+) -> anyhow::Result<()> {
     let legacy_config_file_path = legacy_config_file_path.as_ref();
     let config_file_path = config_file_path.as_ref();
     if !legacy_config_file_path.is_file() || config_file_path.is_file() {
@@ -192,7 +192,7 @@ fn import_legacy_config_file(
 fn import_legacy_cache_file(
     legacy_cache_file_path: impl AsRef<Path>,
     cache_file_path: impl AsRef<Path>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), anyhow::Error> {
     let legacy_cache_file_path = legacy_cache_file_path.as_ref();
     let cache_file_path = cache_file_path.as_ref();
 

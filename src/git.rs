@@ -73,7 +73,7 @@ fn create_walk_builder(directories: &BTreeSet<PathBuf>, ignore: bool) -> ignore:
     builder
 }
 
-pub fn find_ignored_files(repository_directory: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<PathBuf>> {
     if !repository_directory.exists() {
         return Ok(vec![]);
     }

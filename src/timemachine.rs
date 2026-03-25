@@ -31,7 +31,7 @@ enum ExcludePathError {
     InvalidUtf8,
 }
 
-fn exclude_path(path: impl AsRef<Path>, exclude: bool) -> Result<(), ExcludePathError> {
+fn exclude_path(path: impl AsRef<Path>, exclude: bool) -> anyhow::Result<()> {
     use core_foundation::string::CFString;
     use core_foundation::url::CFURL;
     let path = path.as_ref();
@@ -49,7 +49,7 @@ fn exclude_path(path: impl AsRef<Path>, exclude: bool) -> Result<(), ExcludePath
     if status == 0 {
         Ok(())
     } else {
-        Err(ExcludePathError::Os(status))
+        Err(ExcludePathError::Os(status).into())
     }
 }
 

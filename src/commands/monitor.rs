@@ -40,7 +40,7 @@ pub fn execute(
     details: bool,
     logger: &mut Logger,
     monitor: &mut impl MonitorTrait,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), anyhow::Error> {
     let config_file_path = config_file_path.as_ref().canonicalize()?.clone();
     let mut config = Config::load_or_create_file(&config_file_path)?;
     let mut run_interval = config.monitor_interval;
@@ -465,6 +465,9 @@ mod tests {
         // after the initial scan.
         thread::sleep(Duration::from_millis(200));
         std::fs::write(&config_file_path, "invalid json").unwrap();
+        // Sleep to ensure the file is fully written when the ReloadConfiguration event
+        // is processed.
+        thread::sleep(Duration::from_millis(200));
         event_sender.send(Event::ReloadConfiguration).unwrap();
         event_sender.send(Event::Shutdown).unwrap();
         let _cache = handle.join().unwrap();
