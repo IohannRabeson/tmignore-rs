@@ -131,7 +131,7 @@ See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
 The `threads` count. 0 means the count of threads is not limited and the max will be choose.
 
 ### `monitor_interval`
-Monitoring interval. Default is 1 minutes. 
+Monitoring interval. Default is 1 minute. 
 If you want to reduce the power consumption increase the interval.
 Example of values: `60s`, `10m`, `1h30m`.
 
