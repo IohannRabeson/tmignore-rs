@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use anyhow::anyhow;
 use log::info;
 use rusqlite::{Connection, params};
 
@@ -13,6 +14,7 @@ use crate::diff::Diff;
 
 /// The cache stores the list of paths to exclude from Time Machine backup.
 /// I refer to it by "the exclusion list" in the public documentation.
+#[derive(Debug)]
 pub struct Cache {
     connection: RefCell<Connection>,
 }
@@ -36,16 +38,16 @@ fn path_to_bytes(path: &Path) -> &[u8] {
 }
 
 impl Cache {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenOrCreateError> {
+    pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let file_path = path.as_ref();
         Ok(match Self::load_from_file(file_path) {
             Ok(cache) => cache,
             Err(OpenOrCreateError::FileDoesNotExist) => Self::create(file_path)?,
-            Err(error) => return Err(error),
+            Err(error) => return Err(anyhow!("Failed to load file {}: {}", file_path.display(), error)),
         })
     }
 
-    pub fn create(file_path: impl AsRef<Path>) -> Result<Self, OpenOrCreateError> {
+    pub fn create(file_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let file_path = file_path.as_ref();
 
         std::fs::create_dir_all(
@@ -67,13 +69,13 @@ impl Cache {
         Ok(cache)
     }
 
-    pub fn load_from_file(file_path: impl AsRef<Path>) -> Result<Cache, OpenOrCreateError> {
+    pub fn load_from_file(file_path: impl AsRef<Path>) -> Result<Self, OpenOrCreateError> {
         let file_path = file_path.as_ref();
 
         info!("Load cache '{}'", file_path.display());
 
         if !file_path.is_file() {
-            return Err(OpenOrCreateError::FileDoesNotExist);
+            return Err(OpenOrCreateError::FileDoesNotExist.into());
         }
 
         Ok(Self {
@@ -311,8 +313,9 @@ mod tests {
     #[test]
     fn test_open_cache_no_parent_dir() {
         let result = Cache::open("/");
+        let err = result.unwrap_err();
 
-        assert!(matches!(result, Err(OpenOrCreateError::NoParentDirectory)));
+        assert!(matches!(err.downcast(), Ok(OpenOrCreateError::NoParentDirectory)));
     }
 
     #[test]

@@ -118,7 +118,7 @@ fn find_paths_to_exclude_from_backup(
     repository_path: impl AsRef<Path>,
     whitelist: &RegexSet,
     exclusions: &mut BTreeSet<std::path::PathBuf>,
-) -> Result<(), std::io::Error> {
+) -> anyhow::Result<()> {
     let repository_path = repository_path.as_ref();
     let ignored_files = git::find_ignored_files(repository_path)?;
 

@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, error::Error};
+use std::{collections::BTreeSet};
 
 use crate::{
     Logger,
@@ -14,7 +14,7 @@ pub fn execute(
     dry_run: bool,
     details: bool,
     logger: &mut Logger,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     let whitelist = super::create_whitelist(&config.whitelist_patterns)?;
     let mut repositories = BTreeSet::new();
     let mut exclusions = BTreeSet::new();

@@ -1,4 +1,4 @@
-use std::{error::Error, io::Write};
+use std::io::Write;
 
 use crate::cache::Cache;
 
@@ -6,7 +6,7 @@ pub fn execute(
     cache: &Cache,
     writer: &mut impl Write,
     separator: char,
-) -> Result<(), Box<dyn Error>> {
+) -> anyhow::Result<()> {
     for path in cache.paths() {
         write!(writer, "{}{}", path.display(), separator)?;
     }
