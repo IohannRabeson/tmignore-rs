@@ -120,14 +120,22 @@ pub(crate) mod tests {
         }
     }
 
+    fn prepare_temp_dir(directory_name: &str) -> TempDirectoryBuilder {
+        let path = std::env::current_dir()
+                    .unwrap()
+                    .join(directory_name);
+
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path).unwrap();
+        }
+
+        TempDirectoryBuilder::default()
+            .root_folder(path)
+    }
+
     #[test]
     fn test_add_exclusion() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(
-                std::env::current_dir()
-                    .unwrap()
-                    .join("temp_dir_for_testing_test_add_exclusion"),
-            )
+        let temp_dir = prepare_temp_dir("temp_dir_for_testing_test_add_exclusion")
             .add_empty_file("test.txt")
             .build()
             .unwrap();
@@ -139,12 +147,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_remove_exclusion() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(
-                std::env::current_dir()
-                    .unwrap()
-                    .join("temp_dir_for_testing_test_remove_exclusion"),
-            )
+        let temp_dir = prepare_temp_dir("temp_dir_for_testing_test_remove_exclusion")
             .add_empty_file("test.txt")
             .build()
             .unwrap();
@@ -157,12 +160,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_add_exclusion_directory() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(
-                std::env::current_dir()
-                    .unwrap()
-                    .join("temp_dir_for_testing_test_add_exclusion_directory"),
-            )
+        let temp_dir = prepare_temp_dir("temp_dir_for_testing_test_add_exclusion_directory")
             .add_empty_file("dir/test.txt")
             .build()
             .unwrap();
