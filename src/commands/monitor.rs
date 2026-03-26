@@ -666,7 +666,7 @@ mod tests {
         let root_folder_path = temp_dir.path().canonicalize().unwrap();
         let mut config = crate::commands::tests::create_config(&root_folder_path);
         let config_file_path = root_folder_path.join("config.json");
-        config.monitor_interval = Duration::ZERO;
+        config.monitor_interval = Duration::from_millis(100);
         config.save_to_file(&config_file_path).unwrap();
         let mut monitor = Monitor::new(&config_file_path, None).unwrap();
         let handle = thread::spawn(move || {
@@ -687,7 +687,7 @@ mod tests {
         });
         // Ensure the monitor in the other thread is properly initialized
         // before starting to create events.
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(400));
         let new_repository_path = root_folder_path.join("new repository");
         std::fs::create_dir_all(&new_repository_path).unwrap();
         init_git_repository(&new_repository_path);
