@@ -78,15 +78,13 @@ const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
 const LEGACY_CONFIG_FILE_PATH: &str = "~/.config/tmignore/config.json";
 const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
 
-fn program(cli: &Cli, enable_log: bool) -> anyhow::Result<()> {
+fn program(cli: &Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
     let config_file_path = shellexpand::tilde(&cli.config).to_string();
     let cache_file_path = shellexpand::tilde(&cli.cache).to_string();
     let legacy_config_file_path = shellexpand::tilde(&cli.legacy_config).to_string();
     let legacy_cache_file_path = shellexpand::tilde(&cli.legacy_cache).to_string();
 
-    if enable_log {
-        setup_log(cli.verbose)?;
-    }
+    setup_log(cli.verbose, redirect_log_to_console)?;
     import_legacy_config_file(&legacy_config_file_path, &config_file_path)?;
     import_legacy_cache_file(&legacy_cache_file_path, &cache_file_path)?;
 
@@ -132,7 +130,17 @@ fn program(cli: &Cli, enable_log: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn setup_log(verbose: bool) -> anyhow::Result<()> {
+static INIT_LOG: std::sync::Once = std::sync::Once::new();
+
+fn setup_log(verbose: bool, redirect_log_to_console: bool) -> anyhow::Result<()> {
+    let mut result = Ok(());
+    INIT_LOG.call_once(|| {
+        result = setup_log_impl(verbose, redirect_log_to_console);
+    });
+    result
+}
+
+fn setup_log_impl(verbose: bool, console_enabled: bool) -> anyhow::Result<()> {
     let level = if verbose {
         log::LevelFilter::Debug
     } else {
@@ -140,12 +148,16 @@ fn setup_log(verbose: bool) -> anyhow::Result<()> {
     };
     let os_logger: Box<dyn log::Log> = Box::new(oslog::OsLogger::new("com.irabeson.tmignore-rs"));
 
-    fern::Dispatch::new()
+    let mut dispatch = fern::Dispatch::new()
         .level(level)
         .filter(|metadata| metadata.target().starts_with("tmignore_rs"))
-        .chain(std::io::stdout())
-        .chain(os_logger)
-        .apply()?;
+        .chain(std::io::stdout());
+        
+    if console_enabled {
+        dispatch = dispatch.chain(os_logger);
+    }
+
+    dispatch.apply()?;
 
     if verbose {
         info!("Verbose mode enabled");
