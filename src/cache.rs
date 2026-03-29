@@ -75,7 +75,7 @@ impl Cache {
         info!("Load cache '{}'", file_path.display());
 
         if !file_path.is_file() {
-            return Err(OpenOrCreateError::FileDoesNotExist.into());
+            return Err(OpenOrCreateError::FileDoesNotExist);
         }
 
         Ok(Self {

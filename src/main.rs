@@ -170,8 +170,8 @@ fn main() -> Result<(), anyhow::Error> {
     match program(&Cli::parse(), true) {
         Ok(()) => Ok(()),
         Err(error) => {
-            error!("Error: {:#}", error);
-            eprintln!("Error: {:#}", error);
+            error!("Error: {error:#}");
+            eprintln!("Error: {error:#}");
             Err(error)
         }
     }

@@ -7,7 +7,7 @@ pub fn load_json_file<T: DeserializeOwned>(file_path: impl AsRef<Path>) -> anyho
     let file_path = file_path.as_ref();
     let file = std::fs::File::open(file_path).with_context(||file_path.display().to_string())?;
 
-    Ok(serde_json::from_reader(file).with_context(||file_path.display().to_string())?)
+    serde_json::from_reader(file).with_context(||file_path.display().to_string())
 }
 
 pub fn save_json_file(file_path: impl AsRef<Path>, value: &impl Serialize) -> anyhow::Result<()> {

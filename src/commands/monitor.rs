@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet, path::{Path, PathBuf}, sync::{Arc, atomic::AtomicBool}, thread::JoinHandle, time::{Duration, Instant}
+    collections::BTreeSet, path::{Path, PathBuf}, thread::JoinHandle
 };
 
 use crossbeam_channel::{Receiver, Sender, select};
@@ -197,9 +197,8 @@ impl Monitor {
         let (signal_sender, signal_receiver) = crossbeam_channel::bounded(1);
         let signal_thread_handle = std::thread::spawn(move || {
             debug!("Signals thread starts");
-            for _ in &mut signals {
+            if let Some(_) = (&mut signals).into_iter().next() {
                 let _ = signal_sender.send(());
-                break;
             }
             debug!("Signals thread shutdowns");
         });
