@@ -1,11 +1,8 @@
 use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicBool},
-    time::{Duration, Instant},
+    collections::BTreeSet, path::{Path, PathBuf}, sync::{Arc, atomic::AtomicBool}, thread::JoinHandle, time::{Duration, Instant}
 };
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, select};
 use log::{debug, warn};
 use notify::{FsEventWatcher, Watcher};
 
@@ -43,85 +40,69 @@ pub fn execute(
 ) -> Result<(), anyhow::Error> {
     let config_file_path = config_file_path.as_ref().canonicalize()?.clone();
     let mut config = Config::load_or_create_file(&config_file_path)?;
-    let mut run_interval = config.monitor_interval;
-    let mut elapsed = Duration::ZERO;
-    let mut now = Instant::now();
     let mut whitelist = super::create_whitelist(&config.whitelist_patterns)?;
-    let mut run = true;
 
     super::run::execute(&config, cache, dry_run, details, logger)?;
 
     monitor.set_watched_directories(&config.search_directories);
     logger.log("Monitor started");
 
-    let mut pending_events = BTreeSet::new();
-    while run {
-        if let Some(event) = monitor.get_event(Duration::from_millis(250)) {
-            pending_events.insert(event);
-        }
-
-        elapsed += now.elapsed();
-        now = Instant::now();
-
-        if !pending_events.is_empty() && (elapsed >= run_interval || !run) {
-            for event in &pending_events {
-                match event {
-                    Event::ReloadConfiguration => {
-                        match config.reload_file(&config_file_path) {
-                            Ok(()) => {
-                                whitelist = super::create_whitelist(&config.whitelist_patterns)?;
-                                monitor.set_watched_directories(&config.search_directories);
-                                logger.log("Configuration reloaded");
-                                super::run::execute(&config, cache, dry_run, details, logger)?;
-                            }
-                            Err(error) => {
-                                warn!(
-                                    "Failed to reload configuration '{}': {}",
-                                    config_file_path.display(),
-                                    error
-                                );
-                                warn!("Due to an error the configuration stay unchanged");
-                            }
+    loop {
+        if let Some(event) = monitor.get_event() {
+            match event {
+                Event::ReloadConfiguration => {
+                    match config.reload_file(&config_file_path) {
+                        Ok(()) => {
+                            whitelist = super::create_whitelist(&config.whitelist_patterns)?;
+                            monitor.set_watched_directories(&config.search_directories);
+                            logger.log("Configuration reloaded");
+                            super::run::execute(&config, cache, dry_run, details, logger)?;
                         }
-                        run_interval = config.monitor_interval;
-                    }
-                    Event::ScanRepositories(repositories_to_scan) => {
-                        for repository_to_scan in repositories_to_scan {
-                            logger.log(format!(
-                                "Scanning repository '{}'",
-                                repository_to_scan.display()
-                            ));
-                            let mut exclusions = BTreeSet::new();
-                            super::find_paths_to_exclude_from_backup(
-                                repository_to_scan,
-                                &whitelist,
-                                &mut exclusions,
-                            )?;
-                            let diff =
-                                cache.find_diff_in_directory(&exclusions, repository_to_scan);
-                            let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
-                                &diff, dry_run, details, logger,
+                        Err(error) => {
+                            warn!(
+                                "Failed to reload configuration '{}': {}",
+                                config_file_path.display(),
+                                error
                             );
-
-                            for path in paths_failed_to_add {
-                                exclusions.remove(&path);
-                            }
-
-                            if !dry_run {
-                                cache.remove_paths_in_directory(repository_to_scan);
-                                cache.add_paths(exclusions.into_iter());
-                            }
+                            warn!("Due to an error the configuration stay unchanged");
                         }
-                    }
-                    Event::Shutdown => {
-                        run = false;
                     }
                 }
+                Event::ScanRepositories(repositories_to_scan) => {
+                    for repository_to_scan in &repositories_to_scan {
+                        logger.log(format!(
+                            "Scanning repository '{}'",
+                            repository_to_scan.display()
+                        ));
+                        let mut exclusions = BTreeSet::new();
+                        super::find_paths_to_exclude_from_backup(
+                            repository_to_scan,
+                            &whitelist,
+                            &mut exclusions,
+                        )?;
+                        let diff =
+                            cache.find_diff_in_directory(&exclusions, repository_to_scan);
+                        let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
+                            &diff, dry_run, details, logger,
+                        );
+
+                        for path in paths_failed_to_add {
+                            exclusions.remove(&path);
+                        }
+
+                        if !dry_run {
+                            cache.remove_paths_in_directory(repository_to_scan);
+                            cache.add_paths(exclusions.into_iter());
+                        }
+                    }
+                }
+                Event::Shutdown => {
+                    break;
+                }
             }
-            pending_events.clear();
-            elapsed = Duration::ZERO;
         }
     }
+    monitor.shutdown();
     logger.log("Monitor stopped");
     Ok(())
 }
@@ -165,7 +146,8 @@ pub trait MonitorTrait {
     /// The previous directories are cleared.
     fn set_watched_directories(&mut self, directory_paths: &BTreeSet<PathBuf>)
     -> Vec<MonitorError>;
-    fn get_event(&mut self, timeout: Duration) -> Option<Event>;
+    fn get_event(&mut self) -> Option<Event>;
+    fn shutdown(&mut self);
 }
 
 pub struct Monitor {
@@ -174,7 +156,8 @@ pub struct Monitor {
     configuration_file_path: PathBuf,
     global_gitignore: Option<PathBuf>,
     event_receiver: Receiver<notify::Result<notify::Event>>,
-    signal_flag: Arc<AtomicBool>,
+    signal_thread_handle: Option<JoinHandle<()>>,
+    signal_receiver: Receiver<()>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -205,10 +188,21 @@ impl Monitor {
                 global_gitignore.display()
             );
         }
-        let signal_flag = Arc::new(AtomicBool::new(false));
 
-        signal_hook::flag::register(signal_hook::consts::SIGTERM, signal_flag.clone())?;
-        signal_hook::flag::register(signal_hook::consts::SIGINT, signal_flag.clone())?;
+        let mut signals = signal_hook::iterator::Signals::new([
+            signal_hook::consts::SIGTERM,
+            signal_hook::consts::SIGINT,
+        ])
+        .unwrap();
+        let (signal_sender, signal_receiver) = crossbeam_channel::bounded(1);
+        let signal_thread_handle = std::thread::spawn(move || {
+            debug!("Signals thread starts");
+            for _ in &mut signals {
+                let _ = signal_sender.send(());
+                break;
+            }
+            debug!("Signals thread shutdowns");
+        });
 
         Ok(Self {
             watcher,
@@ -216,7 +210,8 @@ impl Monitor {
             global_gitignore,
             watched_paths: BTreeSet::new(),
             event_receiver,
-            signal_flag,
+            signal_thread_handle: Some(signal_thread_handle),
+            signal_receiver,
         })
     }
 
@@ -260,38 +255,37 @@ impl MonitorTrait for Monitor {
         errors
     }
 
-    fn get_event(&mut self, timeout: Duration) -> Option<Event> {
-        if self.signal_flag.load(std::sync::atomic::Ordering::Relaxed) {
-            return Some(Event::Shutdown);
-        }
+    fn get_event(&mut self) -> Option<Event> {
+        select! {
+            recv(self.signal_receiver) -> _signal => return Some(Event::Shutdown),
+            recv(self.event_receiver) -> event => {
+                if let Ok(Ok(event)) = event {
+                    if event.paths.contains(&self.configuration_file_path)
+                        || self
+                            .global_gitignore
+                            .as_ref()
+                            .is_some_and(|global_gitignore| event.paths.contains(global_gitignore))
+                    {
+                        return Some(Event::ReloadConfiguration);
+                    }
 
-        match self.event_receiver.recv_timeout(timeout) {
-            Ok(Ok(event)) => {
-                if event.paths.contains(&self.configuration_file_path)
-                    || self
-                        .global_gitignore
-                        .as_ref()
-                        .is_some_and(|global_gitignore| event.paths.contains(global_gitignore))
-                {
-                    return Some(Event::ReloadConfiguration);
-                }
-
-                if Self::accept_event(&event) {
-                    let repositories_paths = find_repositories(&self.watched_paths, &event);
-                    if !repositories_paths.is_empty() {
-                        return Some(Event::ScanRepositories(repositories_paths));
+                    if Self::accept_event(&event) {
+                        let repositories_paths = find_repositories(&self.watched_paths, &event);
+                        if !repositories_paths.is_empty() {
+                            return Some(Event::ScanRepositories(repositories_paths));
+                        }
                     }
                 }
             }
-            Ok(Err(_)) | Err(crossbeam_channel::RecvTimeoutError::Timeout) => (),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                // To be able to be disconnected, you must drop self.watcher somehow.
-                // And once you dropped self.watcher you can't call self.get_event() anymore because
-                // self has been partially moved.
-                unreachable!()
-            }
         }
+        
         None
+    }
+
+    fn shutdown(&mut self) {
+        if let Some(handle) = self.signal_thread_handle.take() {
+            handle.join().unwrap();
+        }
     }
 }
 
@@ -346,8 +340,11 @@ mod tests {
             vec![]
         }
 
-        fn get_event(&mut self, timeout: Duration) -> Option<Event> {
-            self.event_receiver.recv_timeout(timeout).ok()
+        fn get_event(&mut self) -> Option<Event> {
+            self.event_receiver.recv().ok()
+        }
+        
+        fn shutdown(&mut self) {
         }
     }
 
@@ -719,7 +716,7 @@ mod tests {
     fn wait_for_event(monitor: &mut Monitor, timeout: Duration, expected_event: &Event) -> bool {
         let started = Instant::now();
         while Instant::now() - started < timeout {
-            if let Some(event) = monitor.get_event(Duration::from_millis(10))
+            if let Some(event) = monitor.get_event()
                 && &event == expected_event
             {
                 return true;
