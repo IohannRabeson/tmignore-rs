@@ -197,7 +197,7 @@ impl Monitor {
         let (signal_sender, signal_receiver) = crossbeam_channel::bounded(1);
         let signal_thread_handle = std::thread::spawn(move || {
             debug!("Signals thread starts");
-            if let Some(_) = (&mut signals).into_iter().next() {
+            if (&mut signals).into_iter().next().is_some() {
                 let _ = signal_sender.send(());
             }
             debug!("Signals thread shutdowns");
