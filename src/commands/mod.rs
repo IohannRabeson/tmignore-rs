@@ -1,5 +1,6 @@
 pub mod list;
 pub mod monitor;
+pub mod monitor_v3;
 pub mod reset;
 pub mod run;
 
@@ -138,7 +139,8 @@ fn find_paths_to_exclude_from_backup(
 pub(crate) mod tests {
     use std::{
         collections::BTreeSet,
-        path::{Path, PathBuf}, time::Duration,
+        path::{Path, PathBuf},
+        time::Duration,
     };
 
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};

@@ -46,6 +46,17 @@ enum Commands {
     /// Begins with a complete scan to ensure the exclusion list is up to date.
     /// If the configuration file is modified, it is reloaded and a
     /// complete scan is triggered.
+    MonitorOld {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        details: bool,
+    },
+    /// Watch for file changes and keep the exclusion list up to date
+    ///
+    /// Begins with a complete scan to ensure the exclusion list is up to date.
+    /// If the configuration file is modified, it is reloaded and a
+    /// complete scan is triggered.
     Monitor {
         #[arg(long)]
         dry_run: bool,
@@ -110,7 +121,7 @@ fn program(cli: &Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
 
             Ok(())
         }
-        Commands::Monitor { dry_run, details } => {
+        Commands::MonitorOld { dry_run, details } => {
             let mut logger = Logger::new(dry_run);
             let mut cache = Cache::open(cache_file_path)?;
             let global_gitignore = git::get_global_git_ignore();
@@ -123,6 +134,20 @@ fn program(cli: &Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
                 details,
                 &mut logger,
                 &mut monitor,
+            )
+        }
+        Commands::Monitor { dry_run, details } => {
+            let mut logger = Logger::new(dry_run);
+            let mut cache = Cache::open(cache_file_path)?;
+            let global_gitignore = git::get_global_git_ignore();
+
+            commands::monitor_v3::execute(
+                &config_file_path,
+                global_gitignore,
+                &mut cache,
+                dry_run,
+                details,
+                &mut logger,
             )
         }
     }?;
@@ -152,7 +177,7 @@ fn setup_log_impl(verbose: bool, console_enabled: bool) -> anyhow::Result<()> {
         .level(level)
         .filter(|metadata| metadata.target().starts_with("tmignore_rs"))
         .chain(std::io::stdout());
-        
+
     if console_enabled {
         dispatch = dispatch.chain(os_logger);
     }
@@ -240,14 +265,18 @@ impl Logger {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::{Path, PathBuf}, time::Duration};
+    use std::{
+        path::{Path, PathBuf},
+        time::Duration,
+    };
 
     use serde_json::json;
     use serial_test::serial;
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
     use crate::{
-        Cli, cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file, program
+        Cli, cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file,
+        program,
     };
 
     #[test]
@@ -319,7 +348,7 @@ mod tests {
             .add_empty_file("repository/c")
             .build()
             .unwrap();
-        
+
         crate::commands::tests::init_git_repository(repository_path);
 
         temp_dir
@@ -333,7 +362,10 @@ mod tests {
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {
-            command: crate::Commands::Run { dry_run: false, details: false },
+            command: crate::Commands::Run {
+                dry_run: false,
+                details: false,
+            },
             verbose: false,
             config: config_file_path.to_string_lossy().to_string(),
             cache: cache_file_path.to_string_lossy().to_string(),
@@ -388,7 +420,7 @@ mod tests {
                 .add_text_file("repository/.gitignore", "a\nb\n")
                 .build()
                 .unwrap();
-    
+
             crate::commands::tests::init_git_repository(repository_path);
 
             temp_dir
@@ -396,7 +428,10 @@ mod tests {
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {
-            command: crate::Commands::Monitor { dry_run: false, details: false },
+            command: crate::Commands::MonitorOld {
+                dry_run: false,
+                details: false,
+            },
             verbose: false,
             config: config_file_path.to_string_lossy().to_string(),
             cache: cache_file_path.to_string_lossy().to_string(),
@@ -416,9 +451,7 @@ mod tests {
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &c_file_path
         ));
-        let handle = std::thread::spawn(move ||{
-            program(&cli, false).unwrap()
-        });
+        let handle = std::thread::spawn(move || program(&cli, false).unwrap());
         std::thread::sleep(Duration::from_millis(500));
         std::fs::write(&a_file_path, "").unwrap();
         std::fs::write(&b_file_path, "").unwrap();
@@ -436,7 +469,7 @@ mod tests {
         unsafe {
             libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
         }
-        
+
         handle.join().unwrap();
     }
 }
