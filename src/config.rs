@@ -2,7 +2,8 @@ use std::{
     collections::BTreeSet,
     fs::File,
     io::{BufReader, Read},
-    path::{Path, PathBuf}, time::Duration,
+    path::{Path, PathBuf},
+    time::Duration,
 };
 
 use log::info;
@@ -21,7 +22,10 @@ pub struct Config {
     /// Count of threads used for scanning the file system.
     pub threads: usize,
     /// Monitoring interval.
-    #[serde(serialize_with = "serialize_human_time", deserialize_with = "deserialize_human_time")]
+    #[serde(
+        serialize_with = "serialize_human_time",
+        deserialize_with = "deserialize_human_time"
+    )]
     pub monitor_interval: Duration,
 }
 
@@ -43,10 +47,13 @@ where
     match humantime::parse_duration(&s) {
         Ok(duration) => Ok(duration),
         Err(error) => {
-            const HELP_URL: &str = "https://github.com/IohannRabeson/tmignore-rs?tab=readme-ov-file#monitor_interval";
-                    
-            Err(serde::de::Error::custom(format!("Invalid duration: {error}. See {HELP_URL} for help.")))
-        },
+            const HELP_URL: &str =
+                "https://github.com/IohannRabeson/tmignore-rs?tab=readme-ov-file#monitor_interval";
+
+            Err(serde::de::Error::custom(format!(
+                "Invalid duration: {error}. See {HELP_URL} for help."
+            )))
+        }
     }
 }
 
@@ -135,7 +142,9 @@ impl Config {
         // Create the file in a temporary directory then move the file to the final destination
         // to prevent to send different events, one for the file creation and one when the file is written.
         // This to help with test flakyness, it prevents tests to try to read an empty file.
-        let temp_dir = temp_dir_builder::TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir = temp_dir_builder::TempDirectoryBuilder::default()
+            .build()
+            .unwrap();
         let temp_file_path = temp_dir.path().join("temp_config");
         let file = File::create(&temp_file_path)?;
         self.save(file)?;

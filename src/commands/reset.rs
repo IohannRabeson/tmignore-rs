@@ -2,12 +2,7 @@ use crate::{Logger, cache::Cache, commands::TimeMachine};
 
 use std::collections::BTreeSet;
 
-pub fn execute(
-    cache: &mut Cache,
-    dry_run: bool,
-    details: bool,
-    logger: &mut Logger,
-) {
+pub fn execute(cache: &mut Cache, dry_run: bool, details: bool, logger: &mut Logger) {
     let diff = cache.find_diff(&BTreeSet::new());
 
     super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details, logger);

@@ -1,5 +1,7 @@
 use std::{
-    collections::BTreeSet, path::{Path, PathBuf}, thread::JoinHandle
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    thread::JoinHandle,
 };
 
 use crossbeam_channel::{Receiver, Sender, select};
@@ -50,24 +52,22 @@ pub fn execute(
     loop {
         if let Some(event) = monitor.get_event() {
             match event {
-                Event::ReloadConfiguration => {
-                    match config.reload_file(&config_file_path) {
-                        Ok(()) => {
-                            whitelist = super::create_whitelist(&config.whitelist_patterns)?;
-                            monitor.set_watched_directories(&config.search_directories);
-                            logger.log("Configuration reloaded");
-                            super::run::execute(&config, cache, dry_run, details, logger)?;
-                        }
-                        Err(error) => {
-                            warn!(
-                                "Failed to reload configuration '{}': {}",
-                                config_file_path.display(),
-                                error
-                            );
-                            warn!("Due to an error the configuration stay unchanged");
-                        }
+                Event::ReloadConfiguration => match config.reload_file(&config_file_path) {
+                    Ok(()) => {
+                        whitelist = super::create_whitelist(&config.whitelist_patterns)?;
+                        monitor.set_watched_directories(&config.search_directories);
+                        logger.log("Configuration reloaded");
+                        super::run::execute(&config, cache, dry_run, details, logger)?;
                     }
-                }
+                    Err(error) => {
+                        warn!(
+                            "Failed to reload configuration '{}': {}",
+                            config_file_path.display(),
+                            error
+                        );
+                        warn!("Due to an error the configuration stay unchanged");
+                    }
+                },
                 Event::ScanRepositories(repositories_to_scan) => {
                     for repository_to_scan in &repositories_to_scan {
                         logger.log(format!(
@@ -80,8 +80,7 @@ pub fn execute(
                             &whitelist,
                             &mut exclusions,
                         )?;
-                        let diff =
-                            cache.find_diff_in_directory(&exclusions, repository_to_scan);
+                        let diff = cache.find_diff_in_directory(&exclusions, repository_to_scan);
                         let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
                             &diff, dry_run, details, logger,
                         );
@@ -120,9 +119,9 @@ fn find_repositories(
             && search_directories
                 .iter()
                 .any(|search_directory| repository_path.starts_with(search_directory))
-            {
-                results.insert(repository_path);
-            }
+        {
+            results.insert(repository_path);
+        }
     }
 
     results
@@ -216,7 +215,9 @@ impl Monitor {
 
     fn accept_event(event: &notify::Event) -> bool {
         match &event.kind {
-            notify::EventKind::Create(_) | notify::EventKind::Remove(_) | notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => (),
+            notify::EventKind::Create(_)
+            | notify::EventKind::Remove(_)
+            | notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => (),
             notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => {
                 // If there is no path that ends with ".gitignore" then reject the event
                 if !event.paths.iter().any(|path| path.ends_with(".gitignore")) {
@@ -277,7 +278,7 @@ impl MonitorTrait for Monitor {
                 }
             }
         }
-        
+
         None
     }
 
@@ -342,9 +343,8 @@ mod tests {
         fn get_event(&mut self) -> Option<Event> {
             self.event_receiver.recv().ok()
         }
-        
-        fn shutdown(&mut self) {
-        }
+
+        fn shutdown(&mut self) {}
     }
 
     #[test]
@@ -429,8 +429,7 @@ mod tests {
 
     #[test]
     fn test_monitor_update_config_invalid() {
-        let temp_dir =
-            crate::commands::tests::create_repository(None::<PathBuf>);
+        let temp_dir = crate::commands::tests::create_repository(None::<PathBuf>);
         let empty_directory = temp_dir.path().join("empty");
         std::fs::create_dir_all(&empty_directory).unwrap();
         let mut config = crate::commands::tests::create_config(&empty_directory);
@@ -527,8 +526,7 @@ mod tests {
 
     #[test]
     fn test_monitor_update_config_error() {
-        let temp_dir =
-            crate::commands::tests::create_repository(None::<PathBuf>);
+        let temp_dir = crate::commands::tests::create_repository(None::<PathBuf>);
         let empty_directory = temp_dir.path().join("empty");
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let file_a_path = temp_dir_path.join("a");
@@ -656,9 +654,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_monitor_add_a_repository() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .build()
-            .unwrap();
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let root_folder_path = temp_dir.path().canonicalize().unwrap();
         let mut config = crate::commands::tests::create_config(&root_folder_path);
         let config_file_path = root_folder_path.join("config.json");
@@ -732,9 +728,7 @@ mod tests {
     ) -> JoinHandle<bool> {
         let mut monitor = Monitor::new(&config_file_path, global_gitignore).unwrap();
         monitor.set_watched_directories(&BTreeSet::from([repository_path]));
-        std::thread::spawn(move || {
-            wait_for_event(&mut monitor, Duration::from_secs(20), &event)
-        })
+        std::thread::spawn(move || wait_for_event(&mut monitor, Duration::from_secs(20), &event))
     }
 
     #[rstest]

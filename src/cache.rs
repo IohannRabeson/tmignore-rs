@@ -43,7 +43,13 @@ impl Cache {
         Ok(match Self::load_from_file(file_path) {
             Ok(cache) => cache,
             Err(OpenOrCreateError::FileDoesNotExist) => Self::create(file_path)?,
-            Err(error) => return Err(anyhow!("Failed to load file {}: {}", file_path.display(), error)),
+            Err(error) => {
+                return Err(anyhow!(
+                    "Failed to load file {}: {}",
+                    file_path.display(),
+                    error
+                ));
+            }
         })
     }
 
@@ -315,7 +321,10 @@ mod tests {
         let result = Cache::open("/");
         let err = result.unwrap_err();
 
-        assert!(matches!(err.downcast(), Ok(OpenOrCreateError::NoParentDirectory)));
+        assert!(matches!(
+            err.downcast(),
+            Ok(OpenOrCreateError::NoParentDirectory)
+        ));
     }
 
     #[test]
