@@ -186,7 +186,7 @@ mod monitor_details {
     use std::{
         collections::BTreeSet,
         path::{Path, PathBuf},
-        thread::JoinHandle,
+        thread::JoinHandle, time::{Duration, Instant},
     };
 
     use crossbeam_channel::{Receiver, Sender, select};
@@ -333,16 +333,56 @@ mod monitor_details {
     pub fn spawn_debouncer_thread(
         input_events: Receiver<super::Event>,
     ) -> anyhow::Result<(JoinHandle<()>, Receiver<super::Event>)> {
-        let (output_event_sender, output_event_receiver) =
+        let (mut output_event_sender, output_event_receiver) =
             crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let thread_handle = std::thread::Builder::new()
             .name("Debouncer Thread".to_string())
             .spawn(move || {
                 debug!("Debouncer starts");
-                while let Ok(event) = input_events.recv() {
-                    // Currently debounces nothing
-                    let _ = output_event_sender.send(event);
+
+                let mut debounce_at = None;
+                let mut events_to_send = BTreeSet::new();
+
+                fn send_events(events: &mut BTreeSet<super::Event>, sender: &mut Sender<super::Event>) {
+                    while let Some(event) = events.pop_first() {
+                        let _ = sender.send(event);
+                    }
                 }
+
+                loop {
+                    match debounce_at {
+                        Some(deadline) => {
+                            match input_events.recv_deadline(deadline) {
+                                Ok(event) => {
+                                    events_to_send.insert(event);
+                                },
+                                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                                    debounce_at = None;
+                                    send_events(&mut events_to_send, &mut output_event_sender);
+                                },
+                                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                                    send_events(&mut events_to_send, &mut output_event_sender);
+                                    break;
+                                }
+                            }
+                        }
+                        None => {
+                            match input_events.recv() {
+                                Ok(event) => {
+                                    if debounce_at.is_none() {
+                                        debounce_at = Some(Instant::now() + Duration::from_secs(2));
+                                        events_to_send.insert(event);
+                                    }
+                                },
+                                Err(_) => {
+                                    send_events(&mut events_to_send, &mut output_event_sender);
+                                    break;
+                                },
+                            }
+                        }
+                    };
+                }
+
                 debug!("Debouncer shutdowns");
             })?;
 
