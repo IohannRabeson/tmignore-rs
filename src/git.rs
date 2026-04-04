@@ -41,7 +41,7 @@ pub fn find_repositories(
                     if entry.file_name() == OsStr::new(DOT_GIT_DIRECTORY_NAME)
                         && let Some(parent) = entry.path().parent()
                     {
-                        tx.send(parent.to_path_buf()).unwrap();
+                        let _ = tx.send(parent.to_path_buf());
                     }
                 }
 

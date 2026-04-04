@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::legacy_config::LegacyConfig;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     /// The list of the directories to scan.
     pub search_directories: BTreeSet<PathBuf>,
@@ -50,25 +50,6 @@ where
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum LoadError {
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error(transparent)]
-    Json(#[from] serde_json::Error),
-    #[error(transparent)]
-    Validation(#[from] ValidationError),
-}
-
-#[cfg(test)]
-#[derive(thiserror::Error, Debug)]
-pub enum SaveError {
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error(transparent)]
-    Json(#[from] serde_json::Error),
-}
-
 impl From<&LegacyConfig> for Config {
     fn from(legacy_config: &LegacyConfig) -> Self {
         Self {
@@ -95,7 +76,7 @@ impl std::fmt::Display for ValidationError {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ValidationFail {
     #[error("File in search_directories: {0}")]
     FileInSearchPaths(PathBuf),
@@ -111,7 +92,7 @@ impl Config {
     pub const DEFAULT_MONITOR_INTERVAL_SECS: u64 = 60;
     pub const DEFAULT_THREADS: usize = 4;
 
-    pub fn load_or_create_file(file_path: impl AsRef<Path>) -> Result<Self, LoadError> {
+    pub fn load_or_create_file(file_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let file_path = file_path.as_ref();
 
         if file_path.is_file() {
@@ -119,7 +100,9 @@ impl Config {
         } else {
             let mut default_config = Self::default();
 
-            std::fs::create_dir_all(file_path.parent().unwrap())?;
+            let parent_directory = file_path.parent().ok_or(anyhow::anyhow!("Can get a parent path for '{}'", file_path.display()))?;
+
+            std::fs::create_dir_all(parent_directory)?;
 
             let file = File::create_new(file_path)?;
 
@@ -133,13 +116,13 @@ impl Config {
         }
     }
 
-    pub fn load_from_file(file_path: impl AsRef<Path>) -> Result<Self, LoadError> {
+    pub fn load_from_file(file_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let file_path = file_path.as_ref();
         info!("Load configuration '{}'", file_path.display());
         Self::load(File::open(file_path)?)
     }
 
-    pub fn load(reader: impl Read) -> Result<Self, LoadError> {
+    pub fn load(reader: impl Read) -> anyhow::Result<Self> {
         let reader = BufReader::new(reader);
         let mut config = serde_json::from_reader(reader)?;
         Self::expand(&mut config);
@@ -148,7 +131,7 @@ impl Config {
     }
 
     #[cfg(test)]
-    pub fn save_to_file(&self, file_path: impl AsRef<Path>) -> Result<(), SaveError> {
+    pub fn save_to_file(&self, file_path: impl AsRef<Path>) -> anyhow::Result<()> {
         // Create the file in a temporary directory then move the file to the final destination
         // to prevent to send different events, one for the file creation and one when the file is written.
         // This to help with test flakyness, it prevents tests to try to read an empty file.
@@ -161,7 +144,7 @@ impl Config {
     }
 
     #[cfg(test)]
-    pub fn save(&self, writer: impl std::io::Write) -> Result<(), SaveError> {
+    pub fn save(&self, writer: impl std::io::Write) -> anyhow::Result<()> {
         serde_json::to_writer_pretty(writer, self)?;
         Ok(())
     }
@@ -213,13 +196,13 @@ impl Config {
         }
     }
 
-    pub fn reload_file(&mut self, file_path: impl AsRef<Path>) -> Result<(), LoadError> {
+    pub fn reload_file(&mut self, file_path: impl AsRef<Path>) -> anyhow::Result<()> {
         self.reload(std::fs::File::open(file_path)?)?;
 
         Ok(())
     }
 
-    pub fn reload(&mut self, reader: impl Read) -> Result<(), LoadError> {
+    pub fn reload(&mut self, reader: impl Read) -> anyhow::Result<()> {
         *self = Self::load(reader)?;
         Self::expand(self);
         Self::validate(self)?;
@@ -249,9 +232,11 @@ impl Default for Config {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::config::{Config, LoadError};
+    use crate::config::{Config, ValidationError};
 
     #[test]
     fn test_expand_default() {
@@ -317,8 +302,8 @@ mod tests {
 "whitelist_patterns": [] }
 "#;
         let result = Config::load(json.as_bytes());
-
-        assert!(matches!(result, Err(LoadError::Json(_))));
+        assert!(result.is_err());
+        let _error = result.unwrap_err().downcast_ref::<serde_json::Error>().expect("downcast failed");
     }
 
     #[test]
@@ -332,8 +317,11 @@ mod tests {
 "monitor_interval": "5s" }
 "#;
         let result = Config::load(json.as_bytes());
-
-        assert!(matches!(result, Err(LoadError::Validation(_))));
+        let error = result.unwrap_err();
+        let error = error.downcast_ref::<ValidationError>().expect("downcast failed");
+        assert!(error.fails.len() > 0);
+        let expected = crate::config::ValidationFail::NotFound(PathBuf::from("/does_not_exist"));
+        assert!(error.fails.contains(&expected));
     }
 
     #[test]
@@ -347,8 +335,10 @@ mod tests {
 "monitor_interval": "5s" }
 "#;
         let result = Config::load(json.as_bytes());
-
-        assert!(matches!(result, Err(LoadError::Validation(_))));
+        let error = result.unwrap_err();
+        let error = error.downcast_ref::<ValidationError>().expect("downcast failed");
+        assert!(error.fails.len() > 0);
+        assert!(error.fails.contains(&crate::config::ValidationFail::NoSearchDirectories));
     }
 
     #[test]
