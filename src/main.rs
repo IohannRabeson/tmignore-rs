@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand};
 use log::{error, info};
 use std::path::Path;
 
-use crate::{cache::Cache, commands::monitor::Monitor, config::Config, legacy_cache::LegacyCache};
+use crate::{cache::Cache, config::Config, legacy_cache::LegacyCache};
 
 #[derive(Parser)]
 #[command(about, long_about = None)]
@@ -41,17 +41,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Watch for file changes and keep the exclusion list up to date
-    ///
-    /// Begins with a complete scan to ensure the exclusion list is up to date.
-    /// If the configuration file is modified, it is reloaded and a
-    /// complete scan is triggered.
-    MonitorOld {
-        #[arg(long)]
-        dry_run: bool,
-        #[arg(long)]
-        details: bool,
-    },
     /// Watch for file changes and keep the exclusion list up to date
     ///
     /// Begins with a complete scan to ensure the exclusion list is up to date.
@@ -101,11 +90,10 @@ fn program(cli: &Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Run { dry_run, details } => {
-            let mut logger = Logger::new(dry_run);
             let mut cache = Cache::open(cache_file_path)?;
             let config = Config::load_or_create_file(&config_file_path)?;
 
-            commands::run::execute(&config, &mut cache, dry_run, details, &mut logger)
+            commands::run::execute(&config, &mut cache, dry_run, details)
         }
         Commands::List { zero_separator } => {
             let cache = Cache::open(cache_file_path)?;
@@ -114,40 +102,22 @@ fn program(cli: &Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
             commands::list::execute(&cache, &mut std::io::stdout(), separator)
         }
         Commands::Reset { dry_run, details } => {
-            let mut logger = Logger::new(dry_run);
             let mut cache = Cache::open(cache_file_path)?;
 
-            commands::reset::execute(&mut cache, dry_run, details, &mut logger);
+            commands::reset::execute(&mut cache, dry_run, details);
 
             Ok(())
         }
-        Commands::MonitorOld { dry_run, details } => {
-            let mut logger = Logger::new(dry_run);
+        Commands::Monitor { dry_run, details } => {
             let mut cache = Cache::open(cache_file_path)?;
             let global_gitignore = git::get_global_git_ignore();
-            let mut monitor = Monitor::new(&config_file_path, global_gitignore)?;
 
             commands::monitor::execute(
-                &config_file_path,
-                &mut cache,
-                dry_run,
-                details,
-                &mut logger,
-                &mut monitor,
-            )
-        }
-        Commands::Monitor { dry_run, details } => {
-            let mut logger = Logger::new(dry_run);
-            let mut cache = Cache::open(cache_file_path)?;
-            let global_gitignore = git::get_global_git_ignore();
-
-            commands::monitor_v3::execute(
                 &config_file_path,
                 global_gitignore,
                 &mut cache,
                 dry_run,
                 details,
-                &mut logger,
             )
         }
     }?;
@@ -243,24 +213,6 @@ fn import_legacy_cache_file(
     cache.reset(legacy_cache.paths);
 
     Ok(())
-}
-
-struct Logger {
-    dry_run: bool,
-}
-
-impl Logger {
-    pub fn new(dry_run: bool) -> Self {
-        Self { dry_run }
-    }
-
-    pub fn log(&mut self, str: impl AsRef<str>) {
-        if self.dry_run {
-            info!("[DRY RUN] {}", str.as_ref());
-        } else {
-            info!("{}", str.as_ref());
-        }
-    }
 }
 
 #[cfg(test)]
@@ -411,7 +363,7 @@ mod tests {
             }
             let repository_path = root_directory.join("repository");
             let mut config = Config::default();
-            config.monitor_interval = Duration::ZERO;
+            config.debounce_duration = Duration::from_secs(1);
             config.search_directories.clear();
             config.search_directories.insert(repository_path.clone());
             let temp_dir = TempDirectoryBuilder::default()
@@ -428,7 +380,7 @@ mod tests {
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {
-            command: crate::Commands::MonitorOld {
+            command: crate::Commands::Monitor {
                 dry_run: false,
                 details: false,
             },
@@ -456,7 +408,7 @@ mod tests {
         std::fs::write(&a_file_path, "").unwrap();
         std::fs::write(&b_file_path, "").unwrap();
         std::fs::write(&c_file_path, "").unwrap();
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_secs(5));
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
             &a_file_path
         ));

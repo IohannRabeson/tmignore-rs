@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 
+use log::info;
+
 use crate::{
-    Logger,
     cache::Cache,
     commands::TimeMachine,
     config::Config,
@@ -13,13 +14,12 @@ pub fn execute(
     cache: &mut Cache,
     dry_run: bool,
     details: bool,
-    logger: &mut Logger,
 ) -> anyhow::Result<()> {
     let whitelist = super::create_whitelist(&config.whitelist_patterns)?;
     let mut repositories = BTreeSet::new();
     let mut exclusions = BTreeSet::new();
 
-    logger.log("Searching for Git repositories...");
+    info!("Searching for Git repositories...");
     if let Some((rx, thread_handle)) = git::find_repositories(
         &config.search_directories,
         &config.ignored_directories,
@@ -32,12 +32,12 @@ pub fn execute(
         }
         thread_handle.join().unwrap();
 
-        logger.log(format!("Found {} repositories", repositories.len()));
+        info!("Found {} repositories", repositories.len());
 
         let diff = cache.find_diff(&exclusions);
 
         let paths_failed_to_add =
-            super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details, logger);
+            super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details);
 
         for path in paths_failed_to_add {
             exclusions.remove(&path);
@@ -53,7 +53,7 @@ pub fn execute(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::{Logger, cache::Cache};
+    use crate::cache::Cache;
 
     #[test]
     fn test_command() {
@@ -61,8 +61,7 @@ pub(crate) mod tests {
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = false;
-        let mut logger = Logger::new(dry_run);
-        super::execute(&config, &mut cache, dry_run, false, &mut logger).unwrap();
+        super::execute(&config, &mut cache, dry_run, false).unwrap();
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let a_file_path = temp_dir_path.join("a");
         let b_file_path = temp_dir_path.join("b");
@@ -89,11 +88,19 @@ pub(crate) mod tests {
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = true;
-        let mut logger = Logger::new(dry_run);
-        super::execute(&config, &mut cache, dry_run, false, &mut logger).unwrap();
         let a_file_path = temp_dir.path().join("a");
         let b_file_path = temp_dir.path().join("b");
         let c_file_path = temp_dir.path().join("c");
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &a_file_path
+        ));
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &b_file_path
+        ));
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &c_file_path
+        ));
+        super::execute(&config, &mut cache, dry_run, false).unwrap();
         assert_eq!(0, cache.paths().len());
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             a_file_path
