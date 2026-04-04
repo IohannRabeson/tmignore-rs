@@ -360,11 +360,8 @@ mod monitor_details {
                                             let _ = output_event_sender.send(super::Event::Shutdown);
                                             break;
                                         }
-                                        Ok(super::Event::ReloadConfiguration) => {
-                                            let _ = output_event_sender.send(super::Event::ReloadConfiguration);
-                                        }
-                                        Ok(super::Event::ScanRepositories(repositories)) => {
-                                            events_to_send.insert(super::Event::ScanRepositories(repositories));
+                                        Ok(event) => {
+                                            events_to_send.insert(event);
                                         }
                                         Err(_) => {
                                             send_events(&mut events_to_send, &mut output_event_sender);
@@ -390,13 +387,10 @@ mod monitor_details {
                                             let _ = output_event_sender.send(super::Event::Shutdown);
                                             break;
                                         }
-                                        Ok(super::Event::ReloadConfiguration) => {
-                                            let _ = output_event_sender.send(super::Event::ReloadConfiguration);
-                                        }
-                                        Ok(super::Event::ScanRepositories(repositories)) => {
+                                        Ok(event) => {
                                             if debounce_at.is_none() {
                                                 debounce_at = Some(Instant::now() + debounce_duration);
-                                                events_to_send.insert(super::Event::ScanRepositories(repositories));
+                                                events_to_send.insert(event);
                                             }
                                         }
                                         Err(_) => {
