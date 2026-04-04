@@ -510,7 +510,7 @@ mod tests {
     #[serial]
     fn test_program_monitor_reload_config_error() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let temp_dir_path = root.join("test_program_monitor_reload_config");
+        let temp_dir_path = root.join("test_program_monitor_reload_config_error");
         let _temp_dir = {
             let root_directory = &temp_dir_path;
             if root_directory.exists() && root_directory.is_dir() {
