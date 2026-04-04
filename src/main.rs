@@ -384,7 +384,7 @@ mod tests {
                 dry_run: false,
                 details: false,
             },
-            verbose: false,
+            verbose: true,
             config: config_file_path.to_string_lossy().to_string(),
             cache: cache_file_path.to_string_lossy().to_string(),
             legacy_config: String::new(),
@@ -409,6 +409,11 @@ mod tests {
         std::fs::write(&b_file_path, "").unwrap();
         std::fs::write(&c_file_path, "").unwrap();
         std::thread::sleep(Duration::from_secs(5));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
+        handle.join().unwrap();
+
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
             &a_file_path
         ));
@@ -418,10 +423,5 @@ mod tests {
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &c_file_path
         ));
-        unsafe {
-            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
-        }
-
-        handle.join().unwrap();
     }
 }

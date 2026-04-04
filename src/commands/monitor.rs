@@ -186,7 +186,7 @@ mod monitor_details {
 
     use crate::git;
     use super::EVENT_QUEUE_SIZE;
-    
+
     pub fn spawn_signals_thread() -> anyhow::Result<(JoinHandle<()>, Receiver<()>)> {
         let mut signals = signal_hook::iterator::Signals::new([
             signal_hook::consts::SIGTERM,
@@ -371,14 +371,20 @@ mod monitor_details {
                         Some(timeout) => {
                             select! {
                                 recv(input_events) -> event => {
-                                    if let Ok(event) = event {
-                                        if matches!(event, super::Event::Shutdown) {
+                                    match event {
+                                        Ok(event) => {
+                                            if matches!(event, super::Event::Shutdown) {
+                                                send_events(&mut events_to_send, &mut output_event_sender);
+                                                let _ = output_event_sender.send(event);
+                                                break;
+                                            }
+
+                                            events_to_send.insert(event);
+                                        }
+                                        Err(_) => {
                                             send_events(&mut events_to_send, &mut output_event_sender);
-                                            let _ = output_event_sender.send(event);
                                             break;
                                         }
-
-                                        events_to_send.insert(event);
                                     }
                                 }
                                 recv(crossbeam_channel::after(timeout)) -> _ => {
