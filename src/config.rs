@@ -96,7 +96,7 @@ pub enum ValidationFail {
 }
 
 impl Config {
-    pub const DEFAULT_DEBOUNCE_DURATION_SECS: u64 = 5;
+    pub const DEFAULT_DEBOUNCE_DURATION_SECS: u64 = 2;
     pub const DEFAULT_THREADS: usize = 4;
 
     pub fn load_or_create_file(file_path: impl AsRef<Path>) -> anyhow::Result<Self> {
