@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use crossbeam_channel::{Receiver, Sender, select};
+use crossbeam_channel::{Receiver, Sender};
 use log::{debug, warn};
 
 use crate::{
@@ -102,13 +102,10 @@ enum Event {
 }
 
 struct Monitor {
-    monitor_control_sender: Sender<MonitorControl>,
+    control_sender: Sender<MonitorControl>,
     debouncer_control_sender: Sender<DebouncerControl>,
     event_receiver_final: Receiver<Event>,
-    dispatcher_thread_handle: Option<JoinHandle<()>>,
-    monitor_thread_handle: Option<JoinHandle<()>>,
-    signals_thread_handle: Option<JoinHandle<()>>,
-    debouncer_thread_handle: Option<JoinHandle<()>>,
+    thread_handles: Vec<JoinHandle<()>>,
 }
 
 impl Monitor {
@@ -126,13 +123,10 @@ impl Monitor {
         let dispatcher_thread_handle = monitor_details::spawn_dispatcher_thread(signals_receiver, event_receiver, event_sender_to_debouncer)?;
 
         Ok(Self {
-            monitor_control_sender,
+            control_sender: monitor_control_sender,
             debouncer_control_sender,
             event_receiver_final,
-            dispatcher_thread_handle: Some(dispatcher_thread_handle),
-            monitor_thread_handle: Some(monitor_thread_handle),
-            signals_thread_handle: Some(signals_thread_handle),
-            debouncer_thread_handle: Some(debouncer_thread_handle),
+            thread_handles: vec![signals_thread_handle, dispatcher_thread_handle, debouncer_thread_handle, monitor_thread_handle],
         })
     }
 
@@ -142,7 +136,7 @@ impl Monitor {
 
     pub fn set_watched_paths(&mut self, paths: &BTreeSet<PathBuf>) {
         let _ = self
-            .monitor_control_sender
+            .control_sender
             .send(MonitorControl::SetPaths(paths.clone()));
     }
 
@@ -155,18 +149,9 @@ impl Monitor {
 
 impl Drop for Monitor {
     fn drop(&mut self) {
-        let _ = self.monitor_control_sender.send(MonitorControl::Shutdown);
+        let _ = self.control_sender.send(MonitorControl::Shutdown);
 
-        if let Some(handle) = self.signals_thread_handle.take() {
-            handle.join().unwrap();
-        }
-        if let Some(handle) = self.monitor_thread_handle.take() {
-            handle.join().unwrap();
-        }
-        if let Some(handle) = self.dispatcher_thread_handle.take() {
-            handle.join().unwrap();
-        }
-        if let Some(handle) = self.debouncer_thread_handle.take() {
+        while let Some(handle) = self.thread_handles.pop() {
             handle.join().unwrap();
         }
     }
@@ -220,7 +205,7 @@ mod monitor_details {
         Sender<MonitorControl>,
         Receiver<super::Event>,
     )> {
-        let configuration_file_path = configuration_file_path.canonicalize()?.to_path_buf();
+        let configuration_file_path = configuration_file_path.canonicalize()?;
         let (event_sender, event_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let (control_sender, control_receiver) = crossbeam_channel::bounded(1);
         let (fs_event_sender, fs_event_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
@@ -271,11 +256,11 @@ mod monitor_details {
                                         watched_paths.clear();
                                         for path in &new_paths {
                                             if let Ok(()) = paths.add(path, notify::RecursiveMode::Recursive) {
-                                                watched_paths.insert(path.to_path_buf());
+                                                watched_paths.insert(path.clone());
                                             }
                                         }
                                         if let Err(error) = paths.commit() {
-                                            warn!("Failed to commit paths to watch: {}", error);
+                                            warn!("Failed to commit paths to watch: {error}");
                                         }
                                     },
                                     MonitorControl::Shutdown => {
@@ -346,40 +331,40 @@ mod monitor_details {
         let thread_handle = std::thread::Builder::new()
             .name("Debouncer Thread".to_string())
             .spawn(move || {
-                debug!("Debouncer starts");
-
-                let mut debounce_duration = Duration::from_secs(2);
-                let mut debounce_at: Option<Instant> = None;
-                let mut events_to_send = BTreeSet::new();
-
                 fn send_events(events: &mut BTreeSet<super::Event>, sender: &mut Sender<super::Event>) {
                     while let Some(event) = events.pop_first() {
                         let _ = sender.send(event);
                     }
                 }
 
-                fn process_control(control: Result<DebouncerControl, crossbeam_channel::RecvError>, debounce_duration: &mut Duration) {
+                fn process_control(control: &Result<DebouncerControl, crossbeam_channel::RecvError>, debounce_duration: &mut Duration) {
                     if let Ok(DebouncerControl::SetDebounceDuration(new_debounce_duration)) = control {
-                        *debounce_duration = new_debounce_duration;
+                        *debounce_duration = *new_debounce_duration;
                     }
                 }
 
-                loop {
-                    let timeout = debounce_at.and_then(|debounce_at| debounce_at.checked_duration_since(Instant::now()));
+                debug!("Debouncer starts");
 
-                    match timeout {
+                let mut debounce_duration = Duration::from_secs(2);
+                let mut debounce_at: Option<Instant> = None;
+                let mut events_to_send = BTreeSet::new();
+
+                loop {
+                    match debounce_at.and_then(|debounce_at| debounce_at.checked_duration_since(Instant::now())) {
                         Some(timeout) => {
                             select! {
                                 recv(input_events) -> event => {
                                     match event {
-                                        Ok(event) => {
-                                            if matches!(event, super::Event::Shutdown) {
-                                                send_events(&mut events_to_send, &mut output_event_sender);
-                                                let _ = output_event_sender.send(event);
-                                                break;
-                                            }
-
-                                            events_to_send.insert(event);
+                                        Ok(super::Event::Shutdown) => {
+                                            send_events(&mut events_to_send, &mut output_event_sender);
+                                            let _ = output_event_sender.send(super::Event::Shutdown);
+                                            break;
+                                        }
+                                        Ok(super::Event::ReloadConfiguration) => {
+                                            let _ = output_event_sender.send(super::Event::ReloadConfiguration);
+                                        }
+                                        Ok(super::Event::ScanRepositories(repositories)) => {
+                                            events_to_send.insert(super::Event::ScanRepositories(repositories));
                                         }
                                         Err(_) => {
                                             send_events(&mut events_to_send, &mut output_event_sender);
@@ -392,7 +377,7 @@ mod monitor_details {
                                     send_events(&mut events_to_send, &mut output_event_sender);
                                 }
                                 recv(debouncer_control_receiver) -> control => {
-                                    process_control(control, &mut debounce_duration);
+                                    process_control(&control, &mut debounce_duration);
                                 }
                             }
                         }
@@ -400,18 +385,20 @@ mod monitor_details {
                             select! {
                                 recv(input_events) -> event => {
                                     match event {
-                                        Ok(event) => {
-                                            if matches!(event, super::Event::Shutdown) {
-                                                send_events(&mut events_to_send, &mut output_event_sender);
-                                                let _ = output_event_sender.send(event);
-                                                break;
-                                            }
-
+                                        Ok(super::Event::Shutdown) => {
+                                            send_events(&mut events_to_send, &mut output_event_sender);
+                                            let _ = output_event_sender.send(super::Event::Shutdown);
+                                            break;
+                                        }
+                                        Ok(super::Event::ReloadConfiguration) => {
+                                            let _ = output_event_sender.send(super::Event::ReloadConfiguration);
+                                        }
+                                        Ok(super::Event::ScanRepositories(repositories)) => {
                                             if debounce_at.is_none() {
                                                 debounce_at = Some(Instant::now() + debounce_duration);
-                                                events_to_send.insert(event);
+                                                events_to_send.insert(super::Event::ScanRepositories(repositories));
                                             }
-                                        },
+                                        }
                                         Err(_) => {
                                             send_events(&mut events_to_send, &mut output_event_sender);
                                             break;
@@ -419,11 +406,11 @@ mod monitor_details {
                                     }
                                 }
                                 recv(debouncer_control_receiver) -> control => {
-                                    process_control(control, &mut debounce_duration);
+                                    process_control(&control, &mut debounce_duration);
                                 }
                             }
                         }
-                    };
+                    }
                 }
 
                 debug!("Debouncer shutdowns");
