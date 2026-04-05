@@ -3,3 +3,8 @@ changelog_update = false
 publish = false
 git_tag_name = "{{ version }}"
 release_commits = ".*"
+git_release_enable = true
+
+[[package]]
+name = "tmignore-rs"
+publish = false
