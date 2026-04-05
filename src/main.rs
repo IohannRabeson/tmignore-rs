@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand};
 use log::{error, info};
 use std::path::Path;
 
-use crate::{cache::Cache, commands::monitor::Monitor, config::Config, legacy_cache::LegacyCache};
+use crate::{cache::Cache, config::Config, legacy_cache::LegacyCache};
 
 #[derive(Parser)]
 #[command(about, long_about = None)]
@@ -90,11 +90,10 @@ fn program(cli: &Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Run { dry_run, details } => {
-            let mut logger = Logger::new(dry_run);
             let mut cache = Cache::open(cache_file_path)?;
             let config = Config::load_or_create_file(&config_file_path)?;
 
-            commands::run::execute(&config, &mut cache, dry_run, details, &mut logger)
+            commands::run::execute(&config, &mut cache, dry_run, details)
         }
         Commands::List { zero_separator } => {
             let cache = Cache::open(cache_file_path)?;
@@ -103,26 +102,22 @@ fn program(cli: &Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
             commands::list::execute(&cache, &mut std::io::stdout(), separator)
         }
         Commands::Reset { dry_run, details } => {
-            let mut logger = Logger::new(dry_run);
             let mut cache = Cache::open(cache_file_path)?;
 
-            commands::reset::execute(&mut cache, dry_run, details, &mut logger);
+            commands::reset::execute(&mut cache, dry_run, details);
 
             Ok(())
         }
         Commands::Monitor { dry_run, details } => {
-            let mut logger = Logger::new(dry_run);
             let mut cache = Cache::open(cache_file_path)?;
             let global_gitignore = git::get_global_git_ignore();
-            let mut monitor = Monitor::new(&config_file_path, global_gitignore)?;
 
             commands::monitor::execute(
                 &config_file_path,
+                global_gitignore,
                 &mut cache,
                 dry_run,
                 details,
-                &mut logger,
-                &mut monitor,
             )
         }
     }?;
@@ -152,7 +147,7 @@ fn setup_log_impl(verbose: bool, console_enabled: bool) -> anyhow::Result<()> {
         .level(level)
         .filter(|metadata| metadata.target().starts_with("tmignore_rs"))
         .chain(std::io::stdout());
-        
+
     if console_enabled {
         dispatch = dispatch.chain(os_logger);
     }
@@ -170,8 +165,8 @@ fn main() -> Result<(), anyhow::Error> {
     match program(&Cli::parse(), true) {
         Ok(()) => Ok(()),
         Err(error) => {
-            error!("Error: {:#}", error);
-            eprintln!("Error: {:#}", error);
+            error!("Error: {error:#}");
+            eprintln!("Error: {error:#}");
             Err(error)
         }
     }
@@ -220,34 +215,19 @@ fn import_legacy_cache_file(
     Ok(())
 }
 
-struct Logger {
-    dry_run: bool,
-}
-
-impl Logger {
-    pub fn new(dry_run: bool) -> Self {
-        Self { dry_run }
-    }
-
-    pub fn log(&mut self, str: impl AsRef<str>) {
-        if self.dry_run {
-            info!("[DRY RUN] {}", str.as_ref());
-        } else {
-            info!("{}", str.as_ref());
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::{path::{Path, PathBuf}, time::Duration};
+    use std::{
+        path::{Path, PathBuf},
+        time::Duration,
+    };
 
     use serde_json::json;
     use serial_test::serial;
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
     use crate::{
-        Cli, cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file, program
+        Cli, cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file, json::save_json_file, program
     };
 
     #[test]
@@ -319,7 +299,7 @@ mod tests {
             .add_empty_file("repository/c")
             .build()
             .unwrap();
-        
+
         crate::commands::tests::init_git_repository(repository_path);
 
         temp_dir
@@ -333,7 +313,10 @@ mod tests {
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {
-            command: crate::Commands::Run { dry_run: false, details: false },
+            command: crate::Commands::Run {
+                dry_run: false,
+                details: false,
+            },
             verbose: false,
             config: config_file_path.to_string_lossy().to_string(),
             cache: cache_file_path.to_string_lossy().to_string(),
@@ -379,7 +362,7 @@ mod tests {
             }
             let repository_path = root_directory.join("repository");
             let mut config = Config::default();
-            config.monitor_interval = Duration::ZERO;
+            config.debounce_duration = Duration::from_secs(1);
             config.search_directories.clear();
             config.search_directories.insert(repository_path.clone());
             let temp_dir = TempDirectoryBuilder::default()
@@ -388,7 +371,7 @@ mod tests {
                 .add_text_file("repository/.gitignore", "a\nb\n")
                 .build()
                 .unwrap();
-    
+
             crate::commands::tests::init_git_repository(repository_path);
 
             temp_dir
@@ -396,8 +379,11 @@ mod tests {
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {
-            command: crate::Commands::Monitor { dry_run: false, details: false },
-            verbose: false,
+            command: crate::Commands::Monitor {
+                dry_run: false,
+                details: false,
+            },
+            verbose: true,
             config: config_file_path.to_string_lossy().to_string(),
             cache: cache_file_path.to_string_lossy().to_string(),
             legacy_config: String::new(),
@@ -416,14 +402,17 @@ mod tests {
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &c_file_path
         ));
-        let handle = std::thread::spawn(move ||{
-            program(&cli, false).unwrap()
-        });
+        let handle = std::thread::spawn(move || program(&cli, false).unwrap());
         std::thread::sleep(Duration::from_millis(500));
         std::fs::write(&a_file_path, "").unwrap();
         std::fs::write(&b_file_path, "").unwrap();
         std::fs::write(&c_file_path, "").unwrap();
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_secs(5));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
+        handle.join().unwrap();
+
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
             &a_file_path
         ));
@@ -433,10 +422,139 @@ mod tests {
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &c_file_path
         ));
+    }
+
+    #[test]
+    #[serial]
+    fn test_program_monitor_reload_config() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let temp_dir_path = root.join("test_program_monitor_reload_config");
+        let temp_dir = {
+            let root_directory = &temp_dir_path;
+            if root_directory.exists() && root_directory.is_dir() {
+                std::fs::remove_dir_all(&root_directory).unwrap();
+            }
+            let repository_path = root_directory.join("repository");
+            let mut config = Config::default();
+            config.debounce_duration = Duration::from_secs(1);
+            config.search_directories.clear();
+            config.search_directories.insert(root_directory.join("empty_dir"));
+            let temp_dir = TempDirectoryBuilder::default()
+                .root_folder(root_directory)
+                .add_directory("empty_dir")
+                .add_text_file("config.json", serde_json::to_string(&config).unwrap())
+                .add_text_file("repository/.gitignore", "a\nb\n")
+                .build()
+                .unwrap();
+
+            crate::commands::tests::init_git_repository(repository_path);
+
+            temp_dir
+        };
+        let config_file_path = temp_dir_path.join("config.json");
+        let cache_file_path = temp_dir_path.join("cache.db");
+        let cli = Cli {
+            command: crate::Commands::Monitor {
+                dry_run: false,
+                details: false,
+            },
+            verbose: true,
+            config: config_file_path.to_string_lossy().to_string(),
+            cache: cache_file_path.to_string_lossy().to_string(),
+            legacy_config: String::new(),
+            legacy_cache: String::new(),
+        };
+        let a_file_path = temp_dir_path.join("repository").join("a");
+        let b_file_path = temp_dir_path.join("repository").join("b");
+        let c_file_path = temp_dir_path.join("repository").join("c");
+        let config_file_path = temp_dir_path.join("config.json");
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &a_file_path
+        ));
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &b_file_path
+        ));
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &c_file_path
+        ));
+        let handle = std::thread::spawn(move || program(&cli, false).unwrap());
+        std::thread::sleep(Duration::from_secs(5));
+        std::fs::write(&a_file_path, "").unwrap();
+        std::fs::write(&b_file_path, "").unwrap();
+        std::fs::write(&c_file_path, "").unwrap();
+        let mut config = Config::default();
+        config.debounce_duration = Duration::from_secs(1);
+        config.search_directories.clear();
+        config.search_directories.insert(temp_dir.path().join("repository"));
+        save_json_file(config_file_path, &config).unwrap();
+        std::thread::sleep(Duration::from_secs(5));
         unsafe {
             libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
         }
-        
+        handle.join().unwrap();
+
+        assert!(crate::timemachine::tests::is_excluded_from_time_machine(
+            &a_file_path
+        ));
+        assert!(crate::timemachine::tests::is_excluded_from_time_machine(
+            &b_file_path
+        ));
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &c_file_path
+        ));
+    }
+
+    /// Test the monitor is resilient to invalid configuration.
+    /// The test is a success if the program closes gracefully.
+    #[test]
+    #[serial]
+    fn test_program_monitor_reload_config_error() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let temp_dir_path = root.join("test_program_monitor_reload_config_error");
+        let _temp_dir = {
+            let root_directory = &temp_dir_path;
+            if root_directory.exists() && root_directory.is_dir() {
+                std::fs::remove_dir_all(&root_directory).unwrap();
+            }
+            let repository_path = root_directory.join("repository");
+            let mut config = Config::default();
+            config.debounce_duration = Duration::from_secs(1);
+            config.search_directories.clear();
+            config.search_directories.insert(root_directory.join("empty_dir"));
+            let temp_dir = TempDirectoryBuilder::default()
+                .root_folder(root_directory)
+                .add_directory("empty_dir")
+                .add_text_file("config.json", serde_json::to_string(&config).unwrap())
+                .add_text_file("repository/.gitignore", "a\nb\n")
+                .build()
+                .unwrap();
+
+            crate::commands::tests::init_git_repository(repository_path);
+
+            temp_dir
+        };
+        let config_file_path = temp_dir_path.join("config.json");
+        let cache_file_path = temp_dir_path.join("cache.db");
+        let cli = Cli {
+            command: crate::Commands::Monitor {
+                dry_run: false,
+                details: false,
+            },
+            verbose: true,
+            config: config_file_path.to_string_lossy().to_string(),
+            cache: cache_file_path.to_string_lossy().to_string(),
+            legacy_config: String::new(),
+            legacy_cache: String::new(),
+        };
+        let config_file_path = temp_dir_path.join("config.json");
+        let handle = std::thread::spawn(move || program(&cli, false).unwrap());
+        std::thread::sleep(Duration::from_secs(5));
+        // Write an invalid config
+        std::fs::write(config_file_path, "").unwrap();
+        std::thread::sleep(Duration::from_secs(5));
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
         handle.join().unwrap();
     }
 }

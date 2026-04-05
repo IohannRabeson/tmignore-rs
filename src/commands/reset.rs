@@ -1,16 +1,11 @@
-use crate::{Logger, cache::Cache, commands::TimeMachine};
+use crate::{cache::Cache, commands::TimeMachine};
 
 use std::collections::BTreeSet;
 
-pub fn execute(
-    cache: &mut Cache,
-    dry_run: bool,
-    details: bool,
-    logger: &mut Logger,
-) {
+pub fn execute(cache: &mut Cache, dry_run: bool, details: bool) {
     let diff = cache.find_diff(&BTreeSet::new());
 
-    super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details, logger);
+    super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details);
 
     if !dry_run {
         cache.reset([]);
@@ -21,7 +16,7 @@ pub fn execute(
 mod tests {
     use std::path::PathBuf;
 
-    use crate::{Logger, cache::Cache};
+    use crate::cache::Cache;
 
     #[test]
     fn test_reset() {
@@ -29,9 +24,8 @@ mod tests {
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = false;
-        let mut logger = Logger::new(dry_run);
-        crate::commands::run::execute(&config, &mut cache, dry_run, false, &mut logger).unwrap();
-        super::execute(&mut cache, dry_run, false, &mut logger);
+        crate::commands::run::execute(&config, &mut cache, dry_run, false).unwrap();
+        super::execute(&mut cache, dry_run, false);
         let paths = cache.paths();
 
         assert!(paths.is_empty());

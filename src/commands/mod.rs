@@ -8,11 +8,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use log::{error, warn};
+use log::{error, info, warn};
 use regex::RegexSet;
 
 use crate::{
-    Logger, git,
+    git,
     timemachine::{self, Error},
 };
 
@@ -39,7 +39,6 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     diff: &crate::diff::Diff,
     dry_run: bool,
     details: bool,
-    logger: &mut Logger,
 ) -> Vec<PathBuf> {
     let mut add_failed_paths = BTreeSet::new();
 
@@ -63,32 +62,28 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     let remove_count = diff.removed.len();
 
     if add_count > 0 {
-        logger.log(format!(
-            "Added {add_count} paths to the backup exclusion list"
-        ));
+        info!("Added {add_count} paths to the backup exclusion list");
     }
 
     if remove_count > 0 {
-        logger.log(format!(
-            "Removed {remove_count} paths from the backup exclusion list"
-        ));
+        info!("Removed {remove_count} paths from the backup exclusion list");
     }
 
     if add_count == 0 && remove_count == 0 {
-        logger.log("No changes to the backup exclusion list");
+        info!("No changes to the backup exclusion list");
     }
 
     if details {
         for path in &diff.added {
             if !add_failed_paths.contains(path) {
-                logger.log(format!("+ {}", path.display()));
+                info!("+ {}", path.display());
             }
         }
     }
 
     if details {
         for path in &diff.removed {
-            logger.log(format!("- {}", path.display()));
+            info!("- {}", path.display());
         }
     }
 
@@ -138,13 +133,13 @@ fn find_paths_to_exclude_from_backup(
 pub(crate) mod tests {
     use std::{
         collections::BTreeSet,
-        path::{Path, PathBuf}, time::Duration,
+        path::{Path, PathBuf},
+        time::Duration,
     };
 
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
     use crate::{
-        Logger,
         commands::{TimeMachineTrait, apply_diff_and_print, create_whitelist},
         config::Config,
         diff::Diff,
@@ -190,7 +185,7 @@ pub(crate) mod tests {
 
     pub(crate) fn create_config(search_directory: impl AsRef<Path>) -> Config {
         let mut config = Config::default();
-        config.monitor_interval = Duration::from_secs(1);
+        config.debounce_duration = Duration::from_secs(1);
         config.search_directories.clear();
         config
             .search_directories
@@ -234,13 +229,11 @@ pub(crate) mod tests {
             .add_empty_file("a")
             .build()
             .unwrap();
-        let mut logger = Logger::new(false);
         let diff = Diff {
             added: BTreeSet::from([temp_dir.path().join("a")]),
             removed: BTreeSet::new(),
         };
-        let error_paths =
-            apply_diff_and_print::<MockTimeMachineError>(&diff, false, false, &mut logger);
+        let error_paths = apply_diff_and_print::<MockTimeMachineError>(&diff, false, false);
 
         assert_eq!(1, error_paths.len());
     }
@@ -251,11 +244,10 @@ pub(crate) mod tests {
             .add_empty_file("a")
             .build()
             .unwrap();
-        let mut logger = Logger::new(false);
         let diff = Diff {
             removed: BTreeSet::from([temp_dir.path().join("a")]),
             added: BTreeSet::new(),
         };
-        let _ = apply_diff_and_print::<MockTimeMachineError>(&diff, false, false, &mut logger);
+        let _ = apply_diff_and_print::<MockTimeMachineError>(&diff, false, false);
     }
 }

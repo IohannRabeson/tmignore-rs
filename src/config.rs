@@ -2,7 +2,8 @@ use std::{
     collections::BTreeSet,
     fs::File,
     io::{BufReader, Read},
-    path::{Path, PathBuf}, time::Duration,
+    path::{Path, PathBuf},
+    time::Duration,
 };
 
 use log::info;
@@ -20,9 +21,12 @@ pub struct Config {
     pub whitelist_patterns: BTreeSet<String>,
     /// Count of threads used for scanning the file system.
     pub threads: usize,
-    /// Monitoring interval.
-    #[serde(serialize_with = "serialize_human_time", deserialize_with = "deserialize_human_time")]
-    pub monitor_interval: Duration,
+    /// Debounce duration.
+    #[serde(
+        serialize_with = "serialize_human_time",
+        deserialize_with = "deserialize_human_time"
+    )]
+    pub debounce_duration: Duration,
 }
 
 fn serialize_human_time<S>(value: &Duration, serializer: S) -> Result<S::Ok, S::Error>
@@ -43,10 +47,13 @@ where
     match humantime::parse_duration(&s) {
         Ok(duration) => Ok(duration),
         Err(error) => {
-            const HELP_URL: &str = "https://github.com/IohannRabeson/tmignore-rs?tab=readme-ov-file#monitor_interval";
-                    
-            Err(serde::de::Error::custom(format!("Invalid duration: {error}. See {HELP_URL} for help.")))
-        },
+            const HELP_URL: &str =
+                "https://github.com/IohannRabeson/tmignore-rs?tab=readme-ov-file#debounce_duration";
+
+            Err(serde::de::Error::custom(format!(
+                "Invalid duration: {error}. See {HELP_URL} for help."
+            )))
+        }
     }
 }
 
@@ -89,7 +96,7 @@ pub enum ValidationFail {
 }
 
 impl Config {
-    pub const DEFAULT_MONITOR_INTERVAL_SECS: u64 = 60;
+    pub const DEFAULT_DEBOUNCE_DURATION_SECS: u64 = 2;
     pub const DEFAULT_THREADS: usize = 4;
 
     pub fn load_or_create_file(file_path: impl AsRef<Path>) -> anyhow::Result<Self> {
@@ -135,7 +142,9 @@ impl Config {
         // Create the file in a temporary directory then move the file to the final destination
         // to prevent to send different events, one for the file creation and one when the file is written.
         // This to help with test flakyness, it prevents tests to try to read an empty file.
-        let temp_dir = temp_dir_builder::TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir = temp_dir_builder::TempDirectoryBuilder::default()
+            .build()
+            .unwrap();
         let temp_file_path = temp_dir.path().join("temp_config");
         let file = File::create(&temp_file_path)?;
         self.save(file)?;
@@ -225,7 +234,7 @@ impl Default for Config {
             ]),
             whitelist_patterns: BTreeSet::new(),
             threads: Self::DEFAULT_THREADS,
-            monitor_interval: Duration::from_secs(Self::DEFAULT_MONITOR_INTERVAL_SECS),
+            debounce_duration: Duration::from_secs(Self::DEFAULT_DEBOUNCE_DURATION_SECS),
         }
     }
 }
@@ -268,7 +277,7 @@ mod tests {
   "ignored_directories": [],
   "whitelist_patterns": [],
   "threads": 4,
-  "monitor_interval": "5s" }
+  "debounce_duration": "5s" }
 "#;
         let config = Config::load(json.as_bytes()).unwrap();
         let search_directories: Vec<_> = config.search_directories.iter().collect();
@@ -284,7 +293,7 @@ mod tests {
   "ignored_directories": [],
   "whitelist_patterns": [],
   "threads": 4,
-  "monitor_interval": "5s" }
+  "debounce_duration": "5s" }
 "#;
         let mut config = Config::load(json.as_bytes()).unwrap();
         config.reload(json.as_bytes()).unwrap();
@@ -314,7 +323,7 @@ mod tests {
 "ignored_directories": [],
 "whitelist_patterns": [],
 "threads": 4,
-"monitor_interval": "5s" }
+"debounce_duration": "5s" }
 "#;
         let result = Config::load(json.as_bytes());
         let error = result.unwrap_err();
@@ -332,7 +341,7 @@ mod tests {
 "ignored_directories": [],
 "whitelist_patterns": [],
 "threads": 4,
-"monitor_interval": "5s" }
+"debounce_duration": "5s" }
 "#;
         let result = Config::load(json.as_bytes());
         let error = result.unwrap_err();
@@ -348,7 +357,7 @@ mod tests {
   "ignored_directories": [],
   "whitelist_patterns": [],
   "threads": 4,
-  "monitor_interval": "5s" }
+  "debounce_duration": "5s" }
 "#;
         let mut config = Config::load(json.as_bytes()).unwrap();
         let json = r#"
@@ -356,7 +365,7 @@ mod tests {
   "ignored_directories": ["~"],
   "whitelist_patterns": [],
   "threads": 4,
-  "monitor_interval": "5s" }
+  "debounce_duration": "5s" }
 "#;
         config.reload(json.as_bytes()).unwrap();
 
@@ -370,7 +379,7 @@ mod tests {
   "ignored_directories": [],
   "whitelist_patterns": [],
   "threads": 4,
-  "monitor_interval": "5s" }
+  "debounce_duration": "5s" }
 "#;
         let mut config = Config::load(json.as_bytes()).unwrap();
         let invalid_json = r#"
@@ -378,7 +387,7 @@ mod tests {
   "ignored_directories": [],
   "whitelist_patterns": [],
   "threads": 4,
-  "monitor_interval": "5s" }
+  "debounce_duration": "5s" }
 "#;
         assert!(config.reload(invalid_json.as_bytes()).is_err());
         assert_eq!(1, config.search_directories.len());

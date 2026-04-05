@@ -5,16 +5,16 @@ use serde::{Serialize, de::DeserializeOwned};
 
 pub fn load_json_file<T: DeserializeOwned>(file_path: impl AsRef<Path>) -> anyhow::Result<T> {
     let file_path = file_path.as_ref();
-    let file = std::fs::File::open(file_path).with_context(||file_path.display().to_string())?;
+    let file = std::fs::File::open(file_path).with_context(|| file_path.display().to_string())?;
 
-    Ok(serde_json::from_reader(file).with_context(||file_path.display().to_string())?)
+    serde_json::from_reader(file).with_context(|| file_path.display().to_string())
 }
 
 pub fn save_json_file(file_path: impl AsRef<Path>, value: &impl Serialize) -> anyhow::Result<()> {
     let file_path = file_path.as_ref();
-    let file = std::fs::File::create(file_path).with_context(||file_path.display().to_string())?;
+    let file = std::fs::File::create(file_path).with_context(|| file_path.display().to_string())?;
 
-    serde_json::to_writer_pretty(file, value).with_context(||file_path.display().to_string())?;
+    serde_json::to_writer_pretty(file, value).with_context(|| file_path.display().to_string())?;
 
     Ok(())
 }

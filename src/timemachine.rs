@@ -42,9 +42,8 @@ fn exclude_path(path: impl AsRef<Path>, exclude: bool) -> anyhow::Result<()> {
         path.is_dir(),
     );
 
-    let status = unsafe {
-        CSBackupSetItemExcluded(url.as_concrete_TypeRef(), u8::from(exclude), 0)
-    };
+    let status =
+        unsafe { CSBackupSetItemExcluded(url.as_concrete_TypeRef(), u8::from(exclude), 0) };
 
     if status == 0 {
         Ok(())
@@ -121,16 +120,13 @@ pub(crate) mod tests {
     }
 
     fn prepare_temp_dir(directory_name: &str) -> TempDirectoryBuilder {
-        let path = std::env::current_dir()
-                    .unwrap()
-                    .join(directory_name);
+        let path = std::env::current_dir().unwrap().join(directory_name);
 
         if path.is_dir() {
             std::fs::remove_dir_all(&path).unwrap();
         }
 
-        TempDirectoryBuilder::default()
-            .root_folder(path)
+        TempDirectoryBuilder::default().root_folder(path)
     }
 
     #[test]

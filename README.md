@@ -130,9 +130,8 @@ See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
 ### `threads`
 The `threads` count. 0 means the count of threads is not limited and the max will be choose.
 
-### `monitor_interval`
-Monitoring interval. Default is 1 minute. 
-If you want to reduce the power consumption increase the interval.
+### `debounce_duration`
+Debounce duration, a delay allowing to collect similar events and process them all once. Default is 5 seconds. 
 Example of values: `60s`, `10m`, `1h30m`.
 
 ## Coverage
