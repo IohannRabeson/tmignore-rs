@@ -1,4 +1,5 @@
 [workspace]
 changelog_update = false
 publish = false
+git_tag_name = "{{ version }}"
 release_commits = ".*"
