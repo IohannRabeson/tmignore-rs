@@ -140,27 +140,6 @@ impl Config {
         Ok(config)
     }
 
-    #[cfg(test)]
-    pub fn save_to_file(&self, file_path: impl AsRef<Path>) -> anyhow::Result<()> {
-        // Create the file in a temporary directory then move the file to the final destination
-        // to prevent to send different events, one for the file creation and one when the file is written.
-        // This to help with test flakyness, it prevents tests to try to read an empty file.
-        let temp_dir = temp_dir_builder::TempDirectoryBuilder::default()
-            .build()
-            .unwrap();
-        let temp_file_path = temp_dir.path().join("temp_config");
-        let file = File::create(&temp_file_path)?;
-        self.save(file)?;
-        std::fs::rename(&temp_file_path, file_path)?;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub fn save(&self, writer: impl std::io::Write) -> anyhow::Result<()> {
-        serde_json::to_writer_pretty(writer, self)?;
-        Ok(())
-    }
-
     fn expand(config: &mut Config) {
         config.search_directories = Self::expand_paths(&config.search_directories);
         config.ignored_directories = Self::expand_paths(&config.ignored_directories);
