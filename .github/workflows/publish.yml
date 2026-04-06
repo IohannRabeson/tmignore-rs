@@ -8,7 +8,9 @@ env:
   CARGO_TERM_COLOR: always
   TMIGNORE_RS_VERSION: ${{ github.ref_name }}
 jobs:
-  build:
+  publish:
+    permissions:
+      contents: write
     runs-on: "macos-latest"
     strategy:
       fail-fast: false
