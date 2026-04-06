@@ -23,6 +23,13 @@ You can stop the service using:
 ```
 brew services stop tmignore-rs
 ```
+### Releases
+You can also download the binary in the [releases page](https://github.com/IohannRabeson/tmignore-rs/releases).
+When downloading the binary from Github, you will have to convince MacOS it's ok to execute it (by removing the quarantine attribute):
+```
+xattr -cr tmignore-rs
+```
+This is not needed if you install `tmignore-rs` using `brew`.
 
 ## How to use it
 ### `monitor` command
