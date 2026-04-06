@@ -18,7 +18,7 @@ use crate::{cache::Cache, config::Config, legacy_cache::LegacyCache};
 
 #[derive(Parser)]
 #[command(about, long_about = None)]
-#[command(version = concat!(env!("CARGO_PKG_VERSION"), "-", env!("VERGEN_GIT_SHA")))]
+#[command(version = option_env!("TMIGNORE_RS_VERSION").unwrap_or("<Local Build>"))]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

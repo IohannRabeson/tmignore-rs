@@ -11,11 +11,9 @@ jobs:
       - name: Checkout tmignore-rs
         uses: actions/checkout@v6
 
-      - name: Get version from Cargo.toml
+      - name: Get version from tag
         id: version
-        run: |
-          version=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "version=$version" >> $GITHUB_OUTPUT
+        run: echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
 
       - name: Checkout homebrew-tap
         uses: actions/checkout@v6
