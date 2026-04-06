@@ -3,7 +3,7 @@ Makes Time Machine respect .gitignore files.
 This tool is a drop-in replacement for [tmignore](https://github.com/samuelmeuli/tmignore) but with
 a brand new command 'monitor' that is updating in (almost) real time the cache if changes in the filesystem are detected.
 
-It will happilly import the tmignore cache and configuration the first time it will launched.
+It will happilly import the tmignore cache and configuration the first time it will be launched.
 
 Compared to tmignore it should be very fast, where tmignore was taking minutes it's now few seconds.
 
