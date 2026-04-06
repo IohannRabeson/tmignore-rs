@@ -444,7 +444,12 @@ mod monitor_details {
     }
     #[cfg(test)]
     mod tests {
+        use std::time::Duration;
+
+        use log::debug;
         use rstest::rstest;
+
+        use crate::commands::monitor::{Event, monitor_details::DebouncerControl};
 
         #[rstest]
         #[case(notify::Event::default().set_kind(notify::EventKind::Create(notify::event::CreateKind::File)), true)]
@@ -458,6 +463,79 @@ mod monitor_details {
             let result = super::accept_event(&event);
 
             assert_eq!(accepted, result);
+        }
+
+        #[test]
+        fn test_spawn_debouncer_thread_shutdown() {
+            let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
+            let (thread_handle, _control_sender, output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
+
+            input_sender.send(Event::Shutdown).unwrap();
+            let output_event = output_receiver.recv().unwrap();
+            assert_eq!(Event::Shutdown, output_event);
+            thread_handle.join().unwrap();
+        }
+
+        #[test]
+        fn test_spawn_debouncer_thread_input_dropped() {
+            let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
+            let (thread_handle, _control_sender, _output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
+            drop(input_sender);
+            thread_handle.join().unwrap();
+        }
+
+        #[test]
+        fn test_spawn_debouncer_thread_input_dropped_during_debounce() {
+            let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
+            let (thread_handle, control_sender, _output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
+            control_sender.send(DebouncerControl::SetDebounceDuration(Duration::from_secs(2))).unwrap();
+            input_sender.send(Event::ReloadConfiguration).unwrap();
+            drop(input_sender);
+            thread_handle.join().unwrap();
+        }
+
+        #[test]
+        fn test_spawn_debouncer_thread_control_during_debounce() {
+            let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
+            let (thread_handle, control_sender, _output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
+            control_sender.send(DebouncerControl::SetDebounceDuration(Duration::from_secs(2))).unwrap();
+            input_sender.send(Event::ReloadConfiguration).unwrap();
+            control_sender.send(DebouncerControl::SetDebounceDuration(Duration::from_secs(2))).unwrap();
+            input_sender.send(Event::Shutdown).unwrap();
+            thread_handle.join().unwrap();
+        }
+
+        #[test]
+        fn test_spawn_debouncer_thread_reload_event_is_debounced() {
+            let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
+            let (thread_handle, control_sender, output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
+            let debounce_duration = Duration::from_millis(250);
+            control_sender.send(DebouncerControl::SetDebounceDuration(debounce_duration)).unwrap();
+            input_sender.send(Event::ReloadConfiguration).unwrap();
+            input_sender.send(Event::ReloadConfiguration).unwrap();
+            // Sleep enough to ensure the debouncer releases events
+            std::thread::sleep(debounce_duration);
+            let output_event = output_receiver.recv().unwrap();
+            assert_eq!(Event::ReloadConfiguration, output_event);
+            assert!(output_receiver.recv_timeout(debounce_duration).is_err());
+            input_sender.send(Event::Shutdown).unwrap();
+            thread_handle.join().unwrap();
+        }
+
+        #[test]
+        fn test_spawn_debouncer_thread_reload_event_is_debounced_early_shutdown() {
+            let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
+            let (thread_handle, control_sender, output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
+            let debounce_duration = Duration::from_millis(250);
+            control_sender.send(DebouncerControl::SetDebounceDuration(debounce_duration)).unwrap();
+            input_sender.send(Event::ReloadConfiguration).unwrap();
+            input_sender.send(Event::ReloadConfiguration).unwrap();
+            input_sender.send(Event::Shutdown).unwrap();
+            let reload_event = output_receiver.recv().unwrap();
+            let shutdown_event = output_receiver.recv().unwrap();
+            thread_handle.join().unwrap();
+            assert_eq!(Event::ReloadConfiguration, reload_event);
+            assert_eq!(Event::Shutdown, shutdown_event);
         }
     }
 }
