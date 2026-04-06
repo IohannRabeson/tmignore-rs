@@ -1,5 +1,6 @@
 pub mod list;
 pub mod monitor;
+pub mod path;
 pub mod reset;
 pub mod run;
 
