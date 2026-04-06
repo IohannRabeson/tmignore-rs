@@ -107,7 +107,10 @@ impl Config {
         } else {
             let mut default_config = Self::default();
 
-            let parent_directory = file_path.parent().ok_or(anyhow::anyhow!("Can get a parent path for '{}'", file_path.display()))?;
+            let parent_directory = file_path.parent().ok_or(anyhow::anyhow!(
+                "Can get a parent path for '{}'",
+                file_path.display()
+            ))?;
 
             std::fs::create_dir_all(parent_directory)?;
 
@@ -312,7 +315,10 @@ mod tests {
 "#;
         let result = Config::load(json.as_bytes());
         assert!(result.is_err());
-        let _error = result.unwrap_err().downcast_ref::<serde_json::Error>().expect("downcast failed");
+        let _error = result
+            .unwrap_err()
+            .downcast_ref::<serde_json::Error>()
+            .expect("downcast failed");
     }
 
     #[test]
@@ -327,7 +333,9 @@ mod tests {
 "#;
         let result = Config::load(json.as_bytes());
         let error = result.unwrap_err();
-        let error = error.downcast_ref::<ValidationError>().expect("downcast failed");
+        let error = error
+            .downcast_ref::<ValidationError>()
+            .expect("downcast failed");
         assert!(error.fails.len() > 0);
         let expected = crate::config::ValidationFail::NotFound(PathBuf::from("/does_not_exist"));
         assert!(error.fails.contains(&expected));
@@ -345,9 +353,15 @@ mod tests {
 "#;
         let result = Config::load(json.as_bytes());
         let error = result.unwrap_err();
-        let error = error.downcast_ref::<ValidationError>().expect("downcast failed");
+        let error = error
+            .downcast_ref::<ValidationError>()
+            .expect("downcast failed");
         assert!(error.fails.len() > 0);
-        assert!(error.fails.contains(&crate::config::ValidationFail::NoSearchDirectories));
+        assert!(
+            error
+                .fails
+                .contains(&crate::config::ValidationFail::NoSearchDirectories)
+        );
     }
 
     #[test]
