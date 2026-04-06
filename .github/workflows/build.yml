@@ -11,17 +11,17 @@ env:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [macos-latest]
+    runs-on: "macos-latest"
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@v6
-    - run: rustup toolchain install stable --profile minimal
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
     - name: Rust Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        key: debug_aarch64-apple-darwin
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --verbose --locked
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --verbose --locked
