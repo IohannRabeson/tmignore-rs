@@ -12,9 +12,9 @@ jobs:
         run: |
           if [[ ! "${{ github.ref_name }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Tag does not match release format, skipping."
-            exit 1
+            exit 0
           fi
-          
+
       - name: Checkout tmignore-rs
         uses: actions/checkout@v6
 
