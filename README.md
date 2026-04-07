@@ -85,7 +85,7 @@ Commands:
   help     Print this message or the help of the given subcommand(s)
 
 Options:
-      --verbose  Enable verbose logging
+  -v, --verbose  Enable verbose logging
   -h, --help     Print help
   -V, --version  Print version
 

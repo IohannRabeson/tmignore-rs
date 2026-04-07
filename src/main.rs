@@ -28,7 +28,7 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
     /// Enable verbose logging
-    #[arg(long)]
+    #[arg(short, long)]
     verbose: bool,
     /// Specify the configuration file path
     #[arg(long, default_value = CONFIG_FILE_PATH, hide = true)]
