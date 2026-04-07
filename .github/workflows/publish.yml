@@ -36,17 +36,13 @@ jobs:
         key: release_${{ matrix.rust-target }}
     - name: Build
       run: cargo build --release --verbose --locked --target ${{ matrix.rust-target }}
-    - name: Make Package
-      run: |
-        mkdir package
-        cp ${{ env.executable_output_file_path }} package
-        cp README.md package
-        cp LICENSE package
+    - name: Copy Binary
+      run: cp ${{ env.executable_output_file_path }} .
     - name: Zip
       uses: thedoctor0/zip-release@0.7.6
       with:
         type: "zip"
-        path: package/*
+        path: tmignore-rs LICENSE README.md
         filename: ${{ env.zip_output_file_path }}
     - name: Release
       uses: svenstaro/upload-release-action@v2
