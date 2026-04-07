@@ -46,7 +46,7 @@ jobs:
       uses: thedoctor0/zip-release@0.7.6
       with:
         type: "zip"
-        path: package
+        path: package/*
         filename: ${{ env.zip_output_file_path }}
     - name: Release
       uses: svenstaro/upload-release-action@v2
