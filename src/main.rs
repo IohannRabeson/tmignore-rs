@@ -89,6 +89,10 @@ enum Paths {
     Config,
     /// Path of the cache file
     Cache,
+    /// Path of the legacy configuration file
+    LegacyConfig,
+    /// Path of the legacy cache file
+    LegacyCache,
 }
 
 fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
@@ -125,8 +129,7 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
             commands::monitor::execute(&cli.config, global_gitignore, &mut cache, dry_run, details)
         }
         Commands::Path { path } => {
-            commands::path::execute(&cli, path);
-            Ok(())
+            commands::path::execute(&cli, path, &mut std::io::stdout())
         }
     }?;
 
