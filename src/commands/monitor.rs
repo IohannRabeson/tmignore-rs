@@ -120,13 +120,22 @@ impl Monitor {
         let (signals_thread_handle, signals_receiver) = monitor_details::spawn_signals_thread()?;
         let (monitor_thread_handle, monitor_control_sender, event_receiver) =
             monitor_details::spawn_monitor_thread(configuration_file_path, global_gitignore)?;
-        let dispatcher_thread_handle = monitor_details::spawn_dispatcher_thread(signals_receiver, event_receiver, event_sender_to_debouncer)?;
+        let dispatcher_thread_handle = monitor_details::spawn_dispatcher_thread(
+            signals_receiver,
+            event_receiver,
+            event_sender_to_debouncer,
+        )?;
 
         Ok(Self {
             control_sender: monitor_control_sender,
             debouncer_control_sender,
             event_receiver_final,
-            thread_handles: vec![signals_thread_handle, dispatcher_thread_handle, debouncer_thread_handle, monitor_thread_handle],
+            thread_handles: vec![
+                signals_thread_handle,
+                dispatcher_thread_handle,
+                debouncer_thread_handle,
+                monitor_thread_handle,
+            ],
         })
     }
 
@@ -169,8 +178,8 @@ mod monitor_details {
     use log::{debug, warn};
     use notify::Watcher;
 
-    use crate::git;
     use super::EVENT_QUEUE_SIZE;
+    use crate::git;
 
     pub fn spawn_signals_thread() -> anyhow::Result<(JoinHandle<()>, Receiver<()>)> {
         let mut signals = signal_hook::iterator::Signals::new([
@@ -417,7 +426,11 @@ mod monitor_details {
         ))
     }
 
-    pub fn spawn_dispatcher_thread(signals_receiver: Receiver<()>, event_receiver: Receiver<super::Event>, event_sender_to_debouncer: Sender<super::Event>) -> anyhow::Result<JoinHandle<()>> {
+    pub fn spawn_dispatcher_thread(
+        signals_receiver: Receiver<()>,
+        event_receiver: Receiver<super::Event>,
+        event_sender_to_debouncer: Sender<super::Event>,
+    ) -> anyhow::Result<JoinHandle<()>> {
         let thread_handle = std::thread::Builder::new()
             .name("Dispatcher Thread".to_string())
             .spawn(move || {
@@ -444,10 +457,8 @@ mod monitor_details {
     }
     #[cfg(test)]
     mod tests {
-        use std::time::Duration;
-
-        use log::debug;
         use rstest::rstest;
+        use std::time::Duration;
 
         use crate::commands::monitor::{Event, monitor_details::DebouncerControl};
 
@@ -468,7 +479,8 @@ mod monitor_details {
         #[test]
         fn test_spawn_debouncer_thread_shutdown() {
             let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
-            let (thread_handle, _control_sender, output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
+            let (thread_handle, _control_sender, output_receiver) =
+                super::spawn_debouncer_thread(input_receiver).unwrap();
 
             input_sender.send(Event::Shutdown).unwrap();
             let output_event = output_receiver.recv().unwrap();
@@ -479,7 +491,8 @@ mod monitor_details {
         #[test]
         fn test_spawn_debouncer_thread_input_dropped() {
             let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
-            let (thread_handle, _control_sender, _output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
+            let (thread_handle, _control_sender, _output_receiver) =
+                super::spawn_debouncer_thread(input_receiver).unwrap();
             drop(input_sender);
             thread_handle.join().unwrap();
         }
@@ -487,8 +500,13 @@ mod monitor_details {
         #[test]
         fn test_spawn_debouncer_thread_input_dropped_during_debounce() {
             let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
-            let (thread_handle, control_sender, _output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
-            control_sender.send(DebouncerControl::SetDebounceDuration(Duration::from_secs(2))).unwrap();
+            let (thread_handle, control_sender, _output_receiver) =
+                super::spawn_debouncer_thread(input_receiver).unwrap();
+            control_sender
+                .send(DebouncerControl::SetDebounceDuration(Duration::from_secs(
+                    2,
+                )))
+                .unwrap();
             input_sender.send(Event::ReloadConfiguration).unwrap();
             drop(input_sender);
             thread_handle.join().unwrap();
@@ -497,10 +515,19 @@ mod monitor_details {
         #[test]
         fn test_spawn_debouncer_thread_control_during_debounce() {
             let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
-            let (thread_handle, control_sender, _output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
-            control_sender.send(DebouncerControl::SetDebounceDuration(Duration::from_secs(2))).unwrap();
+            let (thread_handle, control_sender, _output_receiver) =
+                super::spawn_debouncer_thread(input_receiver).unwrap();
+            control_sender
+                .send(DebouncerControl::SetDebounceDuration(Duration::from_secs(
+                    2,
+                )))
+                .unwrap();
             input_sender.send(Event::ReloadConfiguration).unwrap();
-            control_sender.send(DebouncerControl::SetDebounceDuration(Duration::from_secs(2))).unwrap();
+            control_sender
+                .send(DebouncerControl::SetDebounceDuration(Duration::from_secs(
+                    2,
+                )))
+                .unwrap();
             input_sender.send(Event::Shutdown).unwrap();
             thread_handle.join().unwrap();
         }
@@ -508,9 +535,12 @@ mod monitor_details {
         #[test]
         fn test_spawn_debouncer_thread_reload_event_is_debounced() {
             let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
-            let (thread_handle, control_sender, output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
+            let (thread_handle, control_sender, output_receiver) =
+                super::spawn_debouncer_thread(input_receiver).unwrap();
             let debounce_duration = Duration::from_millis(250);
-            control_sender.send(DebouncerControl::SetDebounceDuration(debounce_duration)).unwrap();
+            control_sender
+                .send(DebouncerControl::SetDebounceDuration(debounce_duration))
+                .unwrap();
             input_sender.send(Event::ReloadConfiguration).unwrap();
             input_sender.send(Event::ReloadConfiguration).unwrap();
             // Sleep enough to ensure the debouncer releases events
@@ -525,9 +555,12 @@ mod monitor_details {
         #[test]
         fn test_spawn_debouncer_thread_reload_event_is_debounced_early_shutdown() {
             let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
-            let (thread_handle, control_sender, output_receiver) = super::spawn_debouncer_thread(input_receiver).unwrap();
+            let (thread_handle, control_sender, output_receiver) =
+                super::spawn_debouncer_thread(input_receiver).unwrap();
             let debounce_duration = Duration::from_millis(250);
-            control_sender.send(DebouncerControl::SetDebounceDuration(debounce_duration)).unwrap();
+            control_sender
+                .send(DebouncerControl::SetDebounceDuration(debounce_duration))
+                .unwrap();
             input_sender.send(Event::ReloadConfiguration).unwrap();
             input_sender.send(Event::ReloadConfiguration).unwrap();
             input_sender.send(Event::Shutdown).unwrap();

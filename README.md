@@ -60,6 +60,9 @@ This command prints the backup exclusion list.
 
 There is a `-0` option if you want a null separated list.
 
+### `path` command
+This command prints paths of files used by the application.
+
 ## Logs
 This application sends the logs to the Console application.  
 Use `tmignore-rs` as filter (select the filtering by process).  
@@ -78,6 +81,7 @@ Commands:
   run      Scan for paths to add or remove from the backup exclusion list
   list     Print the backup exclusion list
   reset    Reset the backup exclusion list
+  path     Print the paths of the files used by the application
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -92,7 +96,8 @@ tmignore-rs monitor --help
 ```
 
 ## Configuration
-The configuration file is located at `~/.config/tmignore-rs/config.json`.
+The configuration file is located at `~/.config/tmignore-rs/config.json`. \
+You can find this path using the [`path`]()
 Here is the default configuration created automatically the first time you run tmignore-rs.   
 If you were using [tmignore](https://github.com/samuelmeuli/tmignore) the configuration will be imported.
 
@@ -117,7 +122,7 @@ If you were using [tmignore](https://github.com/samuelmeuli/tmignore) the config
     "*/BrogueRunHistory.txt"
   ],
   "threads": 4,
-  "monitor_interval_secs": "1m"
+  "debounce_duration": "2s"
 }
 
 ```

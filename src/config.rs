@@ -107,7 +107,10 @@ impl Config {
         } else {
             let mut default_config = Self::default();
 
-            let parent_directory = file_path.parent().ok_or(anyhow::anyhow!("Can get a parent path for '{}'", file_path.display()))?;
+            let parent_directory = file_path.parent().ok_or(anyhow::anyhow!(
+                "Can't get a parent path for '{}'",
+                file_path.display()
+            ))?;
 
             std::fs::create_dir_all(parent_directory)?;
 
@@ -135,27 +138,6 @@ impl Config {
         Self::expand(&mut config);
         Self::validate(&config)?;
         Ok(config)
-    }
-
-    #[cfg(test)]
-    pub fn save_to_file(&self, file_path: impl AsRef<Path>) -> anyhow::Result<()> {
-        // Create the file in a temporary directory then move the file to the final destination
-        // to prevent to send different events, one for the file creation and one when the file is written.
-        // This to help with test flakyness, it prevents tests to try to read an empty file.
-        let temp_dir = temp_dir_builder::TempDirectoryBuilder::default()
-            .build()
-            .unwrap();
-        let temp_file_path = temp_dir.path().join("temp_config");
-        let file = File::create(&temp_file_path)?;
-        self.save(file)?;
-        std::fs::rename(&temp_file_path, file_path)?;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub fn save(&self, writer: impl std::io::Write) -> anyhow::Result<()> {
-        serde_json::to_writer_pretty(writer, self)?;
-        Ok(())
     }
 
     fn expand(config: &mut Config) {
@@ -312,7 +294,10 @@ mod tests {
 "#;
         let result = Config::load(json.as_bytes());
         assert!(result.is_err());
-        let _error = result.unwrap_err().downcast_ref::<serde_json::Error>().expect("downcast failed");
+        let _error = result
+            .unwrap_err()
+            .downcast_ref::<serde_json::Error>()
+            .expect("downcast failed");
     }
 
     #[test]
@@ -327,7 +312,9 @@ mod tests {
 "#;
         let result = Config::load(json.as_bytes());
         let error = result.unwrap_err();
-        let error = error.downcast_ref::<ValidationError>().expect("downcast failed");
+        let error = error
+            .downcast_ref::<ValidationError>()
+            .expect("downcast failed");
         assert!(error.fails.len() > 0);
         let expected = crate::config::ValidationFail::NotFound(PathBuf::from("/does_not_exist"));
         assert!(error.fails.contains(&expected));
@@ -345,9 +332,15 @@ mod tests {
 "#;
         let result = Config::load(json.as_bytes());
         let error = result.unwrap_err();
-        let error = error.downcast_ref::<ValidationError>().expect("downcast failed");
+        let error = error
+            .downcast_ref::<ValidationError>()
+            .expect("downcast failed");
         assert!(error.fails.len() > 0);
-        assert!(error.fails.contains(&crate::config::ValidationFail::NoSearchDirectories));
+        assert!(
+            error
+                .fails
+                .contains(&crate::config::ValidationFail::NoSearchDirectories)
+        );
     }
 
     #[test]
