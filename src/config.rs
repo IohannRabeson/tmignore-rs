@@ -108,7 +108,7 @@ impl Config {
             let mut default_config = Self::default();
 
             let parent_directory = file_path.parent().ok_or(anyhow::anyhow!(
-                "Can get a parent path for '{}'",
+                "Can't get a parent path for '{}'",
                 file_path.display()
             ))?;
 
