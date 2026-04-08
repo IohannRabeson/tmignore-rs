@@ -125,7 +125,7 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
             let mut cache = Cache::open(&cli.cache)?;
             let global_gitignore = git::get_global_git_ignore();
 
-            commands::monitor::execute(&cli.config, global_gitignore, &mut cache, dry_run, details)
+            commands::monitor::execute(&cli.config, global_gitignore.as_ref(), &mut cache, dry_run, details)
         }
         Commands::Path { path } => {
             commands::path::execute(&cli, path, &mut std::io::stdout())

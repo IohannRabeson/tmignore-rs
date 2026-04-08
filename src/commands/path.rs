@@ -9,7 +9,7 @@ pub fn execute(cli: &Cli, path: Paths, writer: &mut impl Write) -> anyhow::Resul
         Paths::LegacyCache => cli.legacy_cache.as_str(),
         Paths::LegacyConfig => cli.legacy_config.as_str(),
     };
-    writeln!(writer, "{}", file_path)?;
+    writeln!(writer, "{file_path}")?;
     Ok(())
 }
 

@@ -22,7 +22,7 @@ const EVENT_QUEUE_SIZE: usize = 128;
 
 pub fn execute(
     config_file_path: impl AsRef<Path>,
-    global_gitignore_path: Option<PathBuf>,
+    global_gitignore_path: Option<&PathBuf>,
     cache: &mut Cache,
     dry_run: bool,
     details: bool,
@@ -40,7 +40,7 @@ pub fn execute(
     // caused by `Config::load_or_create_file(&config_file_path)`.
     monitor.set_configuration_file(&config_file_path);
     if let Some(global_gitignore_path) = global_gitignore_path.as_ref() {
-        monitor.set_global_gitignore(&global_gitignore_path);
+        monitor.set_global_gitignore(global_gitignore_path);
     }
     monitor.set_watched_paths(&config.search_directories);
     monitor.set_debounce_duration(config.debounce_duration);
@@ -246,7 +246,7 @@ mod monitor_details {
                             if let Ok(Ok(event)) = event
                             {
                                 if configuration_file_path.as_ref().is_some_and(|configuration_file_path|{
-                                    event.paths.contains(&configuration_file_path)
+                                    event.paths.contains(configuration_file_path)
                                 })
                                     || global_gitignore
                                         .as_ref()
