@@ -11,6 +11,9 @@ jobs:
   publish:
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     runs-on: "macos-latest"
     strategy:
       fail-fast: false
@@ -44,6 +47,9 @@ jobs:
         type: "zip"
         path: tmignore-rs LICENSE README.md
         filename: ${{ env.zip_output_file_path }}
+    - uses: actions/attest@v4
+      with:
+        subject-path: ${{ env.zip_output_file_path }}
     - name: Release
       uses: svenstaro/upload-release-action@v2
       with:
