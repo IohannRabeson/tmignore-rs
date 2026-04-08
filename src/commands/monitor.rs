@@ -32,10 +32,16 @@ pub fn execute(
     let mut config = Config::load_or_create_file(&config_file_path)?;
     let mut whitelist = super::create_whitelist(&config.whitelist_patterns)?;
     // Start the monitor before calling `super::run` to ensure the signals handlers are setup as soon as possible.
-    let mut monitor = Monitor::new(&config_file_path, global_gitignore_path)?;
+    let mut monitor = Monitor::new()?;
 
     super::run::execute(&config, cache, dry_run, details)?;
 
+    // Set configuration file after executing the `run` command to be sure to not catch the creation event 
+    // caused by `Config::load_or_create_file(&config_file_path)`.
+    monitor.set_configuration_file(&config_file_path);
+    if let Some(global_gitignore_path) = global_gitignore_path.as_ref() {
+        monitor.set_global_gitignore(&global_gitignore_path);
+    }
     monitor.set_watched_paths(&config.search_directories);
     monitor.set_debounce_duration(config.debounce_duration);
 
@@ -111,17 +117,14 @@ struct Monitor {
 }
 
 impl Monitor {
-    pub fn new(
-        configuration_file_path: &Path,
-        global_gitignore: Option<PathBuf>,
-    ) -> anyhow::Result<Self> {
+    pub fn new() -> anyhow::Result<Self> {
         let (event_sender_to_debouncer, event_receiver_debouncer) =
             crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let (debouncer_thread_handle, debouncer_control_sender, event_receiver_final) =
             monitor_details::spawn_debouncer_thread(event_receiver_debouncer)?;
         let (signals_thread_handle, signals_receiver) = monitor_details::spawn_signals_thread()?;
         let (monitor_thread_handle, monitor_control_sender, event_receiver) =
-            monitor_details::spawn_monitor_thread(configuration_file_path, global_gitignore)?;
+            monitor_details::spawn_monitor_thread()?;
         let dispatcher_thread_handle = monitor_details::spawn_dispatcher_thread(
             signals_receiver,
             event_receiver,
@@ -145,10 +148,18 @@ impl Monitor {
         self.event_receiver_final.recv().ok()
     }
 
+    pub fn set_configuration_file(&mut self, path: impl AsRef<Path>) {
+        let _ = self.control_sender.send(MonitorControl::SetConfigurationFile(path.as_ref().to_path_buf()));
+    }
+
+    pub fn set_global_gitignore(&mut self, path: impl AsRef<Path>) {
+        let _ = self.control_sender.send(MonitorControl::SetGlobalGitIgnore(path.as_ref().to_path_buf()));
+    }
+
     pub fn set_watched_paths(&mut self, paths: &BTreeSet<PathBuf>) {
         let _ = self
             .control_sender
-            .send(MonitorControl::SetPaths(paths.clone()));
+            .send(MonitorControl::SetWatchedPaths(paths.clone()));
     }
 
     pub fn set_debounce_duration(&mut self, duration: Duration) {
@@ -171,7 +182,7 @@ impl Drop for Monitor {
 mod monitor_details {
     use std::{
         collections::BTreeSet,
-        path::{Path, PathBuf},
+        path::PathBuf,
         thread::JoinHandle,
         time::{Duration, Instant},
     };
@@ -204,33 +215,25 @@ mod monitor_details {
     }
 
     pub enum MonitorControl {
-        SetPaths(BTreeSet<PathBuf>),
+        SetWatchedPaths(BTreeSet<PathBuf>),
+        SetConfigurationFile(PathBuf),
+        SetGlobalGitIgnore(PathBuf),
         Shutdown,
     }
 
-    pub fn spawn_monitor_thread(
-        configuration_file_path: &Path,
-        global_gitignore: Option<PathBuf>,
-    ) -> anyhow::Result<(
+    pub fn spawn_monitor_thread() -> anyhow::Result<(
         JoinHandle<()>,
         Sender<MonitorControl>,
         Receiver<super::Event>,
     )> {
-        let configuration_file_path = configuration_file_path.canonicalize()?;
         let (event_sender, event_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let (control_sender, control_receiver) = crossbeam_channel::bounded(1);
         let (fs_event_sender, fs_event_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let watcher_config = notify::Config::default();
-        let mut watcher = notify::RecommendedWatcher::new(fs_event_sender, watcher_config)?;
+        let watcher = notify::RecommendedWatcher::new(fs_event_sender, watcher_config)?;
         let mut watched_paths: BTreeSet<PathBuf> = BTreeSet::new();
-
-        watcher.watch(
-            &configuration_file_path,
-            notify::RecursiveMode::NonRecursive,
-        )?;
-        if let Some(path) = global_gitignore.as_ref() {
-            watcher.watch(path, notify::RecursiveMode::NonRecursive)?;
-        }
+        let mut configuration_file_path = None;
+        let mut global_gitignore = None;
 
         let thread_handle = std::thread::Builder::new()
             .name("Monitor Thread".to_string())
@@ -242,7 +245,9 @@ mod monitor_details {
                         recv(fs_event_receiver) -> event => {
                             if let Ok(Ok(event)) = event
                             {
-                                if event.paths.contains(&configuration_file_path)
+                                if configuration_file_path.as_ref().is_some_and(|configuration_file_path|{
+                                    event.paths.contains(&configuration_file_path)
+                                })
                                     || global_gitignore
                                         .as_ref()
                                         .is_some_and(|global_gitignore| event.paths.contains(global_gitignore))
@@ -259,7 +264,7 @@ mod monitor_details {
                         recv(control_receiver) -> control => {
                             if let Ok(control) = control {
                                 match control {
-                                    MonitorControl::SetPaths(new_paths) => {
+                                    MonitorControl::SetWatchedPaths(new_paths) => {
                                         let mut paths = watcher.paths_mut();
                                         for path in &watched_paths {
                                             let _ = paths.remove(path);
@@ -274,6 +279,20 @@ mod monitor_details {
                                             warn!("Failed to commit paths to watch: {error}");
                                         }
                                     },
+                                    MonitorControl::SetConfigurationFile(path) => {
+                                        if let Some(configuration_file_path) = configuration_file_path.take() {
+                                            let _ = watcher.unwatch(&configuration_file_path);
+                                        }
+                                        let _ = watcher.watch(&path, notify::RecursiveMode::NonRecursive);
+                                        configuration_file_path = Some(path);
+                                    }
+                                    MonitorControl::SetGlobalGitIgnore(path) => {
+                                        if let Some(global_gitignore) = global_gitignore.take() {
+                                            let _ = watcher.unwatch(&global_gitignore);
+                                        }
+                                        let _ = watcher.watch(&path, notify::RecursiveMode::NonRecursive);
+                                        global_gitignore = Some(path);
+                                    }
                                     MonitorControl::Shutdown => {
                                         break;
                                     },
@@ -287,7 +306,7 @@ mod monitor_details {
 
         Ok((thread_handle, control_sender, event_receiver))
     }
-
+    
     fn accept_event(event: &notify::Event) -> bool {
         match &event.kind {
             notify::EventKind::Create(_)
