@@ -12,7 +12,7 @@ mod timemachine;
 
 use clap::{Parser, Subcommand};
 use log::{error, info};
-use std::path::Path;
+use std::{backtrace::BacktraceStatus, path::Path};
 
 use crate::{cache::Cache, config::Config, legacy_cache::LegacyCache};
 
@@ -101,7 +101,6 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
     setup_log(cli.verbose, redirect_log_to_console)?;
     import_legacy_config_file(&cli.legacy_config, &cli.config)?;
     import_legacy_cache_file(&cli.legacy_cache, &cli.cache)?;
-
     match cli.command {
         Commands::Run { dry_run, details } => {
             let mut cache = Cache::open(&cli.cache)?;
@@ -179,13 +178,11 @@ fn setup_log_impl(verbose: bool, console_enabled: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn main() -> Result<(), anyhow::Error> {
-    match program(Cli::parse(), true) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            error!("Error: {error:#}");
-            eprintln!("Error: {error:#}");
-            Err(error)
+fn main() {
+    if let Err(error) = program(Cli::parse(), true) {
+        error!("Error: {error}");
+        if error.backtrace().status() == BacktraceStatus::Captured {
+            error!("{}", error.backtrace());
         }
     }
 }
