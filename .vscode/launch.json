@@ -51,6 +51,18 @@
                     "--bin=tmignore-rs"
                 ]
             }
-        }
+        },
+        {
+            "name": "Debug invalid config file path",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "run",
+                    "--bin=tmignore-rs"
+                ]
+            },
+            "args": ["--config", "invalid", "monitor", "--dry-run"]
+        },
     ]
 }

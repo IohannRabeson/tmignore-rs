@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
 use log::{debug, warn};
 
@@ -26,13 +27,14 @@ pub fn execute(
     dry_run: bool,
     details: bool,
 ) -> Result<(), anyhow::Error> {
-    let config_file_path = config_file_path.as_ref().canonicalize()?.clone();
+    let config_file_path = std::path::absolute(&config_file_path)
+        .with_context(||format!("Failed to get the absolute path for '{}'", config_file_path.as_ref().display()))?;
     let mut config = Config::load_or_create_file(&config_file_path)?;
+    let mut whitelist = super::create_whitelist(&config.whitelist_patterns)?;
+    // Start the monitor before calling `super::run` to ensure the signals handlers are setup as soon as possible.
+    let mut monitor = Monitor::new(&config_file_path, global_gitignore_path)?;
 
     super::run::execute(&config, cache, dry_run, details)?;
-
-    let mut whitelist = super::create_whitelist(&config.whitelist_patterns)?;
-    let mut monitor = Monitor::new(&config_file_path, global_gitignore_path)?;
 
     monitor.set_watched_paths(&config.search_directories);
     monitor.set_debounce_duration(config.debounce_duration);
@@ -570,5 +572,33 @@ mod monitor_details {
             assert_eq!(Event::ReloadConfiguration, reload_event);
             assert_eq!(Event::Shutdown, shutdown_event);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use serial_test::serial;
+    use temp_dir_builder::TempDirectoryBuilder;
+
+    use crate::cache::Cache;
+
+    /// Test the behavior in case of a missing configuration file.
+    /// It should not return an error, it should create the default configuration file.
+    #[test]
+    #[serial]
+    fn test_config_file_does_not_exist()
+    {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let config_file_path = temp_dir.path().join("non_existent_file.config");
+        let thread_handle = std::thread::spawn(move || {
+            let mut cache = Cache::open_in_memory().unwrap();
+            super::execute(&config_file_path, None, &mut cache, true, false).unwrap();
+        });
+        // Ensure the signals handlers are setup
+        std::thread::sleep(Duration::from_secs(5));
+        unsafe { libc::kill(libc::getpid(), signal_hook::consts::SIGINT); }
+        thread_handle.join().unwrap();
     }
 }
