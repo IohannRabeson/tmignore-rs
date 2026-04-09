@@ -143,11 +143,11 @@ See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
 The `threads` count. 0 means the count of threads is not limited and the max will be choose.
 
 ### `debounce_duration`
-Debounce duration, a delay allowing to collect similar events and process them all once. Default is 5 seconds. 
+Debounce duration, a delay allowing to collect similar events and process them all at once. Default is 2 seconds. 
 Example of values: `60s`, `10m`, `1h30m`.
 
 ## Coverage
 I'm using [Tarpaulin](https://github.com/xd009642/tarpaulin) to measure test coverage.
-When developing run tarpaulin before doing changes, then run it with your changes and tarpaulin will tell you how the coverage progressed.
+When developing run tarpaulin before doing changes, then run it later with your changes and tarpaulin will tell you how the coverage progressed.
 
 ![Coverage chart](https://codecov.io/gh/IohannRabeson/tmignore-rs/graphs/tree.svg?token=B5Q69GVFGN)
