@@ -7,6 +7,3 @@ CREATE TABLE IF NOT EXISTS paths (
 CREATE INDEX idx_paths ON paths(path);
 
 COMMIT TRANSACTION;
-
--- https://www.sqlite.org/lang_analyze.html#periodically_run_pragma_optimize_
-PRAGMA optimize;
