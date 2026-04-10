@@ -6,15 +6,9 @@ on:
 
 jobs:
   update-formula:
+    if: github.event.release.prerelease == false
     runs-on: ubuntu-latest
     steps:
-      - name: Check tag format
-        run: |
-          if [[ ! "${{ github.ref_name }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Tag does not match release format, skipping."
-            exit 0
-          fi
-
       - name: Checkout tmignore-rs
         uses: actions/checkout@v6
 
