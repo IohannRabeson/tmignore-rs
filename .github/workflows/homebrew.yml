@@ -12,27 +12,11 @@ jobs:
       - name: Checkout tmignore-rs
         uses: actions/checkout@v6
 
-      - name: Get version from tag
-        id: version
-        run: echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-
-      - name: Checkout homebrew-tap
-        uses: actions/checkout@v6
-        with:
-          repository: IohannRabeson/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-tap
-
       - name: Update formula
-        run: |
-          sed -i "s/revision: \".*\"/revision: \"${{ github.sha }}\"/" homebrew-tap/Formula/tmignore-rs.rb
-          sed -i "s/version \".*\"/version \"${{ steps.version.outputs.version }}\"/" homebrew-tap/Formula/tmignore-rs.rb
-
-      - name: Push updated formula
-        working-directory: homebrew-tap
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/tmignore-rs.rb
-          git commit -m "Update tmignore-rs to v${{ steps.version.outputs.version }}"
-          git push
+        uses: IohannRabeson/update-homebrew-formula@2dc9a59aa0a534f3409bf86d7947d9119e8c8cc0
+        with:
+          formula-name: tmignore-rs
+          tap-repository: IohannRabeson/homebrew-tap
+          tap-token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          version: ${{ github.ref_name }}
+          revision: ${{ github.sha }}
