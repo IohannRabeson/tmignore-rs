@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Update formula
-        uses: IohannRabeson/update-homebrew-formula@2dc9a59aa0a534f3409bf86d7947d9119e8c8cc0
+        uses: IohannRabeson/update-homebrew-formula@v1
         with:
           formula-name: tmignore-rs
           tap-repository: IohannRabeson/homebrew-tap
