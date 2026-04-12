@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand};
 use log::{error, info};
 use std::{backtrace::BacktraceStatus, path::Path};
 
-use crate::{cache::Cache, config::Config, legacy_cache::LegacyCache};
+use crate::{cache::Cache, commands::stats::Stats, config::Config, legacy_cache::LegacyCache};
 
 const CONFIG_FILE_PATH: &str = "~/.config/tmignore-rs/config.json";
 const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
@@ -24,6 +24,7 @@ const LEGACY_CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore/cache.json";
 #[derive(Parser)]
 #[command(about, long_about = None)]
 #[command(version = option_env!("TMIGNORE_RS_VERSION").unwrap_or("<Local Build>"))]
+#[command(disable_help_flag = true)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -42,6 +43,8 @@ struct Cli {
     /// Specify the legacy cache file path
     #[arg(long, default_value = LEGACY_CACHE_FILE_PATH, hide = true)]
     legacy_cache: String,
+    #[arg(long, action = clap::ArgAction::Help, global = true)]
+    help: Option<bool>,
 }
 
 #[derive(Subcommand)]
@@ -81,6 +84,11 @@ enum Commands {
         #[command(subcommand)]
         path: Paths,
     },
+    /// Print statistics
+    Stats {
+        #[command(subcommand)]
+        stat: Stats,
+    }
 }
 
 #[derive(Subcommand, Clone, Copy)]
@@ -129,6 +137,11 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
         }
         Commands::Path { path } => {
             commands::path::execute(&cli, path, &mut std::io::stdout())
+        }
+        Commands::Stats { stat } => {
+            let cache = Cache::open(&cli.cache)?;
+
+            commands::stats::execute(&cache, &mut std::io::stdout(), stat)
         }
     }?;
 
@@ -338,6 +351,7 @@ mod tests {
             cache: cache_file_path.to_string_lossy().to_string(),
             legacy_config: String::new(),
             legacy_cache: String::new(),
+            help: None,
         };
         let a_file_path = temp_dir_path.join("repository").join("a");
         let b_file_path = temp_dir_path.join("repository").join("b");
@@ -404,6 +418,7 @@ mod tests {
             cache: cache_file_path.to_string_lossy().to_string(),
             legacy_config: String::new(),
             legacy_cache: String::new(),
+            help: None,
         };
         let a_file_path = temp_dir_path.join("repository").join("a");
         let b_file_path = temp_dir_path.join("repository").join("b");
@@ -481,6 +496,7 @@ mod tests {
             cache: cache_file_path.to_string_lossy().to_string(),
             legacy_config: String::new(),
             legacy_cache: String::new(),
+            help: None,
         };
         let a_file_path = temp_dir_path.join("repository").join("a");
         let b_file_path = temp_dir_path.join("repository").join("b");
@@ -567,6 +583,7 @@ mod tests {
             cache: cache_file_path.to_string_lossy().to_string(),
             legacy_config: String::new(),
             legacy_cache: String::new(),
+            help: None,
         };
         let config_file_path = temp_dir_path.join("config.json");
         let handle = std::thread::spawn(move || program(cli, false).unwrap());

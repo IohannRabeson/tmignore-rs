@@ -62,6 +62,9 @@ There is a `-0` option if you want a null separated list.
 ### `path` command
 This command prints paths of files used by the application.
 
+### `stats` command
+This command prints statistics.
+
 ## Logs
 This application sends the logs to the Console application.  
 Use `tmignore-rs` as filter (select the filtering by process).  
@@ -81,11 +84,12 @@ Commands:
   list     Print the backup exclusion list
   reset    Reset the backup exclusion list
   path     Print the paths of the files used by the application
+  stats    Print statistics
   help     Print this message or the help of the given subcommand(s)
 
 Options:
   -v, --verbose  Enable verbose logging
-  -h, --help     Print help
+      --help     
   -V, --version  Print version
 
 ```
@@ -115,10 +119,6 @@ If you were using [tmignore](https://github.com/samuelmeuli/tmignore) the config
     "~/Pictures/Photos Library.photoslibrary"
   ],
   "whitelist_patterns": [
-    "*.broguerec",
-    "*.broguesave",
-    "*/BrogueHighScores.txt",
-    "*/BrogueRunHistory.txt"
   ],
   "threads": 4,
   "debounce_duration": "2s"
