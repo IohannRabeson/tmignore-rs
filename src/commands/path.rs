@@ -32,6 +32,7 @@ mod tests {
             cache: String::from("/yo/cache.db"),
             legacy_config: String::from("/yo/legacy_config.json"),
             legacy_cache: String::from("/yo/legacy_cache.json"),
+            help: None,
         };
         let mut buffer = vec![];
         super::execute(&cli, path, &mut buffer).unwrap();

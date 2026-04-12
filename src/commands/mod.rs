@@ -3,6 +3,7 @@ pub mod monitor;
 pub mod path;
 pub mod reset;
 pub mod run;
+pub mod stats;
 
 use std::{
     collections::BTreeSet,
