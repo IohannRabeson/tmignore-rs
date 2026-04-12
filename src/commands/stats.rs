@@ -23,7 +23,7 @@ pub fn execute(cache: &Cache, writer: &mut impl Write, stat: Stats) -> anyhow::R
                 writeln!(writer, "{}", bytesize::ByteSize::b(total))?;
             }
             else {
-                writeln!(writer, "{}", total)?;
+                writeln!(writer, "{total}")?;
             }
         },
     }
@@ -58,3 +58,31 @@ fn fetch_total_size(paths: &[PathBuf]) -> anyhow::Result<u64> {
     Ok(total)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use temp_dir_builder::TempDirectoryBuilder;
+
+    use crate::{cache::Cache, commands::stats::Stats};
+
+    #[test]
+    fn test_execute() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file("a", "a")
+            .add_text_file("dir/b", "bb")
+            .add_text_file("c", "ccc")
+            .build()
+            .unwrap();
+        let mut cache = Cache::open_in_memory().unwrap();
+        let a = temp_dir.path().join("a");
+        let dir = temp_dir.path().join("dir");
+        cache.add_paths([a, dir].into_iter());
+        let mut buffer = vec![];
+        let stat_command = Stats::Size { humanize: false };
+        super::execute(&cache, &mut buffer, stat_command).unwrap();
+        let buffer_text = String::from_utf8(buffer).unwrap();
+        let size: u64 = buffer_text.trim().parse().unwrap();
+
+        assert_eq!(3, size);
+    }
+}
