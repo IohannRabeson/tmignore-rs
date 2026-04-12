@@ -13,8 +13,7 @@ This program runs on MacOS only and it requires Git to be installed.
 ## Installation
 The easiest is to use Homebrew:
 ```
-brew tap iohannrabeson/tap
-brew install tmignore-rs
+brew install IohannRabeson/tap/tmignore-rs
 brew services start tmignore-rs
 ```
 You have to do that only once, tmignore-rs will be started automatically on startup.
