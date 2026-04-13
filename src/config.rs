@@ -85,11 +85,11 @@ impl std::fmt::Display for ValidationError {
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ValidationFail {
-    #[error("File in search_directories: {0}")]
+    #[error("File in search_directories: '{0}'")]
     FileInSearchPaths(PathBuf),
-    #[error("File in ignored_directories: {0}")]
+    #[error("File in ignored_directories: '{0}'")]
     FileInIgnoredDirectories(PathBuf),
-    #[error("Not found {0}")]
+    #[error("Path not found '{0}'")]
     NotFound(PathBuf),
     #[error("No search directories")]
     NoSearchDirectories,
