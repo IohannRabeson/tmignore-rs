@@ -35,7 +35,7 @@ jobs:
       with:
         key: release_${{ matrix.rust-target }}
     - name: Build
-      run: cargo build --release --verbose --locked --target ${{ matrix.rust-target }}
+      run: cargo build --profile=final --verbose --locked --target ${{ matrix.rust-target }}
     - name: Copy Binary
       run: cp ${{ env.executable_output_file_path }} .
     - name: Zip
