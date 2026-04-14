@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::anyhow;
 use chrono::{DateTime, Utc};
-use log::info;
+use log::{debug, info};
 use rusqlite::{Connection, Row, Transaction, params};
 use rusqlite_migration::{M, Migrations};
 
@@ -94,7 +94,7 @@ impl Cache {
     pub fn open(file_path: impl AsRef<Path>) -> Result<Self, OpenOrCreateError> {
         let file_path = file_path.as_ref();
 
-        info!("Open cache '{}'", file_path.display());
+        debug!("Open cache '{}'", file_path.display());
 
         if !file_path.is_file() {
             return Err(OpenOrCreateError::FileDoesNotExist);
