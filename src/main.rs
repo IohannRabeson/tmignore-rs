@@ -111,33 +111,37 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
     import_legacy_cache_file(&cli.legacy_cache, &cli.cache)?;
     match cli.command {
         Commands::Run { dry_run, details } => {
-            let mut cache = Cache::open(&cli.cache)?;
+            let mut cache = Cache::open_or_create(&cli.cache)?;
             let config = Config::load_or_create_file(&cli.config)?;
 
             commands::run::execute(&config, &mut cache, dry_run, details)
         }
         Commands::List { zero_separator } => {
-            let cache = Cache::open(&cli.cache)?;
+            let cache = Cache::open_or_create(&cli.cache)?;
             let separator = if zero_separator { '\0' } else { '\n' };
 
             commands::list::execute(&cache, &mut std::io::stdout(), separator)
         }
         Commands::Reset { dry_run, details } => {
-            let mut cache = Cache::open(&cli.cache)?;
+            let mut cache = Cache::open_or_create(&cli.cache)?;
 
             commands::reset::execute(&mut cache, dry_run, details);
 
             Ok(())
         }
         Commands::Monitor { dry_run, details } => {
-            let mut cache = Cache::open(&cli.cache)?;
+            let mut cache = Cache::open_or_create(&cli.cache)?;
             let global_gitignore = git::get_global_git_ignore();
 
-            commands::monitor::execute(&cli.config, global_gitignore.as_ref(), &mut cache, dry_run, details)
+            commands::monitor::execute(
+                &cli.config,
+                global_gitignore.as_ref(),
+                &mut cache,
+                dry_run,
+                details,
+            )
         }
-        Commands::Path { path } => {
-            commands::path::execute(&cli, path, &mut std::io::stdout())
-        }
+        Commands::Path { path } => commands::path::execute(&cli, path, &mut std::io::stdout()),
         Commands::Stats { stat } => {
             let cache = Cache::open(&cli.cache)?;
 
@@ -303,7 +307,7 @@ mod tests {
             .unwrap();
         let cache_file_path = temp_dir.path().join("cache.db");
         import_legacy_cache_file(temp_dir.path().join("legacy.json"), &cache_file_path).unwrap();
-        let cache = Cache::load_from_file(&cache_file_path).unwrap();
+        let cache = Cache::open(&cache_file_path).unwrap();
         let paths = cache.paths();
         assert_eq!(2, paths.len());
         assert!(paths.contains(&PathBuf::from("a")));

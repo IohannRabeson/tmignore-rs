@@ -27,8 +27,12 @@ pub fn execute(
     dry_run: bool,
     details: bool,
 ) -> Result<(), anyhow::Error> {
-    let config_file_path = std::path::absolute(&config_file_path)
-        .with_context(||format!("Failed to get the absolute path for '{}'", config_file_path.as_ref().display()))?;
+    let config_file_path = std::path::absolute(&config_file_path).with_context(|| {
+        format!(
+            "Failed to get the absolute path for '{}'",
+            config_file_path.as_ref().display()
+        )
+    })?;
     let mut config = Config::load_or_create_file(&config_file_path)?;
     let mut whitelist = super::create_whitelist(&config.whitelist_patterns)?;
     // Start the monitor before calling `super::run` to ensure the signals handlers are setup as soon as possible.
@@ -36,7 +40,7 @@ pub fn execute(
 
     super::run::execute(&config, cache, dry_run, details)?;
 
-    // Set configuration file after executing the `run` command to be sure to not catch the creation event 
+    // Set configuration file after executing the `run` command to be sure to not catch the creation event
     // caused by `Config::load_or_create_file(&config_file_path)`.
     monitor.set_configuration_file(&config_file_path);
     if let Some(global_gitignore_path) = global_gitignore_path.as_ref() {
@@ -149,11 +153,17 @@ impl Monitor {
     }
 
     pub fn set_configuration_file(&mut self, path: impl AsRef<Path>) {
-        let _ = self.control_sender.send(MonitorControl::SetConfigurationFile(path.as_ref().to_path_buf()));
+        let _ = self
+            .control_sender
+            .send(MonitorControl::SetConfigurationFile(
+                path.as_ref().to_path_buf(),
+            ));
     }
 
     pub fn set_global_gitignore(&mut self, path: impl AsRef<Path>) {
-        let _ = self.control_sender.send(MonitorControl::SetGlobalGitIgnore(path.as_ref().to_path_buf()));
+        let _ = self.control_sender.send(MonitorControl::SetGlobalGitIgnore(
+            path.as_ref().to_path_buf(),
+        ));
     }
 
     pub fn set_watched_paths(&mut self, paths: &BTreeSet<PathBuf>) {
@@ -306,7 +316,7 @@ mod monitor_details {
 
         Ok((thread_handle, control_sender, event_receiver))
     }
-    
+
     fn accept_event(event: &notify::Event) -> bool {
         match &event.kind {
             notify::EventKind::Create(_)
@@ -607,8 +617,7 @@ mod tests {
     /// It should not return an error, it should create the default configuration file.
     #[test]
     #[serial]
-    fn test_config_file_does_not_exist()
-    {
+    fn test_config_file_does_not_exist() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let config_file_path = temp_dir.path().join("non_existent_file.config");
         let thread_handle = std::thread::spawn(move || {
@@ -617,7 +626,9 @@ mod tests {
         });
         // Ensure the signals handlers are setup
         std::thread::sleep(Duration::from_secs(5));
-        unsafe { libc::kill(libc::getpid(), signal_hook::consts::SIGINT); }
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
         thread_handle.join().unwrap();
     }
 }
