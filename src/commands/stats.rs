@@ -1,5 +1,6 @@
 use std::{collections::{BTreeSet, VecDeque}, io::Write, path::PathBuf};
 
+use chrono::{DateTime, Local};
 use clap::Subcommand;
 
 use crate::cache::Cache;
@@ -12,6 +13,8 @@ pub enum Stats {
         #[arg(short, long)]
         humanize: bool
     },
+    /// Print the date and time of the last cache update 
+    LastUpdate,
 }
 
 pub fn execute(cache: &Cache, writer: &mut impl Write, stat: Stats) -> anyhow::Result<()> {
@@ -24,6 +27,13 @@ pub fn execute(cache: &Cache, writer: &mut impl Write, stat: Stats) -> anyhow::R
             }
             else {
                 writeln!(writer, "{total}")?;
+            }
+        },
+        Stats::LastUpdate => {
+            if let Some(last_update) = cache.last_update() {
+                let local_time: DateTime<Local> = last_update.with_timezone(&Local);
+                
+                writeln!(writer, "{local_time}")?;
             }
         },
     }
