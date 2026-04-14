@@ -30,11 +30,10 @@ pub fn execute(cache: &Cache, writer: &mut impl Write, stat: Stats) -> anyhow::R
             }
         },
         Stats::LastUpdate => {
-            if let Some(last_update) = cache.last_update() {
-                let local_time: DateTime<Local> = last_update.with_timezone(&Local);
-                
-                writeln!(writer, "{local_time}")?;
-            }
+            let last_update = cache.last_update();
+            let local_time: DateTime<Local> = last_update.with_timezone(&Local);
+            
+            writeln!(writer, "{local_time}")?;
         },
     }
     Ok(())
@@ -42,19 +41,17 @@ pub fn execute(cache: &Cache, writer: &mut impl Write, stat: Stats) -> anyhow::R
 
 fn fetch_total_size(paths: &[PathBuf]) -> anyhow::Result<u64> {
     let mut total = 0u64;
-    let mut files_to_process = BTreeSet::from_iter(paths.iter().filter(|path|path.is_file()).cloned());
-    let mut dirs_to_process: VecDeque<PathBuf> = VecDeque::from_iter(paths.iter().filter(|path|path.is_dir()).cloned());
+    let mut files_to_process: BTreeSet<PathBuf> = paths.iter().filter(|path|path.is_file()).cloned().collect();
+    let mut dirs_to_process: VecDeque<PathBuf> = paths.iter().filter(|path|path.is_dir()).cloned().collect();
 
     while let Some(dir_to_process) = dirs_to_process.pop_front() {       
-        for entry in std::fs::read_dir(dir_to_process)? {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_file() {
-                    files_to_process.insert(path.to_path_buf());
-                }
-                else if path.is_dir() {
-                    dirs_to_process.push_back(path.to_path_buf());
-                }
+        for entry in std::fs::read_dir(dir_to_process)?.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                files_to_process.insert(path.clone());
+            }
+            else if path.is_dir() {
+                dirs_to_process.push_back(path.clone());
             }
         }
     }

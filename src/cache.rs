@@ -46,7 +46,7 @@ const MIGRATIONS_SLICE: &[M<'_>] = &[
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 
 impl Cache {
-    /// Create or open a `Cache` and setup or update the schema.
+    /// Open or create a `Cache` and setup or update the schema.
     pub fn open_or_create(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let file_path = path.as_ref();
 
@@ -122,7 +122,7 @@ impl Cache {
         Self::set_last_update_connection(&mut self.connection.borrow_mut());
         let new_version = self.get_version();
         if previous_version != new_version {
-            info!("Cache updated from version {} to version {}", previous_version, new_version);
+            info!("Cache updated from version {previous_version} to version {new_version}");
         }
         Ok(())
     }
@@ -173,8 +173,7 @@ impl Cache {
 
     pub fn remove_paths_in_directory(&mut self, directory: impl AsRef<Path>) {
         let directory = directory.as_ref();
-        let mut connection = self.connection.borrow_mut();
-        if let Ok(mut transaction) = connection.transaction() {
+        if let Ok(mut transaction) = self.connection.borrow_mut().transaction() {
             transaction
                 .execute(
                     "DELETE FROM paths WHERE path LIKE ? || '%'",
@@ -278,16 +277,22 @@ impl Cache {
         paths.into_iter().filter_map(Result::ok).collect()
     }
 
-    pub fn last_update(&self) -> Option<DateTime<Utc>> {
+    /// Get the date and time of the last cache update.
+    /// 
+    /// This function will panic for a cache with the schema V0 but that
+    /// supposed to never happen.
+    pub fn last_update(&self) -> DateTime<Utc> {
+        assert!(self.get_version() > 0);
+
         let connection = self.connection.borrow();
 
-        Some(connection
+        connection
             .query_one(
                 "SELECT last_update FROM metadata WHERE id = 0",
                 params![],
                 |row: &Row<'_>| row.get(0),
             )
-            .unwrap())
+            .unwrap()
     }
 
     pub fn get_version(&self) -> u32 {
