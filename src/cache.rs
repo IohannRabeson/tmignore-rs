@@ -94,7 +94,7 @@ impl Cache {
     pub fn open(file_path: impl AsRef<Path>) -> Result<Self, OpenOrCreateError> {
         let file_path = file_path.as_ref();
 
-        info!("Load cache '{}'", file_path.display());
+        info!("Open cache '{}'", file_path.display());
 
         if !file_path.is_file() {
             return Err(OpenOrCreateError::FileDoesNotExist);
@@ -117,8 +117,13 @@ impl Cache {
     }
 
     fn setup(&mut self) -> anyhow::Result<()> {
+        let previous_version = self.get_version();
         MIGRATIONS.to_latest(&mut self.connection.borrow_mut())?;
         Self::set_last_update_connection(&mut self.connection.borrow_mut());
+        let new_version = self.get_version();
+        if previous_version != new_version {
+            info!("Cache updated from version {} to version {}", previous_version, new_version);
+        }
         Ok(())
     }
 
@@ -273,15 +278,20 @@ impl Cache {
         paths.into_iter().filter_map(Result::ok).collect()
     }
 
-    pub fn last_update(&self) -> DateTime<Utc> {
+    pub fn last_update(&self) -> Option<DateTime<Utc>> {
         let connection = self.connection.borrow();
-        connection
+
+        Some(connection
             .query_one(
                 "SELECT last_update FROM metadata WHERE id = 0",
                 params![],
                 |row: &Row<'_>| row.get(0),
             )
-            .unwrap()
+            .unwrap())
+    }
+
+    pub fn get_version(&self) -> u32 {
+        self.connection.borrow().pragma_query_value(None, "user_version", |r| r.get(0)).unwrap()
     }
 }
 
@@ -291,7 +301,7 @@ mod tests {
 
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::cache::OpenOrCreateError;
+    use crate::cache::{MIGRATIONS_SLICE, OpenOrCreateError};
 
     use super::Cache;
 
@@ -302,8 +312,21 @@ mod tests {
 
     #[test]
     fn test_setup() {
+        let _cache = Cache::open_in_memory().unwrap();
+    }
+
+    #[test]
+    fn test_last_update() {
         let cache = Cache::open_in_memory().unwrap();
         let _ = cache.last_update();
+    }
+
+    #[test]
+    fn test_version() {
+        let cache = Cache::open_in_memory().unwrap();
+        let version = cache.get_version();
+
+        assert_eq!(MIGRATIONS_SLICE.len() as u32, version);
     }
 
     #[test]
