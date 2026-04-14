@@ -7,8 +7,10 @@ use std::{
 };
 
 use anyhow::anyhow;
-use log::debug;
-use rusqlite::{Connection, params};
+use chrono::{DateTime, Utc};
+use log::info;
+use rusqlite::{Connection, Row, Transaction, params};
+use rusqlite_migration::{M, Migrations};
 
 use crate::diff::Diff;
 
@@ -37,11 +39,22 @@ fn path_to_bytes(path: &Path) -> &[u8] {
     path.as_os_str().as_bytes()
 }
 
+const MIGRATIONS_SLICE: &[M<'_>] = &[
+    M::up(include_str!("sql/v0.sql")),
+    M::up(include_str!("sql/v1.sql")),
+];
+const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
+
 impl Cache {
-    pub fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    /// Create or open a `Cache` and setup or update the schema.
+    pub fn open_or_create(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let file_path = path.as_ref();
-        Ok(match Self::load_from_file(file_path) {
-            Ok(cache) => cache,
+
+        Ok(match Self::open(file_path) {
+            Ok(mut cache) => {
+                cache.setup()?;
+                cache
+            }
             Err(OpenOrCreateError::FileDoesNotExist) => Self::create(file_path)?,
             Err(error) => {
                 return Err(anyhow!(
@@ -75,10 +88,13 @@ impl Cache {
         Ok(cache)
     }
 
-    pub fn load_from_file(file_path: impl AsRef<Path>) -> Result<Self, OpenOrCreateError> {
+    /// Load a `Cache` by reading a file.
+    /// There is no setup or schema updating done by this function.
+    /// It is public only for testing purpose only, use `Cache::open`
+    pub fn open(file_path: impl AsRef<Path>) -> Result<Self, OpenOrCreateError> {
         let file_path = file_path.as_ref();
 
-        debug!("Load cache '{}'", file_path.display());
+        info!("Load cache '{}'", file_path.display());
 
         if !file_path.is_file() {
             return Err(OpenOrCreateError::FileDoesNotExist);
@@ -90,7 +106,7 @@ impl Cache {
     }
 
     #[cfg(test)]
-    pub fn open_in_memory() -> Result<Self, OpenOrCreateError> {
+    pub fn open_in_memory() -> anyhow::Result<Self> {
         let mut cache = Self {
             connection: RefCell::new(Connection::open_in_memory()?),
         };
@@ -100,48 +116,69 @@ impl Cache {
         Ok(cache)
     }
 
-    fn setup(&mut self) -> Result<(), OpenOrCreateError> {
-        self.connection
-            .borrow()
-            .execute_batch(include_str!("sql/schema.sql"))?;
+    fn setup(&mut self) -> anyhow::Result<()> {
+        MIGRATIONS.to_latest(&mut self.connection.borrow_mut())?;
+        Self::set_last_update_connection(&mut self.connection.borrow_mut());
         Ok(())
     }
 
     const SQL_INSERT_PATH: &str = "INSERT INTO paths (path) VALUES (?)";
+    const SQL_SET_LAST_UPDATE: &str = "UPDATE metadata SET last_update=?";
 
     pub fn reset(&mut self, iter: impl IntoIterator<Item = PathBuf>) {
-        if let Ok(transaction) = self.connection.borrow_mut().transaction() {
+        if let Ok(mut transaction) = self.connection.borrow_mut().transaction() {
             let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH).unwrap();
             transaction.execute("DELETE FROM paths", params![]).unwrap();
             for path in iter {
                 insert_stmt.execute(params![path_to_bytes(&path)]).unwrap();
             }
             drop(insert_stmt);
+            Self::set_last_update_transaction(&mut transaction);
             transaction.commit().unwrap();
         }
     }
 
+    fn set_last_update_transaction(transaction: &mut Transaction) {
+        let now = chrono::Utc::now();
+
+        transaction
+            .execute(Self::SQL_SET_LAST_UPDATE, params![now])
+            .unwrap();
+    }
+
+    fn set_last_update_connection(connection: &mut Connection) {
+        let now = chrono::Utc::now();
+
+        connection
+            .execute(Self::SQL_SET_LAST_UPDATE, params![now])
+            .unwrap();
+    }
+
     pub fn add_paths(&mut self, iter: impl Iterator<Item = PathBuf>) {
-        if let Ok(transaction) = self.connection.borrow_mut().transaction() {
+        if let Ok(mut transaction) = self.connection.borrow_mut().transaction() {
             let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH).unwrap();
             for path in iter {
                 insert_stmt.execute(params![path_to_bytes(&path)]).unwrap();
             }
             drop(insert_stmt);
+            Self::set_last_update_transaction(&mut transaction);
             transaction.commit().unwrap();
         }
     }
 
     pub fn remove_paths_in_directory(&mut self, directory: impl AsRef<Path>) {
         let directory = directory.as_ref();
-
-        self.connection
-            .borrow()
-            .execute(
-                "DELETE FROM paths WHERE path LIKE ? || '%'",
-                params![path_to_bytes(directory)],
-            )
-            .unwrap();
+        let mut connection = self.connection.borrow_mut();
+        if let Ok(mut transaction) = connection.transaction() {
+            transaction
+                .execute(
+                    "DELETE FROM paths WHERE path LIKE ? || '%'",
+                    params![path_to_bytes(directory)],
+                )
+                .unwrap();
+            Self::set_last_update_transaction(&mut transaction);
+            transaction.commit().unwrap();
+        }
     }
 
     pub fn find_diff(&self, exclusions: &BTreeSet<PathBuf>) -> Diff {
@@ -235,6 +272,17 @@ impl Cache {
 
         paths.into_iter().filter_map(Result::ok).collect()
     }
+
+    pub fn last_update(&self) -> DateTime<Utc> {
+        let connection = self.connection.borrow();
+        connection
+            .query_one(
+                "SELECT last_update FROM metadata WHERE id = 0",
+                params![],
+                |row: &Row<'_>| row.get(0),
+            )
+            .unwrap()
+    }
 }
 
 #[cfg(test)]
@@ -248,8 +296,14 @@ mod tests {
     use super::Cache;
 
     #[test]
+    fn test_migrations() {
+        assert!(super::MIGRATIONS.validate().is_ok());
+    }
+
+    #[test]
     fn test_setup() {
-        let _cache = Cache::open_in_memory().unwrap();
+        let cache = Cache::open_in_memory().unwrap();
+        let _ = cache.last_update();
     }
 
     #[test]
@@ -318,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_open_cache_no_parent_dir() {
-        let result = Cache::open("/");
+        let result = Cache::open_or_create("/");
         let err = result.unwrap_err();
 
         assert!(matches!(
@@ -331,7 +385,7 @@ mod tests {
     fn test_open_cache_create_no_legacy() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let cache_file_path = temp_dir.path().join("cache.db");
-        let result = Cache::open(cache_file_path).unwrap();
+        let result = Cache::open_or_create(cache_file_path).unwrap();
 
         assert!(result.paths().is_empty());
     }
@@ -341,10 +395,10 @@ mod tests {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let cache_file_path = temp_dir.path().join("cache.db");
         {
-            let mut cache = Cache::open(&cache_file_path).unwrap();
+            let mut cache = Cache::open_or_create(&cache_file_path).unwrap();
             cache.add_paths([PathBuf::from("yo")].into_iter());
         }
-        let cache = Cache::open(&cache_file_path).unwrap();
+        let cache = Cache::open_or_create(&cache_file_path).unwrap();
         let paths = cache.paths();
         assert_eq!(1, paths.len());
         assert_eq!(PathBuf::from("yo"), paths[0]);

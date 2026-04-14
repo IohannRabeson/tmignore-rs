@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS paths (
+    path TEXT PRIMARY KEY
+);
+
+CREATE INDEX IF NOT EXISTS idx_paths ON paths(path);
