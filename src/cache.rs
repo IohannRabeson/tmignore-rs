@@ -51,17 +51,15 @@ impl Cache {
         let file_path = path.as_ref();
 
         Ok(match Self::open(file_path) {
-            Ok(mut cache) => {
-                cache.setup()?;
-                cache
-            }
-            Err(OpenOrCreateError::FileDoesNotExist) => Self::create(file_path)?,
+            Ok(cache) => { cache }
             Err(error) => {
-                return Err(anyhow!(
-                    "Failed to load file {}: {}",
-                    file_path.display(),
-                    error
-                ));
+                if let Some(OpenOrCreateError::FileDoesNotExist) = error.downcast_ref::<OpenOrCreateError>() {
+                    Self::create(file_path)?
+                } else {
+                    let message = format!("Failed to load file {}", file_path.display());
+
+                    return Err(error.context(message))
+                }
             }
         })
     }
@@ -89,20 +87,23 @@ impl Cache {
     }
 
     /// Load a `Cache` by reading a file.
-    /// There is no setup or schema updating done by this function.
     /// It is public only for testing purpose only, use `Cache::open`
-    pub fn open(file_path: impl AsRef<Path>) -> Result<Self, OpenOrCreateError> {
+    pub fn open(file_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let file_path = file_path.as_ref();
 
         debug!("Open cache '{}'", file_path.display());
 
         if !file_path.is_file() {
-            return Err(OpenOrCreateError::FileDoesNotExist);
+            return Err(OpenOrCreateError::FileDoesNotExist.into());
         }
 
-        Ok(Self {
+        let mut cache = Self {
             connection: RefCell::new(Connection::open(file_path)?),
-        })
+        };
+
+        cache.setup()?;
+
+        Ok(cache)
     }
 
     #[cfg(test)]
