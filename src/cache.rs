@@ -6,7 +6,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::anyhow;
 use chrono::{DateTime, Utc};
 use log::{debug, info};
 use rusqlite::{Connection, Row, Transaction, params};
