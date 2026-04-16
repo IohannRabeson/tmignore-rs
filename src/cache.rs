@@ -100,8 +100,12 @@ impl Cache {
             connection: RefCell::new(Connection::open(file_path)?),
         };
 
+        let previous_version = cache.get_version();
         cache.setup()?;
-
+        let new_version = cache.get_version();
+        if previous_version != new_version {
+            info!("Cache updated from version {previous_version} to version {new_version}");
+        }
         Ok(cache)
     }
 
@@ -117,13 +121,8 @@ impl Cache {
     }
 
     fn setup(&mut self) -> anyhow::Result<()> {
-        let previous_version = self.get_version();
         MIGRATIONS.to_latest(&mut self.connection.borrow_mut())?;
         Self::set_last_update_connection(&mut self.connection.borrow_mut());
-        let new_version = self.get_version();
-        if previous_version != new_version {
-            info!("Cache updated from version {previous_version} to version {new_version}");
-        }
         Ok(())
     }
 
