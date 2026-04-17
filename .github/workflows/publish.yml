@@ -21,7 +21,7 @@ jobs:
         - rust-target: x86_64-apple-darwin
           label: x86-64
     env:
-      executable_output_file_path: "target/${{ matrix.rust-target }}/release/tmignore-rs"
+      executable_output_file_path: "target/${{ matrix.rust-target }}/final/tmignore-rs"
       zip_output_file_path: "tmignore-rs_${{ github.ref_name }}_${{ matrix.label }}.zip"
     timeout-minutes: 10
     steps:
