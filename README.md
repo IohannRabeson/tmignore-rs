@@ -1,14 +1,14 @@
 # tmignore-rs [![codecov](https://codecov.io/gh/IohannRabeson/tmignore-rs/graph/badge.svg?token=B5Q69GVFGN)](https://codecov.io/gh/IohannRabeson/tmignore-rs)
 Makes Time Machine respect .gitignore files.  
 This tool is a drop-in replacement for [tmignore](https://github.com/samuelmeuli/tmignore) but with
-a brand new command 'monitor' that is updating in (almost) real time the cache if changes in the filesystem are detected.
+a brand new command 'monitor' that will in (almost) real time update the cache if changes on the filesystem are detected.
 
-It will happilly import the tmignore cache and configuration the first time it will be launched.
+It will happily import the tmignore cache and configuration the first time it is launched.
 
-Compared to tmignore it should be very fast, where tmignore was taking minutes it's now few seconds.
+Compared to tmignore it should be very fast, where tmignore would take minutes it's now a few seconds.
 
 ## Requirements
-This program runs on MacOS only and it requires Git to be installed.
+This program runs on MacOS only and requires Git to be installed.
 
 ## Installation
 The easiest is to use Homebrew:
@@ -16,7 +16,7 @@ The easiest is to use Homebrew:
 brew install IohannRabeson/tap/tmignore-rs
 brew services start tmignore-rs
 ```
-You have to do that only once, tmignore-rs will be started automatically on startup.
+You only have to do that once, tmignore-rs will be started automatically on startup.
 
 You can stop the service using:
 ```
@@ -42,14 +42,14 @@ This program loads `~/.config/tmignore-rs/config.json` as its configuration file
 This configuration file is hot-reloaded so you don't need to restart tmignore-rs after modifying it.
 See [Configuration](#configuration) for more details.
  
-This command is very light, excepted the initial scan, it should never affect the performances of you Mac.
-If you want to test you can run it with the flag `--dry-run` to prevent avoid modifying anything.  
+This command is very light, except the initial scan, it should never affect the performances of you Mac.
+If you want to test you can run it with the flag `--dry-run` to prevent it from modifying anything.  
 But for testing, it's easier to use the `run` command.
 
 ### `run` command
 This command performs a scan of the directories. You can specify the number of threads to use during this phase, no need to set it high you will be limited by the I/O anyways.  
 Like `monitor`, the `run` command has an option `--dry-run`.
-If you want to run tmignore-rs manually times to times this is the command to use.
+If you want to run tmignore-rs manually from time to time this is the command to use.
 
 ### `reset` command
 This command removes everything from the backup exclusion list.
@@ -67,7 +67,7 @@ This command prints statistics.
 
 ## Logs
 This application sends the logs to the Console application.  
-Use `tmignore-rs` as filter (select the filtering by process).  
+Use `tmignore-rs` as filter (select filter by process).  
 
 ## Show help
 ```
@@ -139,7 +139,7 @@ The `whitelist_patterns` array expects glob-style patterns:
 See https://gitlab.com/ppentchev/fnmatch-regex-rs#overview for details.
 
 ### `threads`
-The `threads` count. 0 means the count of threads is not limited and the max will be choose.
+The `threads` count. 0 means the count of threads is not limited and the max will be chosen.
 
 ### `debounce_duration`
 Debounce duration, a delay allowing to collect similar events and process them all at once. Default is 2 seconds. 
