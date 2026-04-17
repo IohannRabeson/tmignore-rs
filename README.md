@@ -30,6 +30,20 @@ xattr -cr tmignore-rs
 ```
 This is not needed if you install `tmignore-rs` using `brew`.
 
+### Nix
+If you use [Nix](https://nixos.org) with flakes enabled, you can install `tmignore-rs` directly from the repository:
+```
+nix profile install github:IohannRabeson/tmignore-rs
+```
+Or run it once without installing:
+```
+nix run github:IohannRabeson/tmignore-rs -- --help
+```
+A development shell with the Rust toolchain is also available:
+```
+nix develop github:IohannRabeson/tmignore-rs
+```
+
 ## How to use it
 ### `monitor` command
 The most important command is the `monitor` command:
