@@ -16,12 +16,17 @@
 
         gitRev = self.rev or self.dirtyRev or "unknown";
         shortRev = builtins.substring 0 7 gitRev;
+        version = "nix-${shortRev}";
 
         tmignore-rs = pkgs.rustPlatform.buildRustPackage {
           pname = "tmignore-rs";
-          version = "0.0.0-${shortRev}";
+          inherit version;
 
           src = self;
+
+          # Matches .github/workflows/publish.yml — the profile used for
+          # end-user binaries (LTO, stripped, single codegen unit).
+          buildType = "final";
 
           cargoLock = {
             lockFile = ./Cargo.lock;
@@ -40,7 +45,7 @@
           env = {
             VERGEN_GIT_SHA = gitRev;
             VERGEN_IDEMPOTENT = "1";
-            TMIGNORE_RS_VERSION = "0.0.0-${shortRev}";
+            TMIGNORE_RS_VERSION = version;
             LIBGIT2_SYS_USE_PKG_CONFIG = "1";
           };
 
