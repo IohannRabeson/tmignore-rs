@@ -1,0 +1,31 @@
+name: Nix Flake
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "*" ]
+
+permissions:
+  contents: read
+
+jobs:
+  flake-check:
+    runs-on: "macos-latest"
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Nix
+      uses: cachix/install-nix-action@v30
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+    - name: Cache Nix store
+      uses: nix-community/cache-nix-action@v7
+      with:
+        primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}
+        restore-prefixes-first-match: nix-${{ runner.os }}-
+        gc-max-store-size-macos: 2G
+        save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    - name: Flake check
+      run: nix flake check --print-build-logs
