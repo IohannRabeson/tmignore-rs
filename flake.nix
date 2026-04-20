@@ -65,6 +65,8 @@
         packages.default = tmignore-rs;
         packages.tmignore-rs = tmignore-rs;
 
+        checks.build = tmignore-rs;
+
         apps.default = {
           type = "app";
           program = "${tmignore-rs}/bin/tmignore-rs";
