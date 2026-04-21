@@ -1,6 +1,20 @@
 use std::io::Write;
 
-use crate::{Cli, Paths};
+use clap::Subcommand;
+
+use crate::Cli;
+
+#[derive(Subcommand, Clone, Copy)]
+pub enum Paths {
+    /// Path of the configuration file
+    Config,
+    /// Path of the cache file
+    Cache,
+    /// Path of the legacy configuration file
+    LegacyConfig,
+    /// Path of the legacy cache file
+    LegacyCache,
+}
 
 pub fn execute(cli: &Cli, path: Paths, writer: &mut impl Write) -> anyhow::Result<()> {
     let file_path = match path {
@@ -16,8 +30,10 @@ pub fn execute(cli: &Cli, path: Paths, writer: &mut impl Write) -> anyhow::Resul
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
+    
+    use super::Paths;
 
-    use crate::{Cli, Paths};
+    use crate::Cli;
 
     #[rstest]
     #[case(Paths::Config, "/yo/config.json\n")]
