@@ -50,14 +50,16 @@ impl Cache {
         let file_path = path.as_ref();
 
         Ok(match Self::open(file_path) {
-            Ok(cache) => { cache }
+            Ok(cache) => cache,
             Err(error) => {
-                if let Some(OpenOrCreateError::FileDoesNotExist) = error.downcast_ref::<OpenOrCreateError>() {
+                if let Some(OpenOrCreateError::FileDoesNotExist) =
+                    error.downcast_ref::<OpenOrCreateError>()
+                {
                     Self::create(file_path)?
                 } else {
                     let message = format!("Failed to load file {}", file_path.display());
 
-                    return Err(error.context(message))
+                    return Err(error.context(message));
                 }
             }
         })
@@ -277,7 +279,7 @@ impl Cache {
     }
 
     /// Get the date and time of the last cache update.
-    /// 
+    ///
     /// This function will panic for a cache with the schema V0 but that
     /// supposed to never happen.
     pub fn last_update(&self) -> DateTime<Utc> {
@@ -295,7 +297,10 @@ impl Cache {
     }
 
     pub fn get_version(&self) -> u32 {
-        self.connection.borrow().pragma_query_value(None, "user_version", |r| r.get(0)).unwrap()
+        self.connection
+            .borrow()
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap()
     }
 }
 

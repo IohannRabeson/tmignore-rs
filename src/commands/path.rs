@@ -30,7 +30,7 @@ pub fn execute(cli: &Cli, path: Paths, writer: &mut impl Write) -> anyhow::Resul
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
-    
+
     use super::Paths;
 
     use crate::Cli;
