@@ -14,7 +14,12 @@ use clap::{Parser, Subcommand};
 use log::{error, info};
 use std::{backtrace::BacktraceStatus, path::Path};
 
-use crate::{cache::Cache, commands::{path::Paths, stats::Stats}, config::Config, legacy_cache::LegacyCache};
+use crate::{
+    cache::Cache,
+    commands::{path::Paths, stats::Stats},
+    config::Config,
+    legacy_cache::LegacyCache,
+};
 
 const CONFIG_FILE_PATH: &str = "~/.config/tmignore-rs/config.json";
 const CACHE_FILE_PATH: &str = "~/Library/Caches/tmignore-rs/cache.db";
@@ -88,7 +93,7 @@ enum Commands {
     Stats {
         #[command(subcommand)]
         stat: Stats,
-    }
+    },
 }
 
 fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
