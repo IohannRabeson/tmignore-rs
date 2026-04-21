@@ -11,7 +11,11 @@ permissions:
 
 jobs:
   flake-check:
-    runs-on: "macos-latest"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-13]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@v6
@@ -23,8 +27,8 @@ jobs:
     - name: Cache Nix store
       uses: nix-community/cache-nix-action@v7
       with:
-        primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}
-        restore-prefixes-first-match: nix-${{ runner.os }}-
+        primary-key: nix-${{ matrix.os }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}
+        restore-prefixes-first-match: nix-${{ matrix.os }}-
         gc-max-store-size-macos: 2G
         save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     - name: Flake check
