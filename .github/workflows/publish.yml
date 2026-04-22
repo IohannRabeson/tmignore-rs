@@ -3,7 +3,8 @@ name: Publish
 on:
   release:
     types: [published]
-  push:
+  # Uncomment to debug
+  # push:
 env:
   CARGO_TERM_COLOR: always
   TMIGNORE_RS_VERSION: ${{ github.ref_name }}
