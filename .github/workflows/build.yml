@@ -32,4 +32,4 @@ jobs:
     - name: Build
       run: cargo build --all --verbose --locked --target ${{ matrix.rust-target }}
     - name: Test
-      run: cargo test
+      run: cargo test --locked --target ${{ matrix.rust-target }}
