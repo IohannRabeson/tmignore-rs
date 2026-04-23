@@ -12,7 +12,7 @@ permissions:
 jobs:
   flake-check:
     runs-on: "macos-latest"
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
     - uses: actions/checkout@v6
     - name: Install Nix
@@ -28,4 +28,4 @@ jobs:
         gc-max-store-size-macos: 2G
         save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     - name: Flake check
-      run: nix flake check --print-build-logs
+      run: nix flake check --all-systems --print-build-logs
