@@ -30,9 +30,6 @@
 
           cargoLock = {
             lockFile = ./Cargo.lock;
-            outputHashes = {
-              "temp-dir-builder-0.1.0" = "sha256-v5ht7KYzVXocPydik6KzqLJ9hVESh8jCdulS6eLtDjo=";
-            };
           };
 
           nativeBuildInputs = with pkgs; [ pkg-config ];
