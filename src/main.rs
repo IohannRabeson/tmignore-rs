@@ -436,9 +436,7 @@ mod tests {
         std::fs::write(&b_file_path, "").unwrap();
         std::fs::write(&c_file_path, "").unwrap();
         std::thread::sleep(Duration::from_secs(5));
-        unsafe {
-            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
-        }
+        crate::commands::tests::send_sigint();
         handle.join().unwrap();
 
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
@@ -521,9 +519,7 @@ mod tests {
             .insert(temp_dir.path().join("repository"));
         save_json_file(config_file_path, &config).unwrap();
         std::thread::sleep(Duration::from_secs(5));
-        unsafe {
-            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
-        }
+        crate::commands::tests::send_sigint();
         handle.join().unwrap();
 
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
@@ -588,9 +584,7 @@ mod tests {
         // Write an invalid config
         std::fs::write(config_file_path, "").unwrap();
         std::thread::sleep(Duration::from_secs(5));
-        unsafe {
-            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
-        }
+        crate::commands::tests::send_sigint();
         handle.join().unwrap();
     }
 }

@@ -626,7 +626,7 @@ mod tests {
     use serial_test::serial;
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::cache::Cache;
+    use crate::{cache::Cache, json::save_json_file};
 
     /// Test the behavior in case of a missing configuration file.
     /// It should not return an error, it should create the default configuration file.
@@ -641,9 +641,40 @@ mod tests {
         });
         // Ensure the signals handlers are setup
         std::thread::sleep(Duration::from_secs(5));
-        unsafe {
-            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
-        }
+        crate::commands::tests::send_sigint();
         thread_handle.join().unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn test_initial_scan() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_directory("folder/repository")
+            .add_text_file("folder/repository/.gitignore", "a\nb\nc")
+            .add_empty_file("folder/repository/a")
+            .add_empty_file("folder/repository/b")
+            .add_empty_file("folder/repository/c")
+            .build()
+            .unwrap();
+        let folder_path = temp_dir.path().join("folder");
+        let repository_path = folder_path.join("repository");
+        let config_file_path = folder_path.join("config.json");
+        let config = crate::commands::tests::create_config(&folder_path);
+        save_json_file(&config_file_path, &config).unwrap();
+        crate::commands::tests::init_git_repository(&repository_path);
+        let thread_handle = std::thread::spawn(move||{
+            let mut cache = Cache::open_in_memory().unwrap();
+
+            super::execute(&config_file_path, None, &mut cache, false, true).unwrap();
+
+            cache
+        });
+        // Need to wait to ensure the internal Monitor is created by super::execute() to ensure
+        // the signal will be handled.
+        std::thread::sleep(Duration::from_secs(5));
+        crate::commands::tests::send_sigint();
+        let cache = thread_handle.join().unwrap();
+        let paths = cache.paths();
+        assert_eq!(paths.len(), 3);
     }
 }
