@@ -196,6 +196,12 @@ pub(crate) mod tests {
         config
     }
 
+    pub(crate) fn send_sigint() {
+        unsafe {
+            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
+        }
+    }
+    
     #[test]
     fn test_create_whitelist_invalid() {
         let patterns = BTreeSet::from([String::from("[z-a].txt")]);
