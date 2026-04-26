@@ -132,14 +132,9 @@ impl Monitor {
             crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let (debouncer_thread_handle, debouncer_control_sender, event_receiver_final) =
             monitor_details::spawn_debouncer_thread(event_receiver_debouncer)?;
-        let (signals_thread_handle, signals_receiver) = monitor_details::spawn_signals_thread()?;
-        let (monitor_thread_handle, monitor_control_sender, event_receiver) =
-            monitor_details::spawn_monitor_thread()?;
-        let dispatcher_thread_handle = monitor_details::spawn_dispatcher_thread(
-            signals_receiver,
-            event_receiver,
-            event_sender_to_debouncer,
-        )?;
+        let signals_thread_handle = monitor_details::spawn_signals_thread(event_sender_to_debouncer.clone())?;
+        let (monitor_thread_handle, monitor_control_sender) =
+            monitor_details::spawn_monitor_thread(event_sender_to_debouncer.clone())?;
 
         Ok(Self {
             control_sender: monitor_control_sender,
@@ -147,7 +142,6 @@ impl Monitor {
             event_receiver_final,
             thread_handles: vec![
                 signals_thread_handle,
-                dispatcher_thread_handle,
                 debouncer_thread_handle,
                 monitor_thread_handle,
             ],
@@ -219,24 +213,23 @@ mod monitor_details {
     use super::EVENT_QUEUE_SIZE;
     use crate::git;
 
-    pub fn spawn_signals_thread() -> anyhow::Result<(JoinHandle<()>, Receiver<()>)> {
+    pub fn spawn_signals_thread(event_sender: Sender<super::Event>) -> anyhow::Result<JoinHandle<()>> {
         let mut signals = signal_hook::iterator::Signals::new([
             signal_hook::consts::SIGTERM,
             signal_hook::consts::SIGINT,
         ])
         .unwrap();
-        let (signal_sender, signal_receiver) = crossbeam_channel::bounded(1);
         let thread_handle = std::thread::Builder::new()
             .name("Signals Thread".to_string())
             .spawn(move || {
                 debug!("Signals thread starts");
                 if signals.into_iter().next().is_some() {
-                    let _ = signal_sender.send(());
+                    let _ = event_sender.send(crate::commands::monitor::Event::Shutdown);
                 }
                 debug!("Signals thread shutdowns");
             })?;
 
-        Ok((thread_handle, signal_receiver))
+        Ok(thread_handle)
     }
 
     pub enum MonitorControl {
@@ -246,12 +239,10 @@ mod monitor_details {
         Shutdown,
     }
 
-    pub fn spawn_monitor_thread() -> anyhow::Result<(
+    pub fn spawn_monitor_thread(event_sender: Sender<super::Event>) -> anyhow::Result<(
         JoinHandle<()>,
         Sender<MonitorControl>,
-        Receiver<super::Event>,
     )> {
-        let (event_sender, event_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let (control_sender, control_receiver) = crossbeam_channel::bounded(1);
         let (fs_event_sender, fs_event_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let watcher_config = notify::Config::default();
@@ -329,7 +320,7 @@ mod monitor_details {
                 debug!("Monitor shutdowns");
             })?;
 
-        Ok((thread_handle, control_sender, event_receiver))
+        Ok((thread_handle, control_sender))
     }
 
     fn accept_event(event: &notify::Event) -> bool {
@@ -472,35 +463,6 @@ mod monitor_details {
         ))
     }
 
-    pub fn spawn_dispatcher_thread(
-        signals_receiver: Receiver<()>,
-        event_receiver: Receiver<super::Event>,
-        event_sender_to_debouncer: Sender<super::Event>,
-    ) -> anyhow::Result<JoinHandle<()>> {
-        let thread_handle = std::thread::Builder::new()
-            .name("Dispatcher Thread".to_string())
-            .spawn(move || {
-                debug!("Dispatcher starts");
-                loop {
-                    select! {
-                        recv(signals_receiver) -> event => {
-                            if let Ok(()) = event {
-                                let _ = event_sender_to_debouncer.send(super::Event::Shutdown);
-                                break;
-                            }
-                        }
-                        recv(event_receiver) -> event => {
-                            if let Ok(event) = event {
-                                let _ = event_sender_to_debouncer.send(event);
-                            }
-                        }
-                    }
-                }
-                debug!("Dispatcher shutdowns");
-            })?;
-
-        Ok(thread_handle)
-    }
     #[cfg(test)]
     mod tests {
         use rstest::rstest;
