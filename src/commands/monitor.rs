@@ -38,7 +38,7 @@ pub fn execute(
     // Start the monitor before calling `super::run` to ensure the signals handlers are setup as soon as possible.
     let mut monitor = Monitor::new()?;
 
-    super::run::execute(&config, cache, dry_run, details)?;
+    monitor.push_event(Event::InitialScan);
 
     // Set configuration file after executing the `run` command to be sure to not catch the creation event
     // caused by `Config::load_or_create_file(&config_file_path)`.
@@ -57,7 +57,7 @@ pub fn execute(
                     monitor.set_watched_paths(&config.search_directories);
                     monitor.set_debounce_duration(config.debounce_duration);
                     debug!("Configuration reloaded");
-                    super::run::execute(&config, cache, dry_run, details)?;
+                    monitor.push_event(Event::InitialScan);
                 }
                 Err(error) => {
                     warn!(
@@ -68,6 +68,9 @@ pub fn execute(
                     warn!("Due to an error the configuration stay unchanged");
                 }
             },
+            Event::InitialScan => {
+                super::run::execute(&config, cache, dry_run, details)?;
+            }
             Event::ScanRepositories(repositories_to_scan) => {
                 for repository_to_scan in &repositories_to_scan {
                     debug!("Scanning repository '{}'", repository_to_scan.display());
@@ -104,6 +107,8 @@ pub fn execute(
 enum Event {
     /// Request to reload the configuration
     ReloadConfiguration,
+    /// Request to perform the initial scan
+    InitialScan,
     /// Request to scan some repositories
     ScanRepositories(BTreeSet<PathBuf>),
     /// Shutdown
@@ -118,6 +123,7 @@ struct Monitor {
     debouncer_control_sender: Sender<DebouncerControl>,
     event_receiver_final: Receiver<Event>,
     thread_handles: Vec<JoinHandle<()>>,
+    pending_events: BTreeSet<Event>,
 }
 
 impl Monitor {
@@ -145,10 +151,19 @@ impl Monitor {
                 debouncer_thread_handle,
                 monitor_thread_handle,
             ],
+            pending_events: BTreeSet::new(),
         })
     }
 
+    pub fn push_event(&mut self, event: Event) {
+        self.pending_events.insert(event);
+    }
+
     pub fn get_event(&mut self) -> Option<Event> {
+        if let Some(event) = self.pending_events.pop_first() {
+            return Some(event)
+        }
+        
         self.event_receiver_final.recv().ok()
     }
 
