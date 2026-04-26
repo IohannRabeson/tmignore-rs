@@ -88,6 +88,14 @@ pub fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Er
     errors
 }
 
+pub fn is_time_machine_running() -> bool {
+    std::process::Command::new("tmutil")
+        .arg("status")
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).contains("Running = 1"))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use std::{path::Path, process::Command};
