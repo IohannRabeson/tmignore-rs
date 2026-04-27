@@ -1,5 +1,9 @@
 use std::{
-    collections::BTreeSet, ops::ControlFlow, path::{Path, PathBuf}, thread::JoinHandle, time::Duration
+    collections::BTreeSet,
+    ops::ControlFlow,
+    path::{Path, PathBuf},
+    thread::JoinHandle,
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -37,8 +41,12 @@ fn handle_event(
         Event::ReloadConfiguration => match context.config.reload_file(context.config_file_path) {
             Ok(()) => {
                 *context.whitelist = super::create_whitelist(&context.config.whitelist_patterns)?;
-                context.monitor.set_watched_paths(&context.config.search_directories);
-                context.monitor.set_debounce_duration(context.config.debounce_duration);
+                context
+                    .monitor
+                    .set_watched_paths(&context.config.search_directories);
+                context
+                    .monitor
+                    .set_debounce_duration(context.config.debounce_duration);
                 debug!("Configuration reloaded");
                 context.monitor.push_event(Event::InitialScan);
             }
@@ -52,7 +60,12 @@ fn handle_event(
             }
         },
         Event::InitialScan => {
-            super::run::execute(context.config, context.cache, context.dry_run, context.details)?;
+            super::run::execute(
+                context.config,
+                context.cache,
+                context.dry_run,
+                context.details,
+            )?;
         }
         Event::ScanRepositories(repositories_to_scan) => {
             for repository_to_scan in &repositories_to_scan {
@@ -63,9 +76,14 @@ fn handle_event(
                     context.whitelist,
                     &mut exclusions,
                 )?;
-                let diff = context.cache.find_diff_in_directory(&exclusions, repository_to_scan);
-                let paths_failed_to_add =
-                    super::apply_diff_and_print::<TimeMachine>(&diff, context.dry_run, context.details);
+                let diff = context
+                    .cache
+                    .find_diff_in_directory(&exclusions, repository_to_scan);
+                let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
+                    &diff,
+                    context.dry_run,
+                    context.details,
+                );
                 for path in paths_failed_to_add {
                     exclusions.remove(&path);
                 }
@@ -136,7 +154,7 @@ pub fn execute(
             context.is_timemachine_running = false;
             for event in std::mem::take(&mut pending_events) {
                 if handle_event(&mut context, event)?.is_break() {
-                    break 'outer
+                    break 'outer;
                 }
             }
             continue;
@@ -173,7 +191,9 @@ enum Event {
 impl Event {
     pub fn can_be_delayed(&self) -> bool {
         match self {
-            Event::ReloadConfiguration | Event::TimeMachineBackupFinished | Event::Shutdown => false,
+            Event::ReloadConfiguration | Event::TimeMachineBackupFinished | Event::Shutdown => {
+                false
+            }
             Event::InitialScan | Event::ScanRepositories(_) => true,
         }
     }
@@ -194,10 +214,11 @@ impl Monitor {
             crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let (debouncer_thread_handle, debouncer_control_sender, event_receiver_final) =
             monitor_details::spawn_debouncer_thread(event_receiver_debouncer)?;
-        let signals_thread_handle = monitor_details::spawn_signals_thread(event_sender_to_debouncer.clone())?;
+        let signals_thread_handle =
+            monitor_details::spawn_signals_thread(event_sender_to_debouncer.clone())?;
         let (monitor_thread_handle, monitor_control_sender) =
             monitor_details::spawn_monitor_thread(event_sender_to_debouncer.clone())?;
-        let (timemachine_thread_handle, timemachine_control_sender) = 
+        let (timemachine_thread_handle, timemachine_control_sender) =
             monitor_details::spawn_timemachine_thread(event_sender_to_debouncer.clone())?;
 
         Ok(Self {
@@ -221,9 +242,9 @@ impl Monitor {
 
     pub fn get_event(&mut self) -> Option<Event> {
         if let Some(event) = self.pending_events.pop_first() {
-            return Some(event)
+            return Some(event);
         }
-        
+
         self.event_receiver_final.recv().ok()
     }
 
@@ -254,14 +275,18 @@ impl Monitor {
     }
 
     pub fn start_timemachine_monitoring(&mut self) {
-        let _ = self.timemachine_control_sender.send(TimeMachineControl::ResumeMonitoring);
+        let _ = self
+            .timemachine_control_sender
+            .send(TimeMachineControl::ResumeMonitoring);
     }
 }
 
 impl Drop for Monitor {
     fn drop(&mut self) {
         let _ = self.control_sender.send(MonitorControl::Shutdown);
-        let _ = self.timemachine_control_sender.send(TimeMachineControl::Shutdown);
+        let _ = self
+            .timemachine_control_sender
+            .send(TimeMachineControl::Shutdown);
         while let Some(handle) = self.thread_handles.pop() {
             handle.join().unwrap();
         }
@@ -283,7 +308,9 @@ mod monitor_details {
     use super::EVENT_QUEUE_SIZE;
     use crate::{git, timemachine};
 
-    pub fn spawn_signals_thread(event_sender: Sender<super::Event>) -> anyhow::Result<JoinHandle<()>> {
+    pub fn spawn_signals_thread(
+        event_sender: Sender<super::Event>,
+    ) -> anyhow::Result<JoinHandle<()>> {
         let mut signals = signal_hook::iterator::Signals::new([
             signal_hook::consts::SIGTERM,
             signal_hook::consts::SIGINT,
@@ -309,10 +336,9 @@ mod monitor_details {
         Shutdown,
     }
 
-    pub fn spawn_monitor_thread(event_sender: Sender<super::Event>) -> anyhow::Result<(
-        JoinHandle<()>,
-        Sender<MonitorControl>,
-    )> {
+    pub fn spawn_monitor_thread(
+        event_sender: Sender<super::Event>,
+    ) -> anyhow::Result<(JoinHandle<()>, Sender<MonitorControl>)> {
         let (control_sender, control_receiver) = crossbeam_channel::bounded(1);
         let (fs_event_sender, fs_event_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let watcher_config = notify::Config::default();
@@ -538,30 +564,36 @@ mod monitor_details {
         Shutdown,
     }
 
-    pub fn spawn_timemachine_thread(event_sender: Sender<super::Event>) -> anyhow::Result<(JoinHandle<()>, Sender<TimeMachineControl>)> {
+    pub fn spawn_timemachine_thread(
+        event_sender: Sender<super::Event>,
+    ) -> anyhow::Result<(JoinHandle<()>, Sender<TimeMachineControl>)> {
         let (control_sender, control_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
-        let thread_handle = std::thread::Builder::new().name("Time Machine Monitoring Thread".to_string()).spawn(move|| {
-            debug!("Time Machine monitoring thread started");
-            'outer: for control in &control_receiver {
-                match control {
-                    TimeMachineControl::ResumeMonitoring => {
-                        const TIMEOUT: Duration = Duration::from_secs(1);
-                        debug!("Start monitoring tmutil status");
-                        while timemachine::is_time_machine_running() {
-                            if let Ok(TimeMachineControl::Shutdown) = control_receiver.recv_timeout(TIMEOUT) {
-                                break 'outer;
+        let thread_handle = std::thread::Builder::new()
+            .name("Time Machine Monitoring Thread".to_string())
+            .spawn(move || {
+                debug!("Time Machine monitoring thread started");
+                'outer: for control in &control_receiver {
+                    match control {
+                        TimeMachineControl::ResumeMonitoring => {
+                            const TIMEOUT: Duration = Duration::from_secs(1);
+                            debug!("Start monitoring tmutil status");
+                            while timemachine::is_time_machine_running() {
+                                if let Ok(TimeMachineControl::Shutdown) =
+                                    control_receiver.recv_timeout(TIMEOUT)
+                                {
+                                    break 'outer;
+                                }
                             }
+                            debug!("Stop monitoring tmutil status");
+                            let _ = event_sender.send(super::Event::TimeMachineBackupFinished);
                         }
-                        debug!("Stop monitoring tmutil status");
-                        let _ = event_sender.send(super::Event::TimeMachineBackupFinished);
-                    },
-                    TimeMachineControl::Shutdown => {
-                        break;
-                    },
+                        TimeMachineControl::Shutdown => {
+                            break;
+                        }
+                    }
                 }
-            }
-            debug!("Time Machine monitoring thread stopped");
-        })?;
+                debug!("Time Machine monitoring thread stopped");
+            })?;
 
         Ok((thread_handle, control_sender))
     }
@@ -727,7 +759,7 @@ mod tests {
         let config = crate::commands::tests::create_config(&folder_path);
         save_json_file(&config_file_path, &config).unwrap();
         crate::commands::tests::init_git_repository(&repository_path);
-        let thread_handle = std::thread::spawn(move||{
+        let thread_handle = std::thread::spawn(move || {
             let mut cache = Cache::open_in_memory().unwrap();
 
             super::execute(&config_file_path, None, &mut cache, false, true).unwrap();
