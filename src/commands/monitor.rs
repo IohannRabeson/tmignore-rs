@@ -1,24 +1,87 @@
 use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-    thread::JoinHandle,
-    time::Duration,
+    collections::BTreeSet, ops::ControlFlow, path::{Path, PathBuf}, thread::JoinHandle, time::Duration
 };
 
 use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
-use log::{debug, warn};
+use log::{debug, info, warn};
+use regex::RegexSet;
 
 use crate::{
     cache::Cache,
     commands::{
         TimeMachine,
-        monitor::monitor_details::{DebouncerControl, MonitorControl},
+        monitor::monitor_details::{DebouncerControl, MonitorControl, TimeMachineControl},
     },
     config::Config,
 };
 
 const EVENT_QUEUE_SIZE: usize = 128;
+
+struct HandleEventContext<'a> {
+    config: &'a mut Config,
+    config_file_path: &'a Path,
+    whitelist: &'a mut RegexSet,
+    monitor: &'a mut Monitor,
+    cache: &'a mut Cache,
+    dry_run: bool,
+    details: bool,
+    is_timemachine_running: bool,
+}
+
+fn handle_event(
+    context: &mut HandleEventContext<'_>,
+    event: Event,
+) -> Result<ControlFlow<()>, anyhow::Error> {
+    match event {
+        Event::ReloadConfiguration => match context.config.reload_file(context.config_file_path) {
+            Ok(()) => {
+                *context.whitelist = super::create_whitelist(&context.config.whitelist_patterns)?;
+                context.monitor.set_watched_paths(&context.config.search_directories);
+                context.monitor.set_debounce_duration(context.config.debounce_duration);
+                debug!("Configuration reloaded");
+                context.monitor.push_event(Event::InitialScan);
+            }
+            Err(error) => {
+                warn!(
+                    "Failed to reload configuration '{}': {}",
+                    context.config_file_path.display(),
+                    error
+                );
+                warn!("Due to an error the configuration stay unchanged");
+            }
+        },
+        Event::InitialScan => {
+            super::run::execute(context.config, context.cache, context.dry_run, context.details)?;
+        }
+        Event::ScanRepositories(repositories_to_scan) => {
+            for repository_to_scan in &repositories_to_scan {
+                debug!("Scanning repository '{}'", repository_to_scan.display());
+                let mut exclusions = BTreeSet::new();
+                super::find_paths_to_exclude_from_backup(
+                    repository_to_scan,
+                    context.whitelist,
+                    &mut exclusions,
+                )?;
+                let diff = context.cache.find_diff_in_directory(&exclusions, repository_to_scan);
+                let paths_failed_to_add =
+                    super::apply_diff_and_print::<TimeMachine>(&diff, context.dry_run, context.details);
+                for path in paths_failed_to_add {
+                    exclusions.remove(&path);
+                }
+                if !context.dry_run {
+                    context.cache.remove_paths_in_directory(repository_to_scan);
+                    context.cache.add_paths(exclusions.into_iter());
+                }
+            }
+        }
+        Event::TimeMachineBackupFinished => {
+            context.is_timemachine_running = false;
+        }
+        Event::Shutdown => return Ok(ControlFlow::Break(())),
+    }
+    Ok(ControlFlow::Continue(()))
+}
 
 pub fn execute(
     config_file_path: impl AsRef<Path>,
@@ -49,54 +112,41 @@ pub fn execute(
     monitor.set_watched_paths(&config.search_directories);
     monitor.set_debounce_duration(config.debounce_duration);
 
-    while let Some(event) = monitor.get_event() {
-        match event {
-            Event::ReloadConfiguration => match config.reload_file(&config_file_path) {
-                Ok(()) => {
-                    whitelist = super::create_whitelist(&config.whitelist_patterns)?;
-                    monitor.set_watched_paths(&config.search_directories);
-                    monitor.set_debounce_duration(config.debounce_duration);
-                    debug!("Configuration reloaded");
-                    monitor.push_event(Event::InitialScan);
-                }
-                Err(error) => {
-                    warn!(
-                        "Failed to reload configuration '{}': {}",
-                        config_file_path.display(),
-                        error
-                    );
-                    warn!("Due to an error the configuration stay unchanged");
-                }
-            },
-            Event::InitialScan => {
-                super::run::execute(&config, cache, dry_run, details)?;
-            }
-            Event::ScanRepositories(repositories_to_scan) => {
-                for repository_to_scan in &repositories_to_scan {
-                    debug!("Scanning repository '{}'", repository_to_scan.display());
-                    let mut exclusions = BTreeSet::new();
-                    super::find_paths_to_exclude_from_backup(
-                        repository_to_scan,
-                        &whitelist,
-                        &mut exclusions,
-                    )?;
-                    let diff = cache.find_diff_in_directory(&exclusions, repository_to_scan);
-                    let paths_failed_to_add =
-                        super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details);
+    let mut context = HandleEventContext {
+        config: &mut config,
+        config_file_path: &config_file_path,
+        whitelist: &mut whitelist,
+        monitor: &mut monitor,
+        cache,
+        dry_run,
+        details,
+        is_timemachine_running: false,
+    };
+    let mut pending_events = BTreeSet::new();
 
-                    for path in paths_failed_to_add {
-                        exclusions.remove(&path);
-                    }
+    'outer: while let Some(event) = context.monitor.get_event() {
+        if crate::timemachine::is_time_machine_running() && !context.is_timemachine_running {
+            info!("Time Machine backup started");
+            context.monitor.start_timemachine_monitoring();
+            context.is_timemachine_running = true;
+        }
 
-                    if !dry_run {
-                        cache.remove_paths_in_directory(repository_to_scan);
-                        cache.add_paths(exclusions.into_iter());
-                    }
+        if matches!(event, Event::TimeMachineBackupFinished) {
+            info!("Time Machine backup finished");
+            context.is_timemachine_running = false;
+            for event in std::mem::take(&mut pending_events) {
+                if handle_event(&mut context, event)?.is_break() {
+                    break 'outer
                 }
             }
-            Event::Shutdown => {
-                break;
-            }
+            continue;
+        }
+
+        if context.is_timemachine_running && event.can_be_delayed() {
+            debug!("Time Machine is backing up, delaying event");
+            pending_events.insert(event);
+        } else if handle_event(&mut context, event)?.is_break() {
+            break;
         }
     }
 
@@ -107,6 +157,8 @@ pub fn execute(
 enum Event {
     /// Request to reload the configuration
     ReloadConfiguration,
+    /// Signal Time machine backup finished
+    TimeMachineBackupFinished,
     /// Request to perform the initial scan
     InitialScan,
     /// Request to scan some repositories
@@ -118,9 +170,19 @@ enum Event {
     Shutdown,
 }
 
+impl Event {
+    pub fn can_be_delayed(&self) -> bool {
+        match self {
+            Event::ReloadConfiguration | Event::TimeMachineBackupFinished | Event::Shutdown => false,
+            Event::InitialScan | Event::ScanRepositories(_) => true,
+        }
+    }
+}
+
 struct Monitor {
     control_sender: Sender<MonitorControl>,
     debouncer_control_sender: Sender<DebouncerControl>,
+    timemachine_control_sender: Sender<TimeMachineControl>,
     event_receiver_final: Receiver<Event>,
     thread_handles: Vec<JoinHandle<()>>,
     pending_events: BTreeSet<Event>,
@@ -135,15 +197,19 @@ impl Monitor {
         let signals_thread_handle = monitor_details::spawn_signals_thread(event_sender_to_debouncer.clone())?;
         let (monitor_thread_handle, monitor_control_sender) =
             monitor_details::spawn_monitor_thread(event_sender_to_debouncer.clone())?;
+        let (timemachine_thread_handle, timemachine_control_sender) = 
+            monitor_details::spawn_timemachine_thread(event_sender_to_debouncer.clone())?;
 
         Ok(Self {
             control_sender: monitor_control_sender,
             debouncer_control_sender,
+            timemachine_control_sender,
             event_receiver_final,
             thread_handles: vec![
                 signals_thread_handle,
                 debouncer_thread_handle,
                 monitor_thread_handle,
+                timemachine_thread_handle,
             ],
             pending_events: BTreeSet::new(),
         })
@@ -186,12 +252,16 @@ impl Monitor {
             .debouncer_control_sender
             .send(DebouncerControl::SetDebounceDuration(duration));
     }
+
+    pub fn start_timemachine_monitoring(&mut self) {
+        let _ = self.timemachine_control_sender.send(TimeMachineControl::ResumeMonitoring);
+    }
 }
 
 impl Drop for Monitor {
     fn drop(&mut self) {
         let _ = self.control_sender.send(MonitorControl::Shutdown);
-
+        let _ = self.timemachine_control_sender.send(TimeMachineControl::Shutdown);
         while let Some(handle) = self.thread_handles.pop() {
             handle.join().unwrap();
         }
@@ -211,7 +281,7 @@ mod monitor_details {
     use notify::Watcher;
 
     use super::EVENT_QUEUE_SIZE;
-    use crate::git;
+    use crate::{git, timemachine};
 
     pub fn spawn_signals_thread(event_sender: Sender<super::Event>) -> anyhow::Result<JoinHandle<()>> {
         let mut signals = signal_hook::iterator::Signals::new([
@@ -461,6 +531,39 @@ mod monitor_details {
             debouncer_control_sender,
             output_event_receiver,
         ))
+    }
+
+    pub enum TimeMachineControl {
+        ResumeMonitoring,
+        Shutdown,
+    }
+
+    pub fn spawn_timemachine_thread(event_sender: Sender<super::Event>) -> anyhow::Result<(JoinHandle<()>, Sender<TimeMachineControl>)> {
+        let (control_sender, control_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
+        let thread_handle = std::thread::Builder::new().name("Time Machine Monitoring Thread".to_string()).spawn(move|| {
+            debug!("Time Machine monitoring thread started");
+            'outer: for control in &control_receiver {
+                match control {
+                    TimeMachineControl::ResumeMonitoring => {
+                        const TIMEOUT: Duration = Duration::from_secs(1);
+                        debug!("Start monitoring tmutil status");
+                        while timemachine::is_time_machine_running() {
+                            if let Ok(TimeMachineControl::Shutdown) = control_receiver.recv_timeout(TIMEOUT) {
+                                break 'outer;
+                            }
+                        }
+                        debug!("Stop monitoring tmutil status");
+                        let _ = event_sender.send(super::Event::TimeMachineBackupFinished);
+                    },
+                    TimeMachineControl::Shutdown => {
+                        break;
+                    },
+                }
+            }
+            debug!("Time Machine monitoring thread stopped");
+        })?;
+
+        Ok((thread_handle, control_sender))
     }
 
     #[cfg(test)]
