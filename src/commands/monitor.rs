@@ -120,9 +120,6 @@ pub fn execute(
     let mut monitor = Monitor::new()?;
 
     monitor.push_event(Event::InitialScan);
-
-    // Set configuration file after executing the `run` command to be sure to not catch the creation event
-    // caused by `Config::load_or_create_file(&config_file_path)`.
     monitor.set_configuration_file(&config_file_path);
     if let Some(global_gitignore_path) = global_gitignore_path.as_ref() {
         monitor.set_global_gitignore(global_gitignore_path);
