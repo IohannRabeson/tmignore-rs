@@ -33,15 +33,27 @@ pub fn find_repositories(
             Box::new(move |entry| {
                 use ignore::WalkState;
                 if let Ok(entry) = entry
-                    && entry.path().is_dir()
                 {
-                    if ignored_directories.contains(entry.path()) {
-                        return WalkState::Skip;
+                    // A git worktree contains a file named '.git' instead of a directory
+                    // and they must be treated just like a regular repository with its
+                    // own .gitignore that can be different from the .gitignore of the parent
+                    // repository.
+                    if entry.path().is_file() {
+                        if entry.file_name() == OsStr::new(DOT_GIT_DIRECTORY_NAME)
+                            && let Some(parent) = entry.path().parent()
+                        {
+                            let _ = tx.send(parent.to_path_buf());
+                        }
                     }
-                    if entry.file_name() == OsStr::new(DOT_GIT_DIRECTORY_NAME)
-                        && let Some(parent) = entry.path().parent()
-                    {
-                        let _ = tx.send(parent.to_path_buf());
+                    else if entry.path().is_dir() {
+                        if ignored_directories.contains(entry.path()) {
+                            return WalkState::Skip;
+                        }
+                        if entry.file_name() == OsStr::new(DOT_GIT_DIRECTORY_NAME)
+                            && let Some(parent) = entry.path().parent()
+                        {
+                            let _ = tx.send(parent.to_path_buf());
+                        }
                     }
                 }
 
