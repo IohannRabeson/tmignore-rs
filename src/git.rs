@@ -32,16 +32,26 @@ pub fn find_repositories(
 
             Box::new(move |entry| {
                 use ignore::WalkState;
-                if let Ok(entry) = entry
-                    && entry.path().is_dir()
-                {
-                    if ignored_directories.contains(entry.path()) {
-                        return WalkState::Skip;
-                    }
-                    if entry.file_name() == OsStr::new(DOT_GIT_DIRECTORY_NAME)
-                        && let Some(parent) = entry.path().parent()
-                    {
-                        let _ = tx.send(parent.to_path_buf());
+                if let Ok(entry) = entry {
+                    // A git worktree contains a file named '.git' instead of a directory
+                    // and they must be treated just like a regular repository with its
+                    // own .gitignore that can be different from the .gitignore of the parent
+                    // repository.
+                    if entry.path().is_file() {
+                        if entry.file_name() == OsStr::new(DOT_GIT_DIRECTORY_NAME)
+                            && let Some(parent) = entry.path().parent()
+                        {
+                            let _ = tx.send(parent.to_path_buf());
+                        }
+                    } else if entry.path().is_dir() {
+                        if ignored_directories.contains(entry.path()) {
+                            return WalkState::Skip;
+                        }
+                        if entry.file_name() == OsStr::new(DOT_GIT_DIRECTORY_NAME)
+                            && let Some(parent) = entry.path().parent()
+                        {
+                            let _ = tx.send(parent.to_path_buf());
+                        }
                     }
                 }
 
@@ -280,5 +290,19 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn test_worktree() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_directory("worktree")
+            .add_empty_file("worktree/.git")
+            .build()
+            .unwrap();
+        let ignored_directories = BTreeSet::new();
+        let repositories = find_repositories_vec(&[temp_dir.path()], &ignored_directories);
+
+        assert_eq!(repositories.len(), 1);
+        assert_eq!(repositories[0], temp_dir.path().join("worktree"));
     }
 }
