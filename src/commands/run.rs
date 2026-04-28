@@ -34,6 +34,12 @@ pub fn execute(
 
         info!("Found {} repositories", repositories.len());
 
+        if details {
+            for repository in &repositories {
+                info!(" • {}", repository.display());
+            }
+        }
+
         let diff = cache.find_diff(&exclusions);
 
         let paths_failed_to_add =
