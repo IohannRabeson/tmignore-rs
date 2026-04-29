@@ -1,19 +1,42 @@
 name: Update Homebrew Formula
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
 
 jobs:
   update-formula:
     if: github.event.release.prerelease == false
     runs-on: ubuntu-latest
     steps:
-      - name: Update formula
-        uses: IohannRabeson/update-homebrew-formula@v1
+      - name: Checkout source
+        uses: actions/checkout@v6
+      - name: Checkout tap
+        uses: actions/checkout@v6
         with:
-          formula-name: tmignore-rs
-          tap-repository: IohannRabeson/homebrew-tap
-          tap-token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          version: ${{ github.ref_name }}
-          revision: ${{ github.sha }}
+          repository: IohannRabeson/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+      - name: Download SHA256 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sha256-*
+          merge-multiple: true
+      - name: Install gettext
+        run: sudo apt-get install -y gettext
+      - name: Render formula
+        run: |
+          export VERSION=${{ github.ref_name }}
+          export SHA256_ARM=$(cat sha256-aarch64.txt)
+          export SHA256_INTEL=$(cat sha256-x86-64.txt)
+          envsubst < .github/tmignore-rs.rb.template > homebrew-tap/Formula/tmignore-rs.rb
+      - name: Push formula
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/tmignore-rs.rb
+          git commit -m "Update tmignore-rs to v${{ github.ref_name }}"
+          git push
