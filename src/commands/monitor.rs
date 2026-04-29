@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeSet,
+    ops::ControlFlow,
     path::{Path, PathBuf},
     thread::JoinHandle,
     time::Duration,
@@ -7,18 +8,98 @@ use std::{
 
 use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
-use log::{debug, warn};
+use log::{debug, info, warn};
+use regex::RegexSet;
 
 use crate::{
     cache::Cache,
     commands::{
         TimeMachine,
-        monitor::monitor_details::{DebouncerControl, MonitorControl},
+        monitor::monitor_details::{DebouncerControl, MonitorControl, TimeMachineControl},
     },
     config::Config,
 };
 
 const EVENT_QUEUE_SIZE: usize = 128;
+
+struct HandleEventContext<'a> {
+    config: &'a mut Config,
+    config_file_path: &'a Path,
+    whitelist: &'a mut RegexSet,
+    monitor: &'a mut Monitor,
+    cache: &'a mut Cache,
+    dry_run: bool,
+    details: bool,
+    is_timemachine_running: bool,
+}
+
+fn handle_event(
+    context: &mut HandleEventContext<'_>,
+    event: Event,
+) -> Result<ControlFlow<()>, anyhow::Error> {
+    match event {
+        Event::ReloadConfiguration => match context.config.reload_file(context.config_file_path) {
+            Ok(()) => {
+                *context.whitelist = super::create_whitelist(&context.config.whitelist_patterns)?;
+                context
+                    .monitor
+                    .set_watched_paths(&context.config.search_directories);
+                context
+                    .monitor
+                    .set_debounce_duration(context.config.debounce_duration);
+                debug!("Configuration reloaded");
+                context.monitor.push_event(Event::InitialScan);
+            }
+            Err(error) => {
+                warn!(
+                    "Failed to reload configuration '{}': {}",
+                    context.config_file_path.display(),
+                    error
+                );
+                warn!("Due to an error the configuration stay unchanged");
+            }
+        },
+        Event::InitialScan => {
+            super::run::execute(
+                context.config,
+                context.cache,
+                context.dry_run,
+                context.details,
+            )?;
+        }
+        Event::ScanRepositories(repositories_to_scan) => {
+            for repository_to_scan in &repositories_to_scan {
+                debug!("Scanning repository '{}'", repository_to_scan.display());
+                let mut exclusions = BTreeSet::new();
+                super::find_paths_to_exclude_from_backup(
+                    repository_to_scan,
+                    context.whitelist,
+                    &mut exclusions,
+                )?;
+                let diff = context
+                    .cache
+                    .find_diff_in_directory(&exclusions, repository_to_scan);
+                let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
+                    &diff,
+                    context.dry_run,
+                    context.details,
+                );
+                for path in paths_failed_to_add {
+                    exclusions.remove(&path);
+                }
+                if !context.dry_run {
+                    context.cache.remove_paths_in_directory(repository_to_scan);
+                    context.cache.add_paths(exclusions.into_iter());
+                }
+            }
+        }
+        Event::TimeMachineBackupFinished => {
+            context.is_timemachine_running = false;
+        }
+        Event::Shutdown => return Ok(ControlFlow::Break(())),
+    }
+    Ok(ControlFlow::Continue(()))
+}
 
 pub fn execute(
     config_file_path: impl AsRef<Path>,
@@ -38,10 +119,7 @@ pub fn execute(
     // Start the monitor before calling `super::run` to ensure the signals handlers are setup as soon as possible.
     let mut monitor = Monitor::new()?;
 
-    super::run::execute(&config, cache, dry_run, details)?;
-
-    // Set configuration file after executing the `run` command to be sure to not catch the creation event
-    // caused by `Config::load_or_create_file(&config_file_path)`.
+    monitor.push_event(Event::InitialScan);
     monitor.set_configuration_file(&config_file_path);
     if let Some(global_gitignore_path) = global_gitignore_path.as_ref() {
         monitor.set_global_gitignore(global_gitignore_path);
@@ -49,51 +127,41 @@ pub fn execute(
     monitor.set_watched_paths(&config.search_directories);
     monitor.set_debounce_duration(config.debounce_duration);
 
-    while let Some(event) = monitor.get_event() {
-        match event {
-            Event::ReloadConfiguration => match config.reload_file(&config_file_path) {
-                Ok(()) => {
-                    whitelist = super::create_whitelist(&config.whitelist_patterns)?;
-                    monitor.set_watched_paths(&config.search_directories);
-                    monitor.set_debounce_duration(config.debounce_duration);
-                    debug!("Configuration reloaded");
-                    super::run::execute(&config, cache, dry_run, details)?;
-                }
-                Err(error) => {
-                    warn!(
-                        "Failed to reload configuration '{}': {}",
-                        config_file_path.display(),
-                        error
-                    );
-                    warn!("Due to an error the configuration stay unchanged");
-                }
-            },
-            Event::ScanRepositories(repositories_to_scan) => {
-                for repository_to_scan in &repositories_to_scan {
-                    debug!("Scanning repository '{}'", repository_to_scan.display());
-                    let mut exclusions = BTreeSet::new();
-                    super::find_paths_to_exclude_from_backup(
-                        repository_to_scan,
-                        &whitelist,
-                        &mut exclusions,
-                    )?;
-                    let diff = cache.find_diff_in_directory(&exclusions, repository_to_scan);
-                    let paths_failed_to_add =
-                        super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details);
+    let mut context = HandleEventContext {
+        config: &mut config,
+        config_file_path: &config_file_path,
+        whitelist: &mut whitelist,
+        monitor: &mut monitor,
+        cache,
+        dry_run,
+        details,
+        is_timemachine_running: false,
+    };
+    let mut pending_events = BTreeSet::new();
 
-                    for path in paths_failed_to_add {
-                        exclusions.remove(&path);
-                    }
+    'outer: while let Some(event) = context.monitor.get_event() {
+        if crate::timemachine::is_time_machine_running() && !context.is_timemachine_running {
+            info!("Time Machine backup started");
+            context.monitor.start_timemachine_monitoring();
+            context.is_timemachine_running = true;
+        }
 
-                    if !dry_run {
-                        cache.remove_paths_in_directory(repository_to_scan);
-                        cache.add_paths(exclusions.into_iter());
-                    }
+        if matches!(event, Event::TimeMachineBackupFinished) {
+            info!("Time Machine backup finished");
+            context.is_timemachine_running = false;
+            for event in std::mem::take(&mut pending_events) {
+                if handle_event(&mut context, event)?.is_break() {
+                    break 'outer;
                 }
             }
-            Event::Shutdown => {
-                break;
-            }
+            continue;
+        }
+
+        if context.is_timemachine_running && event.can_be_delayed() {
+            debug!("Time Machine is backing up, delaying event");
+            pending_events.insert(event);
+        } else if handle_event(&mut context, event)?.is_break() {
+            break;
         }
     }
 
@@ -104,6 +172,10 @@ pub fn execute(
 enum Event {
     /// Request to reload the configuration
     ReloadConfiguration,
+    /// Signal Time machine backup finished
+    TimeMachineBackupFinished,
+    /// Request to perform the initial scan
+    InitialScan,
     /// Request to scan some repositories
     ScanRepositories(BTreeSet<PathBuf>),
     /// Shutdown
@@ -113,11 +185,24 @@ enum Event {
     Shutdown,
 }
 
+impl Event {
+    pub fn can_be_delayed(&self) -> bool {
+        match self {
+            Event::ReloadConfiguration | Event::TimeMachineBackupFinished | Event::Shutdown => {
+                false
+            }
+            Event::InitialScan | Event::ScanRepositories(_) => true,
+        }
+    }
+}
+
 struct Monitor {
     control_sender: Sender<MonitorControl>,
     debouncer_control_sender: Sender<DebouncerControl>,
+    timemachine_control_sender: Sender<TimeMachineControl>,
     event_receiver_final: Receiver<Event>,
     thread_handles: Vec<JoinHandle<()>>,
+    pending_events: BTreeSet<Event>,
 }
 
 impl Monitor {
@@ -126,29 +211,37 @@ impl Monitor {
             crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let (debouncer_thread_handle, debouncer_control_sender, event_receiver_final) =
             monitor_details::spawn_debouncer_thread(event_receiver_debouncer)?;
-        let (signals_thread_handle, signals_receiver) = monitor_details::spawn_signals_thread()?;
-        let (monitor_thread_handle, monitor_control_sender, event_receiver) =
-            monitor_details::spawn_monitor_thread()?;
-        let dispatcher_thread_handle = monitor_details::spawn_dispatcher_thread(
-            signals_receiver,
-            event_receiver,
-            event_sender_to_debouncer,
-        )?;
+        let signals_thread_handle =
+            monitor_details::spawn_signals_thread(event_sender_to_debouncer.clone())?;
+        let (monitor_thread_handle, monitor_control_sender) =
+            monitor_details::spawn_monitor_thread(event_sender_to_debouncer.clone())?;
+        let (timemachine_thread_handle, timemachine_control_sender) =
+            monitor_details::spawn_timemachine_thread(event_sender_to_debouncer.clone())?;
 
         Ok(Self {
             control_sender: monitor_control_sender,
             debouncer_control_sender,
+            timemachine_control_sender,
             event_receiver_final,
             thread_handles: vec![
                 signals_thread_handle,
-                dispatcher_thread_handle,
                 debouncer_thread_handle,
                 monitor_thread_handle,
+                timemachine_thread_handle,
             ],
+            pending_events: BTreeSet::new(),
         })
     }
 
+    pub fn push_event(&mut self, event: Event) {
+        self.pending_events.insert(event);
+    }
+
     pub fn get_event(&mut self) -> Option<Event> {
+        if let Some(event) = self.pending_events.pop_first() {
+            return Some(event);
+        }
+
         self.event_receiver_final.recv().ok()
     }
 
@@ -177,12 +270,20 @@ impl Monitor {
             .debouncer_control_sender
             .send(DebouncerControl::SetDebounceDuration(duration));
     }
+
+    pub fn start_timemachine_monitoring(&mut self) {
+        let _ = self
+            .timemachine_control_sender
+            .send(TimeMachineControl::ResumeMonitoring);
+    }
 }
 
 impl Drop for Monitor {
     fn drop(&mut self) {
         let _ = self.control_sender.send(MonitorControl::Shutdown);
-
+        let _ = self
+            .timemachine_control_sender
+            .send(TimeMachineControl::Shutdown);
         while let Some(handle) = self.thread_handles.pop() {
             handle.join().unwrap();
         }
@@ -202,26 +303,27 @@ mod monitor_details {
     use notify::Watcher;
 
     use super::EVENT_QUEUE_SIZE;
-    use crate::git;
+    use crate::{git, timemachine};
 
-    pub fn spawn_signals_thread() -> anyhow::Result<(JoinHandle<()>, Receiver<()>)> {
+    pub fn spawn_signals_thread(
+        event_sender: Sender<super::Event>,
+    ) -> anyhow::Result<JoinHandle<()>> {
         let mut signals = signal_hook::iterator::Signals::new([
             signal_hook::consts::SIGTERM,
             signal_hook::consts::SIGINT,
         ])
         .unwrap();
-        let (signal_sender, signal_receiver) = crossbeam_channel::bounded(1);
         let thread_handle = std::thread::Builder::new()
             .name("Signals Thread".to_string())
             .spawn(move || {
                 debug!("Signals thread starts");
                 if signals.into_iter().next().is_some() {
-                    let _ = signal_sender.send(());
+                    let _ = event_sender.send(crate::commands::monitor::Event::Shutdown);
                 }
                 debug!("Signals thread shutdowns");
             })?;
 
-        Ok((thread_handle, signal_receiver))
+        Ok(thread_handle)
     }
 
     pub enum MonitorControl {
@@ -231,12 +333,9 @@ mod monitor_details {
         Shutdown,
     }
 
-    pub fn spawn_monitor_thread() -> anyhow::Result<(
-        JoinHandle<()>,
-        Sender<MonitorControl>,
-        Receiver<super::Event>,
-    )> {
-        let (event_sender, event_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
+    pub fn spawn_monitor_thread(
+        event_sender: Sender<super::Event>,
+    ) -> anyhow::Result<(JoinHandle<()>, Sender<MonitorControl>)> {
         let (control_sender, control_receiver) = crossbeam_channel::bounded(1);
         let (fs_event_sender, fs_event_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let watcher_config = notify::Config::default();
@@ -314,7 +413,7 @@ mod monitor_details {
                 debug!("Monitor shutdowns");
             })?;
 
-        Ok((thread_handle, control_sender, event_receiver))
+        Ok((thread_handle, control_sender))
     }
 
     fn accept_event(event: &notify::Event) -> bool {
@@ -457,35 +556,45 @@ mod monitor_details {
         ))
     }
 
-    pub fn spawn_dispatcher_thread(
-        signals_receiver: Receiver<()>,
-        event_receiver: Receiver<super::Event>,
-        event_sender_to_debouncer: Sender<super::Event>,
-    ) -> anyhow::Result<JoinHandle<()>> {
+    pub enum TimeMachineControl {
+        ResumeMonitoring,
+        Shutdown,
+    }
+
+    pub fn spawn_timemachine_thread(
+        event_sender: Sender<super::Event>,
+    ) -> anyhow::Result<(JoinHandle<()>, Sender<TimeMachineControl>)> {
+        let (control_sender, control_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let thread_handle = std::thread::Builder::new()
-            .name("Dispatcher Thread".to_string())
+            .name("Time Machine Monitoring Thread".to_string())
             .spawn(move || {
-                debug!("Dispatcher starts");
-                loop {
-                    select! {
-                        recv(signals_receiver) -> event => {
-                            if let Ok(()) = event {
-                                let _ = event_sender_to_debouncer.send(super::Event::Shutdown);
-                                break;
+                debug!("Time Machine monitoring thread started");
+                'outer: for control in &control_receiver {
+                    match control {
+                        TimeMachineControl::ResumeMonitoring => {
+                            const TIMEOUT: Duration = Duration::from_secs(1);
+                            debug!("Start monitoring tmutil status");
+                            while timemachine::is_time_machine_running() {
+                                if let Ok(TimeMachineControl::Shutdown) =
+                                    control_receiver.recv_timeout(TIMEOUT)
+                                {
+                                    break 'outer;
+                                }
                             }
+                            debug!("Stop monitoring tmutil status");
+                            let _ = event_sender.send(super::Event::TimeMachineBackupFinished);
                         }
-                        recv(event_receiver) -> event => {
-                            if let Ok(event) = event {
-                                let _ = event_sender_to_debouncer.send(event);
-                            }
+                        TimeMachineControl::Shutdown => {
+                            break;
                         }
                     }
                 }
-                debug!("Dispatcher shutdowns");
+                debug!("Time Machine monitoring thread stopped");
             })?;
 
-        Ok(thread_handle)
+        Ok((thread_handle, control_sender))
     }
+
     #[cfg(test)]
     mod tests {
         use rstest::rstest;
@@ -611,7 +720,7 @@ mod tests {
     use serial_test::serial;
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::cache::Cache;
+    use crate::{cache::Cache, json::save_json_file};
 
     /// Test the behavior in case of a missing configuration file.
     /// It should not return an error, it should create the default configuration file.
@@ -626,9 +735,40 @@ mod tests {
         });
         // Ensure the signals handlers are setup
         std::thread::sleep(Duration::from_secs(5));
-        unsafe {
-            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
-        }
+        crate::commands::tests::send_sigint();
         thread_handle.join().unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn test_initial_scan() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_directory("folder/repository")
+            .add_text_file("folder/repository/.gitignore", "a\nb\nc")
+            .add_empty_file("folder/repository/a")
+            .add_empty_file("folder/repository/b")
+            .add_empty_file("folder/repository/c")
+            .build()
+            .unwrap();
+        let folder_path = temp_dir.path().join("folder");
+        let repository_path = folder_path.join("repository");
+        let config_file_path = folder_path.join("config.json");
+        let config = crate::commands::tests::create_config(&folder_path);
+        save_json_file(&config_file_path, &config).unwrap();
+        crate::commands::tests::init_git_repository(&repository_path);
+        let thread_handle = std::thread::spawn(move || {
+            let mut cache = Cache::open_in_memory().unwrap();
+
+            super::execute(&config_file_path, None, &mut cache, false, true).unwrap();
+
+            cache
+        });
+        // Need to wait to ensure the internal Monitor is created by super::execute() to ensure
+        // the signal will be handled.
+        std::thread::sleep(Duration::from_secs(5));
+        crate::commands::tests::send_sigint();
+        let cache = thread_handle.join().unwrap();
+        let paths = cache.paths();
+        assert_eq!(paths.len(), 3);
     }
 }

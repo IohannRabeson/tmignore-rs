@@ -10,6 +10,7 @@ mod legacy_cache;
 mod legacy_config;
 mod timemachine;
 
+use anyhow::anyhow;
 use clap::{Parser, Subcommand};
 use log::{error, info};
 use std::{backtrace::BacktraceStatus, path::Path};
@@ -104,6 +105,8 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
     import_legacy_cache_file(&cli.legacy_cache, &cli.cache)?;
     match cli.command {
         Commands::Run { dry_run, details } => {
+            check_for_ongoing_time_machine_backup(dry_run)?;
+
             let mut cache = Cache::open_or_create(&cli.cache)?;
             let config = Config::load_or_create_file(&cli.config)?;
 
@@ -116,6 +119,8 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
             commands::list::execute(&cache, &mut std::io::stdout(), separator)
         }
         Commands::Reset { dry_run, details } => {
+            check_for_ongoing_time_machine_backup(dry_run)?;
+
             let mut cache = Cache::open_or_create(&cli.cache)?;
 
             commands::reset::execute(&mut cache, dry_run, details);
@@ -141,6 +146,14 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
             commands::stats::execute(&cache, &mut std::io::stdout(), stat)
         }
     }?;
+
+    Ok(())
+}
+
+fn check_for_ongoing_time_machine_backup(dry_run: bool) -> anyhow::Result<()> {
+    if !dry_run && crate::timemachine::is_time_machine_running() {
+        return Err(anyhow!("Time Machine is currently doing a backup."));
+    }
 
     Ok(())
 }
@@ -436,9 +449,7 @@ mod tests {
         std::fs::write(&b_file_path, "").unwrap();
         std::fs::write(&c_file_path, "").unwrap();
         std::thread::sleep(Duration::from_secs(5));
-        unsafe {
-            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
-        }
+        crate::commands::tests::send_sigint();
         handle.join().unwrap();
 
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
@@ -521,9 +532,7 @@ mod tests {
             .insert(temp_dir.path().join("repository"));
         save_json_file(config_file_path, &config).unwrap();
         std::thread::sleep(Duration::from_secs(5));
-        unsafe {
-            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
-        }
+        crate::commands::tests::send_sigint();
         handle.join().unwrap();
 
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
@@ -588,9 +597,7 @@ mod tests {
         // Write an invalid config
         std::fs::write(config_file_path, "").unwrap();
         std::thread::sleep(Duration::from_secs(5));
-        unsafe {
-            libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
-        }
+        crate::commands::tests::send_sigint();
         handle.join().unwrap();
     }
 }
