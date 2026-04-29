@@ -31,7 +31,7 @@ jobs:
           export VERSION=${{ github.ref_name }}
           export SHA256_ARM=$(cat sha256-aarch64.txt)
           export SHA256_INTEL=$(cat sha256-x86-64.txt)
-          envsubst < .github/tmignore-rs.rb.template > homebrew-tap/Formula/tmignore-rs.rb
+          envsubst < tmignore-rs.rb.template > homebrew-tap/Formula/tmignore-rs.rb
       - name: Push formula
         working-directory: homebrew-tap
         run: |
