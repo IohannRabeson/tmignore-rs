@@ -8,49 +8,63 @@ on:
 env:
   CARGO_TERM_COLOR: always
   TMIGNORE_RS_VERSION: ${{ github.ref_name }}
+
 jobs:
   publish:
     permissions:
       contents: write
-    runs-on: "macos-latest"
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-        - rust-target: aarch64-apple-darwin
-          label: aarch64
-        - rust-target: x86_64-apple-darwin
-          label: x86-64
+          - rust-target: aarch64-apple-darwin
+            label: aarch64
+          - rust-target: x86_64-apple-darwin
+            label: x86-64
     env:
       executable_output_file_path: "target/${{ matrix.rust-target }}/final/tmignore-rs"
       zip_output_file_path: "tmignore-rs_${{ github.ref_name }}_${{ matrix.label }}.zip"
+      sha256_output_file_path: "sha256-${{ matrix.label }}.txt"
     timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v6
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: ${{ matrix.rust-target }}
-    - name: Rust Cache
-      uses: Swatinem/rust-cache@v2
-      with:
-        key: release
-    - name: Build
-      run: cargo build --profile=final --verbose --locked --target ${{ matrix.rust-target }}
-    - name: Copy Binary
-      run: cp ${{ env.executable_output_file_path }} .
-    - name: Zip
-      uses: thedoctor0/zip-release@0.7.6
-      with:
-        type: "zip"
-        path: tmignore-rs LICENSE README.md
-        filename: ${{ env.zip_output_file_path }}
-    - name: Release
-      if: github.event_name == 'release'
-      uses: svenstaro/upload-release-action@v2
-      with:
-        repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: ${{ env.zip_output_file_path }}
-        tag: ${{ github.ref_name }}
-        
-    
+      - uses: actions/checkout@v6
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - name: Build
+        run: cargo build --profile=final --verbose --locked --target ${{ matrix.rust-target }}
+      - name: Copy Binary
+        run: cp ${{ env.executable_output_file_path }} .
+      - name: Zip
+        uses: thedoctor0/zip-release@0.7.6
+        with:
+          type: zip
+          path: tmignore-rs LICENSE README.md
+          filename: ${{ env.zip_output_file_path }}
+      - name: Upload Release Asset
+        if: github.event_name == 'release'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ env.zip_output_file_path }}
+          tag: ${{ github.ref_name }}
+      - name: Compute SHA256
+        run: shasum -a 256 ${{ env.zip_output_file_path }} | awk '{print $1}' > ${{ env.sha256_output_file_path }}
+      - name: Upload SHA256 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha256-${{ matrix.label }}
+          path: ${{ env.sha256_output_file_path }}
+
+  update-formula:
+    if: github.event_name == 'release' && github.event.release.prerelease == false
+    needs: publish
+    uses: ./.github/workflows/homebrew.yml
+    secrets:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
