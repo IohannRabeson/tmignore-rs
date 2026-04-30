@@ -50,3 +50,10 @@ codegen-units = 1
 opt-level = 3 # Also disable debug_assertions
 strip = "symbols"
 lto = "fat"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+indexing_slicing = "warn"
+arithmetic_side_effects = "warn"
