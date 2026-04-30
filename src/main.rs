@@ -8,6 +8,7 @@ mod git;
 mod json;
 mod legacy_cache;
 mod legacy_config;
+mod text;
 mod timemachine;
 
 use anyhow::anyhow;

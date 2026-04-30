@@ -64,11 +64,11 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     let remove_count = diff.removed.len();
 
     if add_count > 0 {
-        info!("Added {add_count} paths to the backup exclusion list");
+        info!("Added {add_count} {} to the backup exclusion list", crate::text::plural("path", add_count));
     }
 
     if remove_count > 0 {
-        info!("Removed {remove_count} paths from the backup exclusion list");
+        info!("Removed {remove_count} {} from the backup exclusion list", crate::text::plural("path", remove_count));
     }
 
     if add_count == 0 && remove_count == 0 {
