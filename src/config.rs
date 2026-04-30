@@ -93,11 +93,15 @@ pub enum ValidationFail {
     NotFound(PathBuf),
     #[error("No search directories")]
     NoSearchDirectories,
+    #[error("Debouce duration is too long (> 1 minute)")]
+    DebounceDurationTooLong,
 }
 
 impl Config {
     pub const DEFAULT_DEBOUNCE_DURATION_SECS: u64 = 2;
     pub const DEFAULT_THREADS: usize = 4;
+    // If this value is changed the error text of DebouceDurationTooLong must be updated.
+    pub const MAX_DEBOUNCE_DURATION_SECS: u64 = 60;
 
     pub fn load_or_create_file(file_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let file_path = file_path.as_ref();
@@ -178,6 +182,10 @@ impl Config {
 
         if config.search_directories.is_empty() {
             fails.push(ValidationFail::NoSearchDirectories);
+        }
+
+        if config.debounce_duration >= Duration::from_secs(Self::MAX_DEBOUNCE_DURATION_SECS) {
+            fails.push(ValidationFail::DebounceDurationTooLong);
         }
 
         if fails.is_empty() {
@@ -384,5 +392,20 @@ mod tests {
 "#;
         assert!(config.reload(invalid_json.as_bytes()).is_err());
         assert_eq!(1, config.search_directories.len());
+    }
+
+    #[test]
+    fn test_debouce_duration_too_big() {
+        let json = r#"
+{ "search_directories": ["~"],
+  "ignored_directories": [],
+  "whitelist_patterns": [],
+  "threads": 4,
+  "debounce_duration": "18446744073709551615s" }
+"#;
+        let result = Config::load(json.as_bytes());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().is::<ValidationError>());
     }
 }
