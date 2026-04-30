@@ -65,7 +65,7 @@ fn fetch_total_size(paths: &[PathBuf]) -> anyhow::Result<u64> {
 
     for file in &files_to_process {
         if let Ok(metadata) = file.metadata() {
-            total += metadata.len();
+            total = total.saturating_add(metadata.len());
         }
     }
 

@@ -60,7 +60,7 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
         remove_errors.append(&mut exclusion_errors);
     }
 
-    let add_count = diff.added.len() - add_errors.len();
+    let add_count = diff.added.len().saturating_sub(add_errors.len());
     let remove_count = diff.removed.len();
 
     if add_count > 0 {
