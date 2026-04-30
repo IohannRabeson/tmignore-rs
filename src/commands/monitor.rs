@@ -528,7 +528,9 @@ mod monitor_details {
                                         }
                                         Ok(event) => {
                                             if debounce_at.is_none() {
-                                                debounce_at = Some(Instant::now() + debounce_duration);
+                                                // If debounce_duration is too big, it will debounce immediatly.
+                                                // This should never happens in practise because we check this value is not too big when validating the config.
+                                                debounce_at = Some(Instant::now().checked_add(debounce_duration).unwrap_or(Instant::now()));
                                                 events_to_send.insert(event);
                                             }
                                         }
