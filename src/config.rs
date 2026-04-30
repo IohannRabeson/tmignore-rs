@@ -75,7 +75,7 @@ pub struct ValidationError {
 
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Validation error:")?;
+        writeln!(f, "{} failed:", crate::text::plural("validation", self.fails.len()))?;
         for fail in &self.fails {
             writeln!(f, " - {fail}")?;
         }

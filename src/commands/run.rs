@@ -32,7 +32,7 @@ pub fn execute(
         }
         thread_handle.join().unwrap();
 
-        info!("Found {} repositories", repositories.len());
+        info!("Found {} {}", repositories.len(), crate::text::plural("repository", repositories.len()));
 
         if details {
             for repository in &repositories {
