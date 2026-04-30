@@ -298,6 +298,7 @@ mod monitor_details {
         time::{Duration, Instant},
     };
 
+    use anyhow::Context;
     use crossbeam_channel::{Receiver, Sender, select};
     use log::{debug, warn};
     use notify::Watcher;
@@ -311,8 +312,8 @@ mod monitor_details {
         let mut signals = signal_hook::iterator::Signals::new([
             signal_hook::consts::SIGTERM,
             signal_hook::consts::SIGINT,
-        ])
-        .unwrap();
+        ]).context("Failed to setup signals hooks")?;
+
         let thread_handle = std::thread::Builder::new()
             .name("Signals Thread".to_string())
             .spawn(move || {
