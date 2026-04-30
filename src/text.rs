@@ -6,7 +6,7 @@ pub fn plural(word: &str, count: usize) -> String {
             word.push_str("ies");
         }
         else {
-            word.push_str("s");
+            word.push('s');
         }
     }
     word
