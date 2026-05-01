@@ -114,7 +114,7 @@ tmignore-rs monitor --help
 
 ## Configuration
 The configuration file is located at `~/.config/tmignore-rs/config.json`. \
-You can find this path using the [`path`]()
+You can find this path using the [`path`](#path-command) command.
 Here is the default configuration created automatically the first time you run tmignore-rs.   
 If you were using [tmignore](https://github.com/samuelmeuli/tmignore) the configuration will be imported.
 
