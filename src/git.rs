@@ -66,7 +66,9 @@ pub fn find_repositories(
 fn create_walk_builder(directories: &BTreeSet<PathBuf>, ignore: bool) -> ignore::WalkBuilder {
     assert!(!directories.is_empty());
     let mut directories_iter = directories.iter();
-    // Here it's guaranteed that directories contains something so we can unwrap
+
+    // This unwrap will be useless when https://github.com/BurntSushi/ripgrep/pull/3261 will be merged.
+    #[allow(clippy::unwrap_used, reason = "directories is guaranteed non-empty")]
     let mut builder = ignore::WalkBuilder::new(directories_iter.next().unwrap());
 
     for directory in directories_iter {
