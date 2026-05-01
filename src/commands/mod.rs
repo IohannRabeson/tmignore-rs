@@ -10,9 +10,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use anyhow::anyhow;
 use log::{error, info, warn};
 use regex::RegexSet;
-use anyhow::anyhow;
 
 use crate::{
     git,
@@ -65,11 +65,17 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     let remove_count = diff.removed.len();
 
     if add_count > 0 {
-        info!("Added {add_count} {} to the backup exclusion list", crate::text::plural("path", add_count));
+        info!(
+            "Added {add_count} {} to the backup exclusion list",
+            crate::text::plural("path", add_count)
+        );
     }
 
     if remove_count > 0 {
-        info!("Removed {remove_count} {} from the backup exclusion list", crate::text::plural("path", remove_count));
+        info!(
+            "Removed {remove_count} {} from the backup exclusion list",
+            crate::text::plural("path", remove_count)
+        );
     }
 
     if add_count == 0 && remove_count == 0 {
@@ -133,7 +139,11 @@ fn find_paths_to_exclude_from_backup(
 }
 
 fn join_thread<T>(thread_handle: std::thread::JoinHandle<T>) -> anyhow::Result<T> {
-    let thread_name = thread_handle.thread().name().unwrap_or("<unamed>").to_string();
+    let thread_name = thread_handle
+        .thread()
+        .name()
+        .unwrap_or("<unamed>")
+        .to_string();
 
     match thread_handle.join() {
         Ok(result) => Ok(result),
@@ -145,7 +155,7 @@ fn join_thread<T>(thread_handle: std::thread::JoinHandle<T>) -> anyhow::Result<T
             } else {
                 Err(anyhow!("Thread '{thread_name}' panicked"))
             }
-        },
+        }
     }
 }
 

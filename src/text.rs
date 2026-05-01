@@ -4,8 +4,7 @@ pub fn plural(word: &str, count: usize) -> String {
         if word.ends_with('y') && word.len() > 1 {
             let _ = word.pop();
             word.push_str("ies");
-        }
-        else {
+        } else {
             word.push('s');
         }
     }

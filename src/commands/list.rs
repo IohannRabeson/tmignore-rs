@@ -18,7 +18,9 @@ mod tests {
     #[test]
     fn test_execute() {
         let mut cache = Cache::open_in_memory().unwrap();
-        cache.reset([PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]).unwrap();
+        cache
+            .reset([PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")])
+            .unwrap();
         let mut writer = Vec::new();
 
         super::execute(&cache, &mut writer, '\n').unwrap();
