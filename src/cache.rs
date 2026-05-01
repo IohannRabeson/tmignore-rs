@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use anyhow::anyhow;
 use chrono::{DateTime, Utc};
 use log::{debug, info};
 use rusqlite::{Connection, Row, Transaction, params};
@@ -102,9 +103,9 @@ impl Cache {
             connection: RefCell::new(Connection::open(file_path)?),
         };
 
-        let previous_version = cache.get_version();
+        let previous_version = cache.get_version()?;
         cache.setup()?;
-        let new_version = cache.get_version();
+        let new_version = cache.get_version()?;
         if previous_version != new_version {
             info!("Cache updated from version {previous_version} to version {new_version}");
         }
@@ -124,78 +125,82 @@ impl Cache {
 
     fn setup(&mut self) -> anyhow::Result<()> {
         MIGRATIONS.to_latest(&mut self.connection.borrow_mut())?;
-        Self::set_last_update_connection(&mut self.connection.borrow_mut());
+        Self::set_last_update_connection(&mut self.connection.borrow_mut())?;
         Ok(())
     }
 
     const SQL_INSERT_PATH: &str = "INSERT INTO paths (path) VALUES (?)";
     const SQL_SET_LAST_UPDATE: &str = "UPDATE metadata SET last_update=?";
 
-    pub fn reset(&mut self, iter: impl IntoIterator<Item = PathBuf>) {
+    pub fn reset(&mut self, iter: impl IntoIterator<Item = PathBuf>) -> anyhow::Result<()> {
         if let Ok(mut transaction) = self.connection.borrow_mut().transaction() {
-            let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH).unwrap();
-            transaction.execute("DELETE FROM paths", params![]).unwrap();
+            let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH)?;
+            transaction.execute("DELETE FROM paths", params![])?;
             for path in iter {
-                insert_stmt.execute(params![path_to_bytes(&path)]).unwrap();
+                insert_stmt.execute(params![path_to_bytes(&path)])?;
             }
             drop(insert_stmt);
-            Self::set_last_update_transaction(&mut transaction);
-            transaction.commit().unwrap();
+            Self::set_last_update_transaction(&mut transaction)?;
+            transaction.commit()?;
         }
+        Ok(())
     }
 
-    fn set_last_update_transaction(transaction: &mut Transaction) {
+    fn set_last_update_transaction(transaction: &mut Transaction) -> anyhow::Result<()> {
         let now = chrono::Utc::now();
 
         transaction
-            .execute(Self::SQL_SET_LAST_UPDATE, params![now])
-            .unwrap();
+            .execute(Self::SQL_SET_LAST_UPDATE, params![now])?;
+
+        Ok(())
     }
 
-    fn set_last_update_connection(connection: &mut Connection) {
+    fn set_last_update_connection(connection: &mut Connection) -> anyhow::Result<()> {
         let now = chrono::Utc::now();
 
         connection
-            .execute(Self::SQL_SET_LAST_UPDATE, params![now])
-            .unwrap();
+            .execute(Self::SQL_SET_LAST_UPDATE, params![now])?;
+
+        Ok(())
     }
 
-    pub fn add_paths(&mut self, iter: impl Iterator<Item = PathBuf>) {
+    pub fn add_paths(&mut self, iter: impl Iterator<Item = PathBuf>) -> anyhow::Result<()> {
         if let Ok(mut transaction) = self.connection.borrow_mut().transaction() {
-            let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH).unwrap();
+            let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH)?;
             for path in iter {
-                insert_stmt.execute(params![path_to_bytes(&path)]).unwrap();
+                insert_stmt.execute(params![path_to_bytes(&path)])?;
             }
             drop(insert_stmt);
-            Self::set_last_update_transaction(&mut transaction);
-            transaction.commit().unwrap();
+            Self::set_last_update_transaction(&mut transaction)?;
+            transaction.commit()?;
         }
+
+        Ok(())
     }
 
-    pub fn remove_paths_in_directory(&mut self, directory: impl AsRef<Path>) {
+    pub fn remove_paths_in_directory(&mut self, directory: impl AsRef<Path>) -> anyhow::Result<()> {
         let directory = directory.as_ref();
         if let Ok(mut transaction) = self.connection.borrow_mut().transaction() {
             transaction
                 .execute(
                     "DELETE FROM paths WHERE path LIKE ? || '%'",
                     params![path_to_bytes(directory)],
-                )
-                .unwrap();
-            Self::set_last_update_transaction(&mut transaction);
-            transaction.commit().unwrap();
+                )?;
+            Self::set_last_update_transaction(&mut transaction)?;
+            transaction.commit()?;
         }
+        Ok(())
     }
 
-    pub fn find_diff(&self, exclusions: &BTreeSet<PathBuf>) -> Diff {
+    pub fn find_diff(&self, exclusions: &BTreeSet<PathBuf>) -> anyhow::Result<Diff> {
         let mut diff = Diff::default();
 
         {
             let connection = self.connection.borrow();
             let mut stmt = connection
-                .prepare("SELECT * FROM paths WHERE path = ?")
-                .unwrap();
+                .prepare("SELECT * FROM paths WHERE path = ?")?;
             for exclusion in exclusions {
-                if !stmt.exists(params![path_to_bytes(exclusion)]).unwrap() {
+                if !stmt.exists(params![path_to_bytes(exclusion)])? {
                     diff.added.insert(exclusion.clone());
                 }
             }
@@ -203,14 +208,13 @@ impl Cache {
 
         {
             let connection = self.connection.borrow();
-            let mut select_stmt = connection.prepare("SELECT path FROM paths").unwrap();
+            let mut select_stmt = connection.prepare("SELECT path FROM paths")?;
             let paths = select_stmt
                 .query_map(params![], |row| {
-                    let bytes: Vec<u8> = row.get(0).unwrap();
+                    let bytes: Vec<u8> = row.get(0)?;
 
                     Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
-                })
-                .unwrap();
+                })?;
 
             for path in paths.into_iter().filter_map(Result::ok) {
                 if !exclusions.contains(&path) {
@@ -219,23 +223,22 @@ impl Cache {
             }
         }
 
-        diff
+        Ok(diff)
     }
 
     pub fn find_diff_in_directory(
         &self,
         exclusions: &BTreeSet<PathBuf>,
         directory: impl AsRef<Path>,
-    ) -> Diff {
+    ) -> anyhow::Result<Diff> {
         let mut diff = Diff::default();
         let directory = directory.as_ref();
         {
             let connection = self.connection.borrow();
             let mut stmt = connection
-                .prepare("SELECT * FROM paths WHERE path = ?")
-                .unwrap();
+                .prepare("SELECT * FROM paths WHERE path = ?")?;
             for exclusion in exclusions.iter().filter(|path| path.starts_with(directory)) {
-                if !stmt.exists(params![path_to_bytes(exclusion)]).unwrap() {
+                if !stmt.exists(params![path_to_bytes(exclusion)])? {
                     diff.added.insert(exclusion.clone());
                 }
             }
@@ -244,15 +247,13 @@ impl Cache {
         {
             let connection = self.connection.borrow();
             let mut select_stmt = connection
-                .prepare("SELECT path FROM paths WHERE path LIKE ? || '%'")
-                .unwrap();
+                .prepare("SELECT path FROM paths WHERE path LIKE ? || '%'")?;
             let paths = select_stmt
                 .query_map(params![path_to_bytes(directory)], |row| {
-                    let bytes: Vec<u8> = row.get(0).unwrap();
+                    let bytes: Vec<u8> = row.get(0)?;
 
                     Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
-                })
-                .unwrap();
+                })?;
 
             for path in paths.into_iter().filter_map(Result::ok) {
                 if !exclusions.contains(&path) {
@@ -261,46 +262,43 @@ impl Cache {
             }
         }
 
-        diff
+        Ok(diff)
     }
 
-    pub fn paths(&self) -> Vec<PathBuf> {
+    pub fn paths(&self) -> anyhow::Result<Vec<PathBuf>> {
         let connection = self.connection.borrow();
-        let mut stmt = connection.prepare("SELECT path FROM paths").unwrap();
+        let mut stmt = connection.prepare("SELECT path FROM paths")?;
         let paths = stmt
             .query_map(params![], |row| {
-                let bytes: Vec<u8> = row.get(0).unwrap();
+                let bytes: Vec<u8> = row.get(0)?;
 
                 Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
-            })
-            .unwrap();
+            })?;
 
-        paths.into_iter().filter_map(Result::ok).collect()
+        Ok(paths.into_iter().filter_map(Result::ok).collect())
     }
 
     /// Get the date and time of the last cache update.
     ///
     /// This function will panic for a cache with the schema V0 but that
     /// supposed to never happen.
-    pub fn last_update(&self) -> DateTime<Utc> {
-        assert!(self.get_version() > 0);
+    pub fn last_update(&self) -> anyhow::Result<DateTime<Utc>> {
+        if self.get_version()? == 0 {
+            return Err(anyhow!("last_update is only available for schema with version > 0"))
+        }
 
-        let connection = self.connection.borrow();
-
-        connection
+        Ok(self.connection.borrow()
             .query_one(
                 "SELECT last_update FROM metadata WHERE id = 0",
                 params![],
                 |row: &Row<'_>| row.get(0),
-            )
-            .unwrap()
+            )?)
     }
 
-    pub fn get_version(&self) -> u32 {
-        self.connection
+    pub fn get_version(&self) -> anyhow::Result<u32> {
+        Ok(self.connection
             .borrow()
-            .pragma_query_value(None, "user_version", |r| r.get(0))
-            .unwrap()
+            .pragma_query_value(None, "user_version", |r| r.get(0))?)
     }
 }
 
@@ -333,7 +331,7 @@ mod tests {
     #[test]
     fn test_version() {
         let cache = Cache::open_in_memory().unwrap();
-        let version = cache.get_version();
+        let version = cache.get_version().unwrap();
 
         assert_eq!(MIGRATIONS_SLICE.len() as u32, version);
     }
@@ -341,17 +339,17 @@ mod tests {
     #[test]
     fn test_reset() {
         let mut cache = Cache::open_in_memory().unwrap();
-        assert!(cache.paths().is_empty());
-        cache.reset([PathBuf::from("hello"), PathBuf::from("world")]);
-        assert_eq!(2, cache.paths().len());
+        assert!(cache.paths().unwrap().is_empty());
+        cache.reset([PathBuf::from("hello"), PathBuf::from("world")]).unwrap();
+        assert_eq!(2, cache.paths().unwrap().len());
     }
 
     #[test]
     fn test_find_diff() {
         let mut cache = Cache::open_in_memory().unwrap();
-        cache.reset([PathBuf::from("hello"), PathBuf::from("world")]);
+        cache.reset([PathBuf::from("hello"), PathBuf::from("world")]).unwrap();
         let exclusions = BTreeSet::from([PathBuf::from("world"), PathBuf::from("hey")]);
-        let diff = cache.find_diff(&exclusions);
+        let diff = cache.find_diff(&exclusions).unwrap();
         assert_eq!(1, diff.added.len());
         assert!(diff.added.contains(&PathBuf::from("hey")));
         assert_eq!(1, diff.removed.len());
@@ -367,13 +365,13 @@ mod tests {
             PathBuf::from("1").join("a"),
             PathBuf::from("1").join("b"),
             PathBuf::from("1").join("c"),
-        ]);
+        ]).unwrap();
         let exclusions = BTreeSet::from([
             PathBuf::from("1").join("a"),
             PathBuf::from("1").join("b"),
             PathBuf::from("1").join("c"),
         ]);
-        let diff = cache.find_diff_in_directory(&exclusions, PathBuf::from("1"));
+        let diff = cache.find_diff_in_directory(&exclusions, PathBuf::from("1")).unwrap();
         assert!(diff.added.is_empty());
         assert!(diff.removed.is_empty());
         let exclusions = BTreeSet::from([
@@ -381,7 +379,7 @@ mod tests {
             PathBuf::from("1").join("b"),
             PathBuf::from("1").join("D"),
         ]);
-        let diff = cache.find_diff_in_directory(&exclusions, PathBuf::from("1"));
+        let diff = cache.find_diff_in_directory(&exclusions, PathBuf::from("1")).unwrap();
         assert_eq!(1, diff.added.len());
         assert!(diff.added.contains(&PathBuf::from("1").join("D")));
         assert_eq!(1, diff.removed.len());
@@ -395,11 +393,11 @@ mod tests {
         cache.reset([
             PathBuf::from("hello").join("removed"),
             PathBuf::from("world"),
-        ]);
-        cache.remove_paths_in_directory("hello");
+        ]).unwrap();
+        cache.remove_paths_in_directory("hello").unwrap();
 
-        assert_eq!(1, cache.paths().len());
-        assert_eq!(Some(&PathBuf::from("world")), cache.paths().first());
+        assert_eq!(1, cache.paths().unwrap().len());
+        assert_eq!(Some(&PathBuf::from("world")), cache.paths().unwrap().first());
     }
 
     #[test]
@@ -419,7 +417,7 @@ mod tests {
         let cache_file_path = temp_dir.path().join("cache.db");
         let result = Cache::open_or_create(cache_file_path).unwrap();
 
-        assert!(result.paths().is_empty());
+        assert!(result.paths().unwrap().is_empty());
     }
 
     #[test]
@@ -428,10 +426,10 @@ mod tests {
         let cache_file_path = temp_dir.path().join("cache.db");
         {
             let mut cache = Cache::open_or_create(&cache_file_path).unwrap();
-            cache.add_paths([PathBuf::from("yo")].into_iter());
+            cache.add_paths([PathBuf::from("yo")].into_iter()).unwrap();
         }
         let cache = Cache::open_or_create(&cache_file_path).unwrap();
-        let paths = cache.paths();
+        let paths = cache.paths().unwrap();
         assert_eq!(1, paths.len());
         assert_eq!(PathBuf::from("yo"), paths[0]);
     }

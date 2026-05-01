@@ -78,7 +78,7 @@ fn handle_event(
                 )?;
                 let diff = context
                     .cache
-                    .find_diff_in_directory(&exclusions, repository_to_scan);
+                    .find_diff_in_directory(&exclusions, repository_to_scan)?;
                 let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
                     &diff,
                     context.dry_run,
@@ -88,8 +88,8 @@ fn handle_event(
                     exclusions.remove(&path);
                 }
                 if !context.dry_run {
-                    context.cache.remove_paths_in_directory(repository_to_scan);
-                    context.cache.add_paths(exclusions.into_iter());
+                    context.cache.remove_paths_in_directory(repository_to_scan)?;
+                    context.cache.add_paths(exclusions.into_iter())?;
                 }
             }
         }
@@ -771,7 +771,7 @@ mod tests {
         std::thread::sleep(Duration::from_secs(5));
         crate::commands::tests::send_sigint();
         let cache = thread_handle.join().unwrap();
-        let paths = cache.paths();
+        let paths = cache.paths().unwrap();
         assert_eq!(paths.len(), 3);
     }
 }

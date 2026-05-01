@@ -3,7 +3,7 @@ use std::io::Write;
 use crate::cache::Cache;
 
 pub fn execute(cache: &Cache, writer: &mut impl Write, separator: char) -> anyhow::Result<()> {
-    for path in cache.paths() {
+    for path in cache.paths()? {
         write!(writer, "{}{}", path.display(), separator)?;
     }
     Ok(())
@@ -18,7 +18,7 @@ mod tests {
     #[test]
     fn test_execute() {
         let mut cache = Cache::open_in_memory().unwrap();
-        cache.reset([PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]);
+        cache.reset([PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]).unwrap();
         let mut writer = Vec::new();
 
         super::execute(&cache, &mut writer, '\n').unwrap();

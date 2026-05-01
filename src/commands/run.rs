@@ -40,7 +40,7 @@ pub fn execute(
             }
         }
 
-        let diff = cache.find_diff(&exclusions);
+        let diff = cache.find_diff(&exclusions)?;
 
         let paths_failed_to_add =
             super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details);
@@ -50,7 +50,7 @@ pub fn execute(
         }
 
         if !dry_run {
-            cache.reset(exclusions);
+            cache.reset(exclusions)?;
         }
     }
 
@@ -72,7 +72,7 @@ pub(crate) mod tests {
         let a_file_path = temp_dir_path.join("a");
         let b_file_path = temp_dir_path.join("b");
         let c_file_path = temp_dir_path.join("c");
-        let paths = cache.paths();
+        let paths = cache.paths().unwrap();
         assert_eq!(2, paths.len());
         assert_eq!(a_file_path, paths[0]);
         assert_eq!(b_file_path, paths[1]);
@@ -107,7 +107,7 @@ pub(crate) mod tests {
             &c_file_path
         ));
         super::execute(&config, &mut cache, dry_run, false).unwrap();
-        assert_eq!(0, cache.paths().len());
+        assert_eq!(0, cache.paths().unwrap().len());
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             a_file_path
         ));
