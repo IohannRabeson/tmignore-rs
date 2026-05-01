@@ -33,7 +33,11 @@ pub fn execute(
 
         super::join_thread(thread_handle)?;
 
-        info!("Found {} {}", repositories.len(), crate::text::plural("repository", repositories.len()));
+        info!(
+            "Found {} {}",
+            repositories.len(),
+            crate::text::plural("repository", repositories.len())
+        );
 
         if details {
             for repository in &repositories {

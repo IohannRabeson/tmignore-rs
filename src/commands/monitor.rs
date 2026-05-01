@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
-use log::{debug, info, warn, error};
+use log::{debug, error, info, warn};
 use regex::RegexSet;
 
 use crate::{
@@ -88,7 +88,9 @@ fn handle_event(
                     exclusions.remove(&path);
                 }
                 if !context.dry_run {
-                    context.cache.remove_paths_in_directory(repository_to_scan)?;
+                    context
+                        .cache
+                        .remove_paths_in_directory(repository_to_scan)?;
                     context.cache.add_paths(exclusions.into_iter())?;
                 }
             }
@@ -314,7 +316,8 @@ mod monitor_details {
         let mut signals = signal_hook::iterator::Signals::new([
             signal_hook::consts::SIGTERM,
             signal_hook::consts::SIGINT,
-        ]).context("Failed to setup signals hooks")?;
+        ])
+        .context("Failed to setup signals hooks")?;
 
         let thread_handle = std::thread::Builder::new()
             .name("Signals Thread".to_string())
