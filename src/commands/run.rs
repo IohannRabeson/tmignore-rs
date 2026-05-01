@@ -36,7 +36,7 @@ pub fn execute(
 
         if details {
             for repository in &repositories {
-                info!(" • {}", repository.display());
+                info!("• {}", repository.display());
             }
         }
 
