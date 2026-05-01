@@ -2,14 +2,16 @@ use crate::{cache::Cache, commands::TimeMachine};
 
 use std::collections::BTreeSet;
 
-pub fn execute(cache: &mut Cache, dry_run: bool, details: bool) {
-    let diff = cache.find_diff(&BTreeSet::new());
+pub fn execute(cache: &mut Cache, dry_run: bool, details: bool) -> anyhow::Result<()> {
+    let diff = cache.find_diff(&BTreeSet::new())?;
 
     super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details);
 
     if !dry_run {
-        cache.reset([]);
+        cache.reset([])?;
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -25,8 +27,8 @@ mod tests {
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = false;
         crate::commands::run::execute(&config, &mut cache, dry_run, false).unwrap();
-        super::execute(&mut cache, dry_run, false);
-        let paths = cache.paths();
+        super::execute(&mut cache, dry_run, false).unwrap();
+        let paths = cache.paths().unwrap();
 
         assert!(paths.is_empty());
     }

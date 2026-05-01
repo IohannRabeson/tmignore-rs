@@ -22,7 +22,7 @@ pub enum Stats {
 }
 
 pub fn execute(cache: &Cache, writer: &mut impl Write, stat: Stats) -> anyhow::Result<()> {
-    let paths = cache.paths();
+    let paths = cache.paths()?;
     match stat {
         Stats::Size { humanize } => {
             let total = fetch_total_size(&paths)?;
@@ -33,7 +33,7 @@ pub fn execute(cache: &Cache, writer: &mut impl Write, stat: Stats) -> anyhow::R
             }
         }
         Stats::LastUpdate => {
-            let last_update = cache.last_update();
+            let last_update = cache.last_update()?;
             let local_time: DateTime<Local> = last_update.with_timezone(&Local);
 
             writeln!(writer, "{local_time}")?;
@@ -89,7 +89,7 @@ mod tests {
         let mut cache = Cache::open_in_memory().unwrap();
         let a = temp_dir.path().join("a");
         let dir = temp_dir.path().join("dir");
-        cache.add_paths([a, dir].into_iter());
+        cache.add_paths([a, dir].into_iter()).unwrap();
         let mut buffer = vec![];
         let stat_command = Stats::Size { humanize: false };
         super::execute(&cache, &mut buffer, stat_command).unwrap();

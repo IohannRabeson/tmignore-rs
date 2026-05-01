@@ -125,7 +125,7 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
 
             let mut cache = Cache::open_or_create(&cli.cache)?;
 
-            commands::reset::execute(&mut cache, dry_run, details);
+            commands::reset::execute(&mut cache, dry_run, details)?;
 
             Ok(())
         }
@@ -239,7 +239,7 @@ fn import_legacy_config_file(
 fn import_legacy_cache_file(
     legacy_cache_file_path: impl AsRef<Path>,
     cache_file_path: impl AsRef<Path>,
-) -> Result<(), anyhow::Error> {
+) -> anyhow::Result<()> {
     let legacy_cache_file_path = legacy_cache_file_path.as_ref();
     let cache_file_path = cache_file_path.as_ref();
 
@@ -250,7 +250,7 @@ fn import_legacy_cache_file(
     let legacy_cache: LegacyCache = json::load_json_file(legacy_cache_file_path)?;
     let mut cache = Cache::create(cache_file_path)?;
 
-    cache.reset(legacy_cache.paths);
+    cache.reset(legacy_cache.paths)?;
 
     Ok(())
 }
@@ -316,7 +316,7 @@ mod tests {
         let cache_file_path = temp_dir.path().join("cache.db");
         import_legacy_cache_file(temp_dir.path().join("legacy.json"), &cache_file_path).unwrap();
         let cache = Cache::open(&cache_file_path).unwrap();
-        let paths = cache.paths();
+        let paths = cache.paths().unwrap();
         assert_eq!(2, paths.len());
         assert!(paths.contains(&PathBuf::from("a")));
         assert!(paths.contains(&PathBuf::from("b")));
