@@ -92,8 +92,7 @@ pub fn is_time_machine_running() -> bool {
     std::process::Command::new("tmutil")
         .arg("status")
         .output()
-        .map(|output| String::from_utf8_lossy(&output.stdout).contains("Running = 1"))
-        .unwrap_or(false)
+        .is_ok_and(|output|String::from_utf8_lossy(&output.stdout).contains("Running = 1"))
 }
 
 #[cfg(test)]

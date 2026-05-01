@@ -288,7 +288,7 @@ impl Drop for Monitor {
             .send(TimeMachineControl::Shutdown);
         while let Some(handle) = self.thread_handles.pop() {
             if let Err(error) = super::join_thread(handle) {
-                error!("Failed to join thread: {error}")
+                error!("Failed to join thread: {error}");
             }
         }
     }
