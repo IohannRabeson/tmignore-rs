@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
-use log::{debug, info, warn};
+use log::{debug, info, warn, error};
 use regex::RegexSet;
 
 use crate::{
@@ -285,7 +285,9 @@ impl Drop for Monitor {
             .timemachine_control_sender
             .send(TimeMachineControl::Shutdown);
         while let Some(handle) = self.thread_handles.pop() {
-            handle.join().unwrap();
+            if let Err(error) = super::join_thread(handle) {
+                error!("Failed to join thread: {error}")
+            }
         }
     }
 }

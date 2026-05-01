@@ -7,11 +7,12 @@ pub mod stats;
 
 use std::{
     collections::BTreeSet,
-    path::{Path, PathBuf},
+    path::{Path, PathBuf}, thread::JoinHandle,
 };
 
 use log::{error, info, warn};
 use regex::RegexSet;
+use anyhow::anyhow;
 
 use crate::{
     git,
@@ -129,6 +130,23 @@ fn find_paths_to_exclude_from_backup(
     }
 
     Ok(())
+}
+
+fn join_thread<T>(thread_handle: JoinHandle<T>) -> anyhow::Result<T> {
+    let thread_name = thread_handle.thread().name().unwrap_or("<unamed>").to_string();
+
+    match thread_handle.join() {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            if let Some(text) = error.downcast_ref::<&str>() {
+                Err(anyhow!("Thread '{thread_name}' panicked: {text}"))
+            } else if let Some(text) = error.downcast_ref::<String>() {
+                Err(anyhow!("Thread '{thread_name}' panicked: {text}"))
+            } else {
+                Err(anyhow!("Thread '{thread_name}' panicked"))
+            }
+        },
+    }
 }
 
 #[cfg(test)]
