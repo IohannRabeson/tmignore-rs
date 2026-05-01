@@ -7,7 +7,7 @@ pub mod stats;
 
 use std::{
     collections::BTreeSet,
-    path::{Path, PathBuf}, thread::JoinHandle,
+    path::{Path, PathBuf},
 };
 
 use log::{error, info, warn};
@@ -132,7 +132,7 @@ fn find_paths_to_exclude_from_backup(
     Ok(())
 }
 
-fn join_thread<T>(thread_handle: JoinHandle<T>) -> anyhow::Result<T> {
+fn join_thread<T>(thread_handle: std::thread::JoinHandle<T>) -> anyhow::Result<T> {
     let thread_name = thread_handle.thread().name().unwrap_or("<unamed>").to_string();
 
     match thread_handle.join() {
