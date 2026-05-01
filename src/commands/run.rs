@@ -30,7 +30,8 @@ pub fn execute(
 
             super::find_paths_to_exclude_from_backup(repository_path, &whitelist, &mut exclusions)?;
         }
-        thread_handle.join().unwrap();
+
+        super::join_thread(thread_handle)?;
 
         info!("Found {} {}", repositories.len(), crate::text::plural("repository", repositories.len()));
 
