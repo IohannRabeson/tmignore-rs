@@ -12,9 +12,16 @@ pub fn load_json_file<T: DeserializeOwned>(file_path: impl AsRef<Path>) -> anyho
 
 pub fn save_json_file(file_path: impl AsRef<Path>, value: &impl Serialize) -> anyhow::Result<()> {
     let file_path = file_path.as_ref();
-    let file = std::fs::File::create(file_path).with_context(|| file_path.display().to_string())?;
+    let tmp_path = file_path.with_extension("tmp");
+    let file = std::fs::File::create(&tmp_path).with_context(|| tmp_path.display().to_string())?;
 
-    serde_json::to_writer_pretty(file, value).with_context(|| file_path.display().to_string())?;
+    if let Err(error) = serde_json::to_writer_pretty(file, value).with_context(|| tmp_path.display().to_string()) {
+        // Since we are aborting on panic, using tempfile provides no benefits over manually removing the temporary file.
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(error);
+    }
+
+    std::fs::rename(&tmp_path, file_path).with_context(|| file_path.display().to_string())?;
 
     Ok(())
 }
