@@ -133,16 +133,16 @@ impl Cache {
     const SQL_SET_LAST_UPDATE: &str = "UPDATE metadata SET last_update=?";
 
     pub fn reset(&mut self, iter: impl IntoIterator<Item = PathBuf>) -> anyhow::Result<()> {
-        if let Ok(mut transaction) = self.connection.borrow_mut().transaction() {
-            let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH)?;
-            transaction.execute("DELETE FROM paths", params![])?;
-            for path in iter {
-                insert_stmt.execute(params![path_to_bytes(&path)])?;
-            }
-            drop(insert_stmt);
-            Self::set_last_update_transaction(&mut transaction)?;
-            transaction.commit()?;
+        let mut connection = self.connection.borrow_mut();
+        let mut transaction = connection.transaction()?;
+        let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH)?;
+        transaction.execute("DELETE FROM paths", params![])?;
+        for path in iter {
+            insert_stmt.execute(params![path_to_bytes(&path)])?;
         }
+        drop(insert_stmt);
+        Self::set_last_update_transaction(&mut transaction)?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -163,29 +163,28 @@ impl Cache {
     }
 
     pub fn add_paths(&mut self, iter: impl Iterator<Item = PathBuf>) -> anyhow::Result<()> {
-        if let Ok(mut transaction) = self.connection.borrow_mut().transaction() {
-            let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH)?;
-            for path in iter {
-                insert_stmt.execute(params![path_to_bytes(&path)])?;
-            }
-            drop(insert_stmt);
-            Self::set_last_update_transaction(&mut transaction)?;
-            transaction.commit()?;
+        let mut connection = self.connection.borrow_mut();
+        let mut transaction = connection.transaction()?;
+        let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH)?;
+        for path in iter {
+            insert_stmt.execute(params![path_to_bytes(&path)])?;
         }
-
+        drop(insert_stmt);
+        Self::set_last_update_transaction(&mut transaction)?;
+        transaction.commit()?;
         Ok(())
     }
 
     pub fn remove_paths_in_directory(&mut self, directory: impl AsRef<Path>) -> anyhow::Result<()> {
         let directory = directory.as_ref();
-        if let Ok(mut transaction) = self.connection.borrow_mut().transaction() {
-            transaction.execute(
-                "DELETE FROM paths WHERE path = ? OR path LIKE ? || '/%'",
-                params![path_to_bytes(directory), path_to_bytes(directory)],
-            )?;
-            Self::set_last_update_transaction(&mut transaction)?;
-            transaction.commit()?;
-        }
+        let mut connection = self.connection.borrow_mut();
+        let mut transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM paths WHERE path = ? OR path LIKE ? || '/%'",
+            params![path_to_bytes(directory), path_to_bytes(directory)],
+        )?;
+        Self::set_last_update_transaction(&mut transaction)?;
+        transaction.commit()?;
         Ok(())
     }
 
