@@ -207,8 +207,6 @@ impl Config {
 
     pub fn reload(&mut self, reader: impl Read) -> anyhow::Result<()> {
         *self = Self::load(reader)?;
-        Self::expand(self);
-        Self::validate(self)?;
         Ok(())
     }
 }
