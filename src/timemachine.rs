@@ -89,7 +89,7 @@ pub fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Er
 }
 
 pub fn is_time_machine_running() -> bool {
-    std::process::Command::new("tmutil")
+    std::process::Command::new("/usr/bin/tmutil")
         .arg("status")
         .output()
         .is_ok_and(|output|String::from_utf8_lossy(&output.stdout).contains("Running = 1"))
