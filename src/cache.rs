@@ -180,8 +180,8 @@ impl Cache {
         let directory = directory.as_ref();
         if let Ok(mut transaction) = self.connection.borrow_mut().transaction() {
             transaction.execute(
-                "DELETE FROM paths WHERE path LIKE ? || '%'",
-                params![path_to_bytes(directory)],
+                "DELETE FROM paths WHERE path = ? OR path LIKE ? || '/%'",
+                params![path_to_bytes(directory), path_to_bytes(directory)],
             )?;
             Self::set_last_update_transaction(&mut transaction)?;
             transaction.commit()?;
@@ -241,8 +241,8 @@ impl Cache {
         {
             let connection = self.connection.borrow();
             let mut select_stmt =
-                connection.prepare("SELECT path FROM paths WHERE path LIKE ? || '%'")?;
-            let paths = select_stmt.query_map(params![path_to_bytes(directory)], |row| {
+                connection.prepare("SELECT path FROM paths WHERE path = ? OR path LIKE ? || '/%'")?;
+            let paths = select_stmt.query_map(params![path_to_bytes(directory), path_to_bytes(directory)], |row| {
                 let bytes: Vec<u8> = row.get(0)?;
 
                 Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
