@@ -391,6 +391,27 @@ mod tests {
     }
 
     #[test]
+    fn test_find_diff_in_directory_does_not_affect_sibling_directory() {
+        let mut cache = Cache::open_in_memory().unwrap();
+        cache
+            .reset([
+                PathBuf::from("/repo/file"),
+                PathBuf::from("/repo-sibling/file"),
+            ])
+            .unwrap();
+        let exclusions = BTreeSet::from([PathBuf::from("/repo/file")]);
+        let diff = cache
+            .find_diff_in_directory(&exclusions, PathBuf::from("/repo"))
+            .unwrap();
+
+        assert!(
+            diff.removed.is_empty(),
+            "/repo-sibling/file was incorrectly included in the diff for /repo"
+        );
+        assert!(diff.added.is_empty());
+    }
+
+    #[test]
     fn test_remove_paths_in_directory() {
         let mut cache = Cache::open_in_memory().unwrap();
 
@@ -406,6 +427,26 @@ mod tests {
         assert_eq!(
             Some(&PathBuf::from("world")),
             cache.paths().unwrap().first()
+        );
+    }
+
+    #[test]
+    fn test_remove_paths_in_directory_does_not_affect_sibling_directory() {
+        let mut cache = Cache::open_in_memory().unwrap();
+
+        cache
+            .reset([
+                PathBuf::from("/repo/file"),
+                PathBuf::from("/repo-sibling/file"),
+            ])
+            .unwrap();
+        cache.remove_paths_in_directory("/repo").unwrap();
+
+        let paths = cache.paths().unwrap();
+        assert_eq!(1, paths.len());
+        assert!(
+            paths.contains(&PathBuf::from("/repo-sibling/file")),
+            "/repo-sibling/file was incorrectly deleted when removing /repo"
         );
     }
 
