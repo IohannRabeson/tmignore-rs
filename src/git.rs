@@ -92,7 +92,7 @@ pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<Pat
 
     let repository_directory = repository_directory.canonicalize()?;
 
-    let output = std::process::Command::new("git")
+    let output = std::process::Command::new("/usr/bin/git")
         .arg("-C")
         .arg(&repository_directory)
         .arg("ls-files")
@@ -139,7 +139,7 @@ pub fn find_parent_repository(path: impl AsRef<Path>) -> Option<PathBuf> {
 
 /// Execute git config --get core.excludesFile
 pub fn get_global_git_ignore() -> Option<PathBuf> {
-    let output = std::process::Command::new("git")
+    let output = std::process::Command::new("/usr/bin/git")
         .arg("config")
         .arg("--get")
         .arg("core.excludesFile")
