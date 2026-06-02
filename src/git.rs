@@ -295,6 +295,45 @@ mod tests {
     }
 
     #[test]
+    fn test_find_ignored_files_does_not_execute_repo_config_hooks() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file(".gitignore", "ignored/\n")
+            .add_empty_file("ignored/file")
+            .build()
+            .unwrap();
+        let repository_path = temp_dir.path().to_path_buf();
+        crate::commands::tests::init_git_repository(&repository_path);
+
+        // A repository can configure git to run an arbitrary command (here via
+        // core.fsmonitor) in its local .git/config. Running git plumbing inside
+        // an untrusted repository must not execute it.
+        let marker = temp_dir.path().join("executed_marker");
+        let hook = temp_dir.path().join("hook.sh");
+        // Add a script that will created a file /temp_dir/executed_marker containing "executed".
+        std::fs::write(&hook, format!("#!/bin/sh\necho executed > {marker:?}\n")).unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::process::Command::new("/usr/bin/git")
+            .arg("-C")
+            .arg(&repository_path)
+            .arg("config")
+            .arg("core.fsmonitor")
+            .arg(&hook)
+            .output()
+            .unwrap();
+
+        assert!(!marker.exists());
+
+        let _ = super::find_ignored_files(&repository_path).unwrap();
+
+        assert!(
+            !marker.exists(),
+            "find_ignored_files executed a command from the repository's local git config"
+        );
+    }
+
+    #[test]
     fn test_worktree() {
         let temp_dir = TempDirectoryBuilder::default()
             .add_directory("worktree")
