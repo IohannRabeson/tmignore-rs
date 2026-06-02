@@ -54,11 +54,17 @@ fn fetch_total_size(paths: &[PathBuf]) -> anyhow::Result<u64> {
 
     while let Some(dir_to_process) = dirs_to_process.pop_front() {
         for entry in std::fs::read_dir(dir_to_process)?.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                files_to_process.insert(path.clone());
-            } else if path.is_dir() {
-                dirs_to_process.push_back(path.clone());
+            // Use the directory entry's own file type so symlinks are not
+            // followed.
+            // Previously we were using Path::is_file and Path::is_dir but
+            // thoses are following symlinks.
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_file() {
+                files_to_process.insert(entry.path());
+            } else if file_type.is_dir() {
+                dirs_to_process.push_back(entry.path());
             }
         }
     }
