@@ -11,6 +11,15 @@ use log::warn;
 
 const DOT_GIT_DIRECTORY_NAME: &str = ".git";
 
+fn git_command() -> std::process::Command {
+    // Disable core.fsmonitor: a malicious repository could otherwise set it in
+    // its local config to run an arbitrary command when we scan it. A command
+    // line '-c' overrides the repository configuration.
+    let mut command = std::process::Command::new("/usr/bin/git");
+    command.arg("-c").arg("core.fsmonitor=");
+    command
+}
+
 pub fn find_repositories(
     directories: &BTreeSet<PathBuf>,
     ignored_directories: &BTreeSet<PathBuf>,
@@ -92,7 +101,7 @@ pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<Pat
 
     let repository_directory = repository_directory.canonicalize()?;
 
-    let output = std::process::Command::new("/usr/bin/git")
+    let output = git_command()
         .arg("-C")
         .arg(&repository_directory)
         .arg("ls-files")
@@ -139,7 +148,7 @@ pub fn find_parent_repository(path: impl AsRef<Path>) -> Option<PathBuf> {
 
 /// Execute git config --get core.excludesFile
 pub fn get_global_git_ignore() -> Option<PathBuf> {
-    let output = std::process::Command::new("/usr/bin/git")
+    let output = git_command()
         .arg("config")
         .arg("--get")
         .arg("core.excludesFile")
