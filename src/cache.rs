@@ -453,6 +453,39 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_paths_in_directory_like_wildcards_and_case() {
+        let mut cache = Cache::open_in_memory().unwrap();
+
+        cache
+            .reset([
+                PathBuf::from("/Users/me/my_project/file"),
+                PathBuf::from("/Users/me/myXproject/file"),
+                PathBuf::from("/Users/me/MY_PROJECT/file"),
+            ])
+            .unwrap();
+
+        cache
+            .remove_paths_in_directory("/Users/me/my_project")
+            .unwrap();
+
+        let paths = cache.paths().unwrap();
+        assert!(
+            paths.contains(&PathBuf::from("/Users/me/myXproject/file")),
+            "'_' in the directory name was treated as a SQL LIKE wildcard, \
+             so the unrelated sibling /Users/me/myXproject/file was deleted"
+        );
+        assert!(
+            paths.contains(&PathBuf::from("/Users/me/MY_PROJECT/file")),
+            "SQL LIKE matched case-insensitively, so /Users/me/MY_PROJECT/file was deleted"
+        );
+        assert_eq!(
+            2,
+            paths.len(),
+            "only /Users/me/my_project/file should have been removed"
+        );
+    }
+
+    #[test]
     fn test_open_cache_no_parent_dir() {
         let result = Cache::open_or_create("/");
         let err = result.unwrap_err();
