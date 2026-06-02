@@ -106,6 +106,52 @@ mod tests {
     }
 
     #[test]
+    fn test_execute_size_humanize() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file("a", "abc")
+            .build()
+            .unwrap();
+        let mut cache = Cache::open_in_memory().unwrap();
+        cache
+            .add_paths([temp_dir.path().join("a")].into_iter())
+            .unwrap();
+        let mut buffer = vec![];
+
+        super::execute(&cache, &mut buffer, Stats::Size { humanize: true }).unwrap();
+
+        assert_eq!("3 B", String::from_utf8(buffer).unwrap().trim());
+    }
+
+    #[test]
+    fn test_execute_size_nested_directory() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file("top/sub/deep", "xyz")
+            .add_text_file("top/shallow", "ab")
+            .build()
+            .unwrap();
+        let mut cache = Cache::open_in_memory().unwrap();
+        cache
+            .add_paths([temp_dir.path().join("top")].into_iter())
+            .unwrap();
+        let mut buffer = vec![];
+
+        super::execute(&cache, &mut buffer, Stats::Size { humanize: false }).unwrap();
+
+        let size: u64 = String::from_utf8(buffer).unwrap().trim().parse().unwrap();
+        assert_eq!(5, size);
+    }
+
+    #[test]
+    fn test_execute_last_update() {
+        let cache = Cache::open_in_memory().unwrap();
+        let mut buffer = vec![];
+
+        super::execute(&cache, &mut buffer, Stats::LastUpdate).unwrap();
+
+        assert!(!String::from_utf8(buffer).unwrap().trim().is_empty());
+    }
+
+    #[test]
     fn test_fetch_total_size_does_not_follow_symlinks_outside_directory() {
         let temp_dir = TempDirectoryBuilder::default()
             .add_text_file("outside/big.txt", "0123456789")
