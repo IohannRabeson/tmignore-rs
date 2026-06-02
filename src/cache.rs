@@ -239,13 +239,16 @@ impl Cache {
 
         {
             let connection = self.connection.borrow();
-            let mut select_stmt =
-                connection.prepare("SELECT path FROM paths WHERE path = ? OR path LIKE ? || '/%'")?;
-            let paths = select_stmt.query_map(params![path_to_bytes(directory), path_to_bytes(directory)], |row| {
-                let bytes: Vec<u8> = row.get(0)?;
+            let mut select_stmt = connection
+                .prepare("SELECT path FROM paths WHERE path = ? OR path LIKE ? || '/%'")?;
+            let paths = select_stmt.query_map(
+                params![path_to_bytes(directory), path_to_bytes(directory)],
+                |row| {
+                    let bytes: Vec<u8> = row.get(0)?;
 
-                Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
-            })?;
+                    Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
+                },
+            )?;
 
             for path in paths.into_iter().filter_map(Result::ok) {
                 if !exclusions.contains(&path) {
