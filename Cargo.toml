@@ -15,7 +15,7 @@ fern = "0.7.1"
 fnmatch-regex = "0.3.0"
 humantime = "2.3.0"
 ignore = { version = "0.4", features = ["simd-accel"] }
-log = "0.4.29"
+log = "0.4.30"
 notify = { version = "8.2.0", features = ["crossbeam-channel"] }
 oslog = "0.2.0"
 regex = "1.12.3"
