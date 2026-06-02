@@ -98,4 +98,24 @@ mod tests {
 
         assert_eq!(3, size);
     }
+
+    #[test]
+    fn test_fetch_total_size_does_not_follow_symlinks_outside_directory() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file("outside/big.txt", "0123456789")
+            .add_directory("excluded")
+            .build()
+            .unwrap();
+        let outside = temp_dir.path().join("outside");
+        let excluded = temp_dir.path().join("excluded");
+        // A symlink inside the excluded directory pointing at an unrelated tree.
+        std::os::unix::fs::symlink(&outside, excluded.join("link")).unwrap();
+
+        let total = super::fetch_total_size(&[excluded]).unwrap();
+
+        assert_eq!(
+            0, total,
+            "fetch_total_size followed a symlink and counted files outside the excluded directory"
+        );
+    }
 }
