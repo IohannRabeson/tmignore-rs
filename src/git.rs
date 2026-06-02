@@ -316,6 +316,15 @@ mod tests {
         );
     }
     #[test]
+    fn test_find_ignored_files_path_does_not_exist() {
+        assert!(
+            super::find_ignored_files(Path::new("/this/path/does/not/exist"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn test_worktree() {
         let temp_dir = TempDirectoryBuilder::default()
             .add_directory("worktree")
