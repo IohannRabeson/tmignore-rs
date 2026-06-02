@@ -193,6 +193,19 @@ mod tests {
         results
     }
 
+    fn run_git(args: &[&str]) {
+        let output = std::process::Command::new("/usr/bin/git")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     #[test]
     fn test_root_directory() {
         let temp_dir = TempDirectoryBuilder::default()
@@ -293,6 +306,19 @@ mod tests {
                 .is_empty()
         );
     }
+    #[test]
+    fn test_worktree() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_directory("worktree")
+            .add_empty_file("worktree/.git")
+            .build()
+            .unwrap();
+        let ignored_directories = BTreeSet::new();
+        let repositories = find_repositories_vec(&[temp_dir.path()], &ignored_directories);
+
+        assert_eq!(repositories.len(), 1);
+        assert_eq!(repositories[0], temp_dir.path().join("worktree"));
+    }
 
     #[test]
     fn test_find_ignored_files_does_not_execute_repo_config_hooks() {
@@ -311,17 +337,16 @@ mod tests {
         // an untrusted repository must not execute it.
         let marker = temp_dir.path().join("executed_marker");
         let hook = temp_dir.path().join("hook.sh");
-        // Add a script that will created a file /temp_dir/executed_marker containing "executed".
+        // A script that creates the marker file when executed.
         std::fs::write(&hook, format!("#!/bin/sh\necho executed > {marker:?}\n")).unwrap();
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::process::Command::new("/usr/bin/git")
-            .arg("-C")
-            .arg(&repository_path)
-            .arg("config")
-            .arg("core.fsmonitor")
-            .arg(&hook)
-            .output()
-            .unwrap();
+        run_git(&[
+            "-C",
+            repository_path.to_str().unwrap(),
+            "config",
+            "core.fsmonitor",
+            hook.to_str().unwrap(),
+        ]);
 
         assert!(!marker.exists());
 
@@ -334,16 +359,59 @@ mod tests {
     }
 
     #[test]
-    fn test_worktree() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_directory("worktree")
-            .add_empty_file("worktree/.git")
-            .build()
-            .unwrap();
-        let ignored_directories = BTreeSet::new();
-        let repositories = find_repositories_vec(&[temp_dir.path()], &ignored_directories);
+    fn test_find_ignored_files_does_not_execute_worktree_config_hooks() {
+        use std::os::unix::fs::PermissionsExt;
 
-        assert_eq!(repositories.len(), 1);
-        assert_eq!(repositories[0], temp_dir.path().join("worktree"));
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let main_repo = temp_dir.path().join("main");
+        let worktree = temp_dir.path().join("worktree");
+        let main_str = main_repo.to_str().unwrap();
+        let worktree_str = worktree.to_str().unwrap();
+
+        // A linked worktree's '.git' is a file pointing at the main repository's
+        // git directory, so the main repository's config (here core.fsmonitor)
+        // applies when we scan the worktree. It must not be executed either.
+        let marker = temp_dir.path().join("executed_marker");
+        let hook = temp_dir.path().join("hook.sh");
+        std::fs::write(&hook, format!("#!/bin/sh\necho executed > {marker:?}\n")).unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        run_git(&["init", "-q", main_str]);
+        run_git(&[
+            "-C",
+            main_str,
+            "-c",
+            "user.email=a@b.c",
+            "-c",
+            "user.name=a",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ]);
+        run_git(&["-C", main_str, "worktree", "add", "-q", worktree_str]);
+        std::fs::write(worktree.join(".gitignore"), "ignored/\n").unwrap();
+        std::fs::create_dir(worktree.join("ignored")).unwrap();
+        std::fs::write(worktree.join("ignored").join("a"), "x").unwrap();
+        // Configure core.fsmonitor last: 'worktree add' refreshes the index and
+        // would trigger the hook itself, so the marker must only be able to
+        // appear because of find_ignored_files below.
+        run_git(&[
+            "-C",
+            main_str,
+            "config",
+            "core.fsmonitor",
+            hook.to_str().unwrap(),
+        ]);
+
+        assert!(!marker.exists());
+
+        let _ = super::find_ignored_files(&worktree).unwrap();
+
+        assert!(
+            !marker.exists(),
+            "find_ignored_files executed a command from the worktree's git config"
+        );
     }
 }
