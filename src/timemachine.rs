@@ -88,20 +88,138 @@ pub fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Er
     errors
 }
 
-pub fn is_time_machine_running() -> bool {
-    std::process::Command::new("/usr/bin/tmutil")
-        .arg("status")
-        .output()
-        .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).contains("Running = 1"))
+pub(crate) trait TmUtilsTrait {
+    fn status() -> anyhow::Result<String>;
+}
+
+pub(crate) struct TmUtils;
+
+impl TmUtilsTrait for TmUtils {
+    fn status() -> anyhow::Result<String> {
+        use anyhow::Context;
+
+        let output = std::process::Command::new("/usr/bin/tmutil")
+            .arg("status")
+            .output()
+            .context("Failed to execute tmutil status")?;
+
+        status_from_output(&output)
+    }
+}
+
+fn status_from_output(output: &std::process::Output) -> anyhow::Result<String> {
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "tmutil status exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub fn is_time_machine_running() -> anyhow::Result<bool> {
+    is_time_machine_running_impl::<TmUtils>()
+}
+
+pub(crate) fn is_time_machine_running_impl<T: TmUtilsTrait>() -> anyhow::Result<bool> {
+    Ok(parse_running(&T::status()?))
+}
+
+fn parse_running(tmutil_status_stdout: &str) -> bool {
+    tmutil_status_stdout.contains("Running = 1")
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use std::{path::Path, process::Command};
 
+    use rstest::rstest;
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::timemachine::{add_exclusions, remove_exclusions};
+    use crate::timemachine::{TmUtilsTrait, add_exclusions, remove_exclusions};
+
+    pub(crate) struct Running;
+    impl TmUtilsTrait for Running {
+        fn status() -> anyhow::Result<String> {
+            Ok("Backup session status:\n{\n    Running = 1;\n}".to_string())
+        }
+    }
+
+    pub(crate) struct NotRunning;
+    impl TmUtilsTrait for NotRunning {
+        fn status() -> anyhow::Result<String> {
+            Ok("Backup session status:\n{\n    Running = 0;\n}".to_string())
+        }
+    }
+
+    pub(crate) struct StatusError;
+    impl TmUtilsTrait for StatusError {
+        fn status() -> anyhow::Result<String> {
+            Err(anyhow::anyhow!("can't determine the Time Machine status"))
+        }
+    }
+
+    #[rstest]
+    #[case("Backup session status:\n{\n    Running = 1;\n}", true)]
+    #[case("Backup session status:\n{\n    Running = 0;\n}", false)]
+    #[case("", false)]
+    fn test_parse_running(#[case] stdout: &str, #[case] expected: bool) {
+        assert_eq!(expected, super::parse_running(stdout));
+    }
+
+    #[test]
+    fn test_is_time_machine_running_true() {
+        assert_eq!(
+            true,
+            super::is_time_machine_running_impl::<Running>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_is_time_machine_running_false() {
+        assert_eq!(
+            false,
+            super::is_time_machine_running_impl::<NotRunning>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_is_time_machine_running_error_propagates() {
+        assert!(super::is_time_machine_running_impl::<StatusError>().is_err());
+    }
+
+    fn exited_with(code: i32) -> std::process::ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+
+        std::process::ExitStatus::from_raw(code << 8)
+    }
+
+    #[test]
+    fn test_status_from_output_success() {
+        let output = std::process::Output {
+            status: exited_with(0),
+            stdout: b"    Running = 1;".to_vec(),
+            stderr: Vec::new(),
+        };
+
+        assert_eq!(
+            "    Running = 1;",
+            super::status_from_output(&output).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_status_from_output_non_zero_exit() {
+        let output = std::process::Output {
+            status: exited_with(1),
+            stdout: Vec::new(),
+            stderr: b"boom".to_vec(),
+        };
+
+        assert!(super::status_from_output(&output).is_err());
+    }
 
     // Be careful, this test is not very reliable even if it uses the offical way (tmutil isexcluded) to
     // know if a file is excluded. For example, as soon as you add the extended attribute
