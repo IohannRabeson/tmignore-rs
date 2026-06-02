@@ -116,7 +116,7 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
     import_legacy_cache_file(&cli.legacy_cache, &cli.cache)?;
     match cli.command {
         Commands::Run { dry_run, details } => {
-            check_for_ongoing_time_machine_backup(dry_run)?;
+            check_for_ongoing_time_machine_backup::<crate::timemachine::TmUtils>(dry_run)?;
 
             let mut cache = Cache::open_or_create(&cli.cache)?;
             let config = Config::load_or_create_file(&cli.config)?;
@@ -130,7 +130,7 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
             commands::list::execute(&cache, &mut std::io::stdout(), separator)
         }
         Commands::Reset { dry_run, details } => {
-            check_for_ongoing_time_machine_backup(dry_run)?;
+            check_for_ongoing_time_machine_backup::<crate::timemachine::TmUtils>(dry_run)?;
 
             let mut cache = Cache::open_or_create(&cli.cache)?;
 
@@ -161,8 +161,10 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn check_for_ongoing_time_machine_backup(dry_run: bool) -> anyhow::Result<()> {
-    if !dry_run && crate::timemachine::is_time_machine_running() {
+fn check_for_ongoing_time_machine_backup<T: crate::timemachine::TmUtilsTrait>(
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    if !dry_run && crate::timemachine::is_time_machine_running_impl::<T>()? {
         return Err(anyhow!("Time Machine is currently doing a backup."));
     }
 
@@ -276,9 +278,30 @@ mod tests {
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
     use crate::{
-        Cli, cache::Cache, config::Config, import_legacy_cache_file, import_legacy_config_file,
-        json::save_json_file, program,
+        Cli, cache::Cache, check_for_ongoing_time_machine_backup, config::Config,
+        import_legacy_cache_file, import_legacy_config_file, json::save_json_file, program,
+        timemachine::tests::{NotRunning, Running, StatusError},
     };
+
+    #[test]
+    fn test_check_for_ongoing_time_machine_backup_running() {
+        assert!(check_for_ongoing_time_machine_backup::<Running>(false).is_err());
+    }
+
+    #[test]
+    fn test_check_for_ongoing_time_machine_backup_not_running() {
+        assert!(check_for_ongoing_time_machine_backup::<NotRunning>(false).is_ok());
+    }
+
+    #[test]
+    fn test_check_for_ongoing_time_machine_backup_status_error_aborts() {
+        assert!(check_for_ongoing_time_machine_backup::<StatusError>(false).is_err());
+    }
+
+    #[test]
+    fn test_check_for_ongoing_time_machine_backup_dry_run_skips_status() {
+        assert!(check_for_ongoing_time_machine_backup::<StatusError>(true).is_ok());
+    }
 
     #[test]
     fn test_import_legacy_config_file_dont_exist() {

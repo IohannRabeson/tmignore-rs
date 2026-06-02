@@ -142,7 +142,7 @@ pub fn execute(
     let mut pending_events = BTreeSet::new();
 
     'outer: while let Some(event) = context.monitor.get_event() {
-        if crate::timemachine::is_time_machine_running() && !context.is_timemachine_running {
+        if is_time_machine_running_logged() && !context.is_timemachine_running {
             info!("Time Machine backup started");
             context.monitor.start_timemachine_monitoring();
             context.is_timemachine_running = true;
@@ -294,6 +294,20 @@ impl Drop for Monitor {
     }
 }
 
+fn is_time_machine_running_logged() -> bool {
+    log_status(crate::timemachine::is_time_machine_running())
+}
+
+fn log_status(status: anyhow::Result<bool>) -> bool {
+    match status {
+        Ok(running) => running,
+        Err(error) => {
+            warn!("Failed to query Time Machine status: {error}");
+            false
+        }
+    }
+}
+
 mod monitor_details {
     use std::{
         collections::BTreeSet,
@@ -308,7 +322,7 @@ mod monitor_details {
     use notify::Watcher;
 
     use super::EVENT_QUEUE_SIZE;
-    use crate::{git, timemachine};
+    use crate::git;
 
     pub fn spawn_signals_thread(
         event_sender: Sender<super::Event>,
@@ -582,7 +596,7 @@ mod monitor_details {
                         TimeMachineControl::ResumeMonitoring => {
                             const TIMEOUT: Duration = Duration::from_secs(1);
                             debug!("Start monitoring tmutil status");
-                            while timemachine::is_time_machine_running() {
+                            while super::is_time_machine_running_logged() {
                                 if let Ok(TimeMachineControl::Shutdown) =
                                     control_receiver.recv_timeout(TIMEOUT)
                                 {
@@ -725,10 +739,19 @@ mod monitor_details {
 mod tests {
     use std::time::Duration;
 
+    use rstest::rstest;
     use serial_test::serial;
     use temp_dir_builder::TempDirectoryBuilder;
 
     use crate::{cache::Cache, json::save_json_file};
+
+    #[rstest]
+    #[case(Ok(true), true)]
+    #[case(Ok(false), false)]
+    #[case(Err(anyhow::anyhow!("can't determine")), false)]
+    fn test_log_status(#[case] status: anyhow::Result<bool>, #[case] expected: bool) {
+        assert_eq!(expected, super::log_status(status));
+    }
 
     /// Test the behavior in case of a missing configuration file.
     /// It should not return an error, it should create the default configuration file.
