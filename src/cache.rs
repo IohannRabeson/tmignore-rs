@@ -39,6 +39,27 @@ fn path_to_bytes(path: &Path) -> &[u8] {
     path.as_os_str().as_bytes()
 }
 
+struct DirectoryPrefixBounds {
+    exact: Vec<u8>,
+    lower: Vec<u8>,
+    upper: Vec<u8>,
+}
+
+impl DirectoryPrefixBounds {
+    fn new(directory: &Path) -> Self {
+        let exact = path_to_bytes(directory).to_vec();
+        let mut lower = exact.clone();
+        lower.push(b'/');
+        let mut upper = exact.clone();
+        upper.push(b'/' + 1);
+        Self {
+            exact,
+            lower,
+            upper,
+        }
+    }
+}
+
 const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(include_str!("sql/v0.sql")),
     M::up(include_str!("sql/v1.sql")),
@@ -177,11 +198,12 @@ impl Cache {
 
     pub fn remove_paths_in_directory(&mut self, directory: impl AsRef<Path>) -> anyhow::Result<()> {
         let directory = directory.as_ref();
+        let bounds = DirectoryPrefixBounds::new(directory);
         let mut connection = self.connection.borrow_mut();
         let mut transaction = connection.transaction()?;
         transaction.execute(
-            "DELETE FROM paths WHERE path = ? OR path LIKE ? || '/%'",
-            params![path_to_bytes(directory), path_to_bytes(directory)],
+            "DELETE FROM paths WHERE path = ?1 OR (path >= ?2 AND path < ?3)",
+            params![bounds.exact, bounds.lower, bounds.upper],
         )?;
         Self::set_last_update_transaction(&mut transaction)?;
         transaction.commit()?;
@@ -238,11 +260,12 @@ impl Cache {
         }
 
         {
+            let bounds = DirectoryPrefixBounds::new(directory);
             let connection = self.connection.borrow();
             let mut select_stmt = connection
-                .prepare("SELECT path FROM paths WHERE path = ? OR path LIKE ? || '/%'")?;
+                .prepare("SELECT path FROM paths WHERE path = ?1 OR (path >= ?2 AND path < ?3)")?;
             let paths = select_stmt.query_map(
-                params![path_to_bytes(directory), path_to_bytes(directory)],
+                params![bounds.exact, bounds.lower, bounds.upper],
                 |row| {
                     let bytes: Vec<u8> = row.get(0)?;
 
