@@ -35,7 +35,7 @@ vergen-git2 = { version = "9", default-features = false, features = ["build"] }
 [dev-dependencies]
 libc = "0.2"
 rstest = { version = "0.26.1", default-features = false, features = ["crate-name"] }
-serial_test = "3.4.0"
+serial_test = "3.5.0"
 temp-dir-builder = "0.1.0"
 
 # Usage: cargo run --profile=release-with-debug
