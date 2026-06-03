@@ -278,8 +278,13 @@ mod tests {
     use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
     use crate::{
-        Cli, cache::Cache, check_for_ongoing_time_machine_backup, config::Config,
-        import_legacy_cache_file, import_legacy_config_file, json::save_json_file, program,
+        Cli,
+        cache::Cache,
+        check_for_ongoing_time_machine_backup,
+        config::Config,
+        import_legacy_cache_file, import_legacy_config_file,
+        json::save_json_file,
+        program,
         timemachine::tests::{NotRunning, Running, StatusError},
     };
 
