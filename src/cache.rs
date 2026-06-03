@@ -323,7 +323,7 @@ impl Cache {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, path::PathBuf};
+    use std::{assert_matches, collections::BTreeSet, path::PathBuf};
 
     use temp_dir_builder::TempDirectoryBuilder;
 
@@ -513,10 +513,7 @@ mod tests {
         let result = Cache::open_or_create("/");
         let err = result.unwrap_err();
 
-        assert!(matches!(
-            err.downcast(),
-            Ok(OpenOrCreateError::NoParentDirectory)
-        ));
+        assert_matches!(err.downcast(), Ok(OpenOrCreateError::NoParentDirectory));
     }
 
     #[test]
