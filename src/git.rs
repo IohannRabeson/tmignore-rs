@@ -306,6 +306,22 @@ mod tests {
     }
 
     #[test]
+    fn test_find_parent_repository_worktree() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_directory("worktree/subdir")
+            .add_empty_file("worktree/.git")
+            .build()
+            .unwrap();
+        let worktree_path = temp_dir.path().join("worktree");
+        let subdir_path = worktree_path.join("subdir");
+
+        assert_eq!(
+            find_parent_repository(&subdir_path).as_ref(),
+            Some(&worktree_path)
+        );
+    }
+
+    #[test]
     fn test_find_ignored_files_not_a_git_repository() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
 
