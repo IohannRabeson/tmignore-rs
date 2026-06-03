@@ -138,7 +138,7 @@ pub fn find_parent_repository(path: impl AsRef<Path>) -> Option<PathBuf> {
     let mut path = path.as_ref();
 
     loop {
-        if path.join(DOT_GIT_DIRECTORY_NAME).is_dir() {
+        if path.join(DOT_GIT_DIRECTORY_NAME).exists() {
             return Some(path.to_path_buf());
         }
 
