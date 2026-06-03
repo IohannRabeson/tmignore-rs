@@ -282,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn test_find_parent_directory_success() {
+    fn test_find_parent_repository_success() {
         let temp_dir = TempDirectoryBuilder::default()
             .add_directory("repository/suddir/subsub")
             .add_directory("repository/.git")
