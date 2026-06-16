@@ -538,6 +538,10 @@ mod monitor_details {
                             }
                         }
                         None => {
+                            if debounce_at.is_some() {
+                                debounce_at = None;
+                                send_events(&mut events_to_send, &mut output_event_sender);
+                            }
                             select! {
                                 recv(input_events) -> event => {
                                     match event {
@@ -547,12 +551,10 @@ mod monitor_details {
                                             break;
                                         }
                                         Ok(event) => {
-                                            if debounce_at.is_none() {
-                                                // If debounce_duration is too big, it will debounce immediatly.
-                                                // This should never happens in practise because we check this value is not too big when validating the config.
-                                                debounce_at = Some(Instant::now().checked_add(debounce_duration).unwrap_or(Instant::now()));
-                                                events_to_send.insert(event);
-                                            }
+                                            // If debounce_duration is too big, it will debounce immediatly.
+                                            // This should never happens in practise because we check this value is not too big when validating the config.
+                                            debounce_at = Some(Instant::now().checked_add(debounce_duration).unwrap_or(Instant::now()));
+                                            events_to_send.insert(event);
                                         }
                                         Err(_) => {
                                             send_events(&mut events_to_send, &mut output_event_sender);
