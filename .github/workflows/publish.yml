@@ -28,7 +28,7 @@ jobs:
       sha256_output_file_path: "sha256-${{ matrix.label }}.txt"
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
