@@ -554,62 +554,59 @@ mod monitor_details {
                 let mut paths_to_scan = BTreeSet::new();
 
                 loop {
-                    match debounce_at.and_then(|debounce_at| debounce_at.checked_duration_since(Instant::now())) {
-                        Some(timeout) => {
-                            select! {
-                                recv(input_events) -> event => {
-                                    match event {
-                                        Ok(super::Event::Shutdown) => {
-                                            send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
-                                            let _ = output_event_sender.send(super::Event::Shutdown);
-                                            break;
-                                        }
-                                        Ok(event) => {
-                                            collect_event(event, &mut events_to_send, &mut paths_to_scan);
-                                        }
-                                        Err(_) => {
-                                            send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
-                                            break;
-                                        }
+                    if let Some(timeout) = debounce_at.and_then(|debounce_at| debounce_at.checked_duration_since(Instant::now())) {
+                        select! {
+                            recv(input_events) -> event => {
+                                match event {
+                                    Ok(super::Event::Shutdown) => {
+                                        send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
+                                        let _ = output_event_sender.send(super::Event::Shutdown);
+                                        break;
+                                    }
+                                    Ok(event) => {
+                                        collect_event(event, &mut events_to_send, &mut paths_to_scan);
+                                    }
+                                    Err(_) => {
+                                        send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
+                                        break;
                                     }
                                 }
-                                recv(crossbeam_channel::after(timeout)) -> _ => {
-                                    debounce_at = None;
-                                    send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
-                                }
-                                recv(debouncer_control_receiver) -> control => {
-                                    process_control(&control, &mut debounce_duration);
-                                }
                             }
-                        }
-                        None => {
-                            if debounce_at.is_some() {
+                            recv(crossbeam_channel::after(timeout)) -> _ => {
                                 debounce_at = None;
                                 send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
                             }
-                            select! {
-                                recv(input_events) -> event => {
-                                    match event {
-                                        Ok(super::Event::Shutdown) => {
-                                            send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
-                                            let _ = output_event_sender.send(super::Event::Shutdown);
-                                            break;
-                                        }
-                                        Ok(event) => {
-                                            // If debounce_duration is too big, it will debounce immediatly.
-                                            // This should never happens in practise because we check this value is not too big when validating the config.
-                                            debounce_at = Some(Instant::now().checked_add(debounce_duration).unwrap_or(Instant::now()));
-                                            collect_event(event, &mut events_to_send, &mut paths_to_scan);
-                                        }
-                                        Err(_) => {
-                                            send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
-                                            break;
-                                        },
+                            recv(debouncer_control_receiver) -> control => {
+                                process_control(&control, &mut debounce_duration);
+                            }
+                        }
+                    } else {
+                        if debounce_at.is_some() {
+                            debounce_at = None;
+                            send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
+                        }
+                        select! {
+                            recv(input_events) -> event => {
+                                match event {
+                                    Ok(super::Event::Shutdown) => {
+                                        send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
+                                        let _ = output_event_sender.send(super::Event::Shutdown);
+                                        break;
                                     }
+                                    Ok(event) => {
+                                        // If debounce_duration is too big, it will debounce immediatly.
+                                        // This should never happens in practise because we check this value is not too big when validating the config.
+                                        debounce_at = Some(Instant::now().checked_add(debounce_duration).unwrap_or(Instant::now()));
+                                        collect_event(event, &mut events_to_send, &mut paths_to_scan);
+                                    }
+                                    Err(_) => {
+                                        send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
+                                        break;
+                                    },
                                 }
-                                recv(debouncer_control_receiver) -> control => {
-                                    process_control(&control, &mut debounce_duration);
-                                }
+                            }
+                            recv(debouncer_control_receiver) -> control => {
+                                process_control(&control, &mut debounce_duration);
                             }
                         }
                     }
