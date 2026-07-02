@@ -14,14 +14,14 @@ jobs:
     runs-on: "macos-latest"
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
     - name: Install Nix
-      uses: cachix/install-nix-action@v31
+      uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
       with:
         extra_nix_config: |
           experimental-features = nix-command flakes
     - name: Cache Nix store
-      uses: nix-community/cache-nix-action@v7
+      uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
       with:
         primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}
         restore-prefixes-first-match: nix-${{ runner.os }}-
