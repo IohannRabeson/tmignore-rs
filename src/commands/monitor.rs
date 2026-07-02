@@ -175,7 +175,10 @@ pub fn execute(
     let mut pending_scan_paths = BTreeSet::new();
 
     'outer: while let Some(event) = context.monitor.get_event() {
-        if is_time_machine_running_logged() && !context.is_timemachine_running {
+        if !context.is_timemachine_running
+            && event.can_be_delayed()
+            && is_time_machine_running_logged()
+        {
             info!("Time Machine backup started");
             context.monitor.start_timemachine_monitoring();
             context.is_timemachine_running = true;
