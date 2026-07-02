@@ -84,6 +84,13 @@ fn handle_event(
                 let diff = context
                     .cache
                     .find_diff_in_directory(&exclusions, repository_to_scan)?;
+                if diff.added.is_empty() && diff.removed.is_empty() {
+                    debug!(
+                        "No changes in repository '{}'",
+                        repository_to_scan.display()
+                    );
+                    continue;
+                }
                 let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
                     &diff,
                     context.dry_run,
