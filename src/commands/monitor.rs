@@ -67,7 +67,12 @@ fn handle_event(
                 context.details,
             )?;
         }
-        Event::ScanRepositories(repositories_to_scan) => {
+        Event::ScanPaths(dirty_paths) => {
+            let repositories_to_scan = find_repositories_to_scan(
+                &dirty_paths,
+                &context.config.search_directories,
+                context.cache,
+            )?;
             for repository_to_scan in &repositories_to_scan {
                 debug!("Scanning repository '{}'", repository_to_scan.display());
                 let mut exclusions = BTreeSet::new();
@@ -101,6 +106,33 @@ fn handle_event(
         Event::Shutdown => return Ok(ControlFlow::Break(())),
     }
     Ok(ControlFlow::Continue(()))
+}
+
+/// Search the repositories related to some paths.
+/// The repositories listed are in one of the search directories.
+/// Paths with an ancestor already in the exclusion list are skipped: they are
+/// already excluded from backup so a new scan cannot change anything for them.
+fn find_repositories_to_scan(
+    paths: &BTreeSet<PathBuf>,
+    search_directories: &BTreeSet<PathBuf>,
+    cache: &Cache,
+) -> Result<BTreeSet<PathBuf>, anyhow::Error> {
+    let mut repositories = BTreeSet::new();
+
+    for path in paths {
+        if cache.contains_ancestor_of(path)? {
+            continue;
+        }
+        if let Some(repository_path) = crate::git::find_parent_repository(path)
+            && search_directories
+                .iter()
+                .any(|search_directory| repository_path.starts_with(search_directory))
+        {
+            repositories.insert(repository_path);
+        }
+    }
+
+    Ok(repositories)
 }
 
 pub fn execute(
@@ -140,6 +172,7 @@ pub fn execute(
         is_timemachine_running: false,
     };
     let mut pending_events = BTreeSet::new();
+    let mut pending_scan_paths = BTreeSet::new();
 
     'outer: while let Some(event) = context.monitor.get_event() {
         if is_time_machine_running_logged() && !context.is_timemachine_running {
@@ -151,6 +184,9 @@ pub fn execute(
         if matches!(event, Event::TimeMachineBackupFinished) {
             info!("Time Machine backup finished");
             context.is_timemachine_running = false;
+            if !pending_scan_paths.is_empty() {
+                pending_events.insert(Event::ScanPaths(std::mem::take(&mut pending_scan_paths)));
+            }
             for event in std::mem::take(&mut pending_events) {
                 if handle_event(&mut context, event)?.is_break() {
                     break 'outer;
@@ -161,7 +197,14 @@ pub fn execute(
 
         if context.is_timemachine_running && event.can_be_delayed() {
             debug!("Time Machine is backing up, delaying event");
-            pending_events.insert(event);
+            match event {
+                Event::ScanPaths(paths) => {
+                    pending_scan_paths.extend(paths);
+                }
+                event => {
+                    pending_events.insert(event);
+                }
+            }
         } else if handle_event(&mut context, event)?.is_break() {
             break;
         }
@@ -178,8 +221,8 @@ enum Event {
     TimeMachineBackupFinished,
     /// Request to perform the initial scan
     InitialScan,
-    /// Request to scan some repositories
-    ScanRepositories(BTreeSet<PathBuf>),
+    /// Request to scan the repositories containing some paths
+    ScanPaths(BTreeSet<PathBuf>),
     /// Shutdown
     ///
     /// Keep this constant the last one to ensure this event will be the last to
@@ -193,7 +236,7 @@ impl Event {
             Event::ReloadConfiguration | Event::TimeMachineBackupFinished | Event::Shutdown => {
                 false
             }
-            Event::InitialScan | Event::ScanRepositories(_) => true,
+            Event::InitialScan | Event::ScanPaths(_) => true,
         }
     }
 }
@@ -322,7 +365,6 @@ mod monitor_details {
     use notify::Watcher;
 
     use super::EVENT_QUEUE_SIZE;
-    use crate::git;
 
     pub fn spawn_signals_thread(
         event_sender: Sender<super::Event>,
@@ -385,8 +427,7 @@ mod monitor_details {
                                 }
 
                                 if accept_event(&event) {
-                                    let repositories = find_repositories(&watched_paths, &event);
-                                    let _ = event_sender.send(crate::commands::monitor::Event::ScanRepositories(repositories));
+                                    let _ = event_sender.send(crate::commands::monitor::Event::ScanPaths(event.paths.into_iter().collect()));
                                 }
                             }
                         }
@@ -452,27 +493,6 @@ mod monitor_details {
         true
     }
 
-    /// Search the repositories related to an event.
-    /// The repositories listed are in one of the search directories.
-    fn find_repositories(
-        search_directories: &BTreeSet<PathBuf>,
-        event: &notify::Event,
-    ) -> BTreeSet<PathBuf> {
-        let mut results = BTreeSet::new();
-
-        for path in &event.paths {
-            if let Some(repository_path) = git::find_parent_repository(path)
-                && search_directories
-                    .iter()
-                    .any(|search_directory| repository_path.starts_with(search_directory))
-            {
-                results.insert(repository_path);
-            }
-        }
-
-        results
-    }
-
     pub enum DebouncerControl {
         SetDebounceDuration(Duration),
     }
@@ -490,9 +510,23 @@ mod monitor_details {
         let thread_handle = std::thread::Builder::new()
             .name("Debouncer Thread".to_string())
             .spawn(move || {
-                fn send_events(events: &mut BTreeSet<super::Event>, sender: &mut Sender<super::Event>) {
+                fn send_events(events: &mut BTreeSet<super::Event>, paths_to_scan: &mut BTreeSet<PathBuf>, sender: &mut Sender<super::Event>) {
+                    if !paths_to_scan.is_empty() {
+                        events.insert(super::Event::ScanPaths(std::mem::take(paths_to_scan)));
+                    }
                     while let Some(event) = events.pop_first() {
                         let _ = sender.send(event);
+                    }
+                }
+
+                fn collect_event(event: super::Event, events: &mut BTreeSet<super::Event>, paths_to_scan: &mut BTreeSet<PathBuf>) {
+                    match event {
+                        super::Event::ScanPaths(paths) => {
+                            paths_to_scan.extend(paths);
+                        }
+                        event => {
+                            events.insert(event);
+                        }
                     }
                 }
 
@@ -507,6 +541,7 @@ mod monitor_details {
                 let mut debounce_duration = Duration::from_secs(2);
                 let mut debounce_at: Option<Instant> = None;
                 let mut events_to_send = BTreeSet::new();
+                let mut paths_to_scan = BTreeSet::new();
 
                 loop {
                     match debounce_at.and_then(|debounce_at| debounce_at.checked_duration_since(Instant::now())) {
@@ -515,22 +550,22 @@ mod monitor_details {
                                 recv(input_events) -> event => {
                                     match event {
                                         Ok(super::Event::Shutdown) => {
-                                            send_events(&mut events_to_send, &mut output_event_sender);
+                                            send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
                                             let _ = output_event_sender.send(super::Event::Shutdown);
                                             break;
                                         }
                                         Ok(event) => {
-                                            events_to_send.insert(event);
+                                            collect_event(event, &mut events_to_send, &mut paths_to_scan);
                                         }
                                         Err(_) => {
-                                            send_events(&mut events_to_send, &mut output_event_sender);
+                                            send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
                                             break;
                                         }
                                     }
                                 }
                                 recv(crossbeam_channel::after(timeout)) -> _ => {
                                     debounce_at = None;
-                                    send_events(&mut events_to_send, &mut output_event_sender);
+                                    send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
                                 }
                                 recv(debouncer_control_receiver) -> control => {
                                     process_control(&control, &mut debounce_duration);
@@ -540,13 +575,13 @@ mod monitor_details {
                         None => {
                             if debounce_at.is_some() {
                                 debounce_at = None;
-                                send_events(&mut events_to_send, &mut output_event_sender);
+                                send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
                             }
                             select! {
                                 recv(input_events) -> event => {
                                     match event {
                                         Ok(super::Event::Shutdown) => {
-                                            send_events(&mut events_to_send, &mut output_event_sender);
+                                            send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
                                             let _ = output_event_sender.send(super::Event::Shutdown);
                                             break;
                                         }
@@ -554,10 +589,10 @@ mod monitor_details {
                                             // If debounce_duration is too big, it will debounce immediatly.
                                             // This should never happens in practise because we check this value is not too big when validating the config.
                                             debounce_at = Some(Instant::now().checked_add(debounce_duration).unwrap_or(Instant::now()));
-                                            events_to_send.insert(event);
+                                            collect_event(event, &mut events_to_send, &mut paths_to_scan);
                                         }
                                         Err(_) => {
-                                            send_events(&mut events_to_send, &mut output_event_sender);
+                                            send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
                                             break;
                                         },
                                     }
@@ -622,7 +657,7 @@ mod monitor_details {
     #[cfg(test)]
     mod tests {
         use rstest::rstest;
-        use std::time::Duration;
+        use std::{collections::BTreeSet, path::PathBuf, time::Duration};
 
         use crate::commands::monitor::{Event, monitor_details::DebouncerControl};
 
@@ -717,6 +752,32 @@ mod monitor_details {
         }
 
         #[test]
+        fn test_spawn_debouncer_thread_scan_paths_are_merged() {
+            let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
+            let (thread_handle, control_sender, output_receiver) =
+                super::spawn_debouncer_thread(input_receiver).unwrap();
+            let debounce_duration = Duration::from_millis(250);
+            control_sender
+                .send(DebouncerControl::SetDebounceDuration(debounce_duration))
+                .unwrap();
+            input_sender
+                .send(Event::ScanPaths(BTreeSet::from([PathBuf::from("/a")])))
+                .unwrap();
+            input_sender
+                .send(Event::ScanPaths(BTreeSet::from([PathBuf::from("/b")])))
+                .unwrap();
+            std::thread::sleep(debounce_duration);
+            let output_event = output_receiver.recv().unwrap();
+            assert_eq!(
+                Event::ScanPaths(BTreeSet::from([PathBuf::from("/a"), PathBuf::from("/b")])),
+                output_event
+            );
+            assert!(output_receiver.recv_timeout(debounce_duration).is_err());
+            input_sender.send(Event::Shutdown).unwrap();
+            thread_handle.join().unwrap();
+        }
+
+        #[test]
         fn test_spawn_debouncer_thread_reload_event_is_debounced_early_shutdown() {
             let (input_sender, input_receiver) = crossbeam_channel::bounded(4);
             let (thread_handle, control_sender, output_receiver) =
@@ -739,13 +800,71 @@ mod monitor_details {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{collections::BTreeSet, time::Duration};
 
     use rstest::rstest;
     use serial_test::serial;
     use temp_dir_builder::TempDirectoryBuilder;
 
     use crate::{cache::Cache, json::save_json_file};
+
+    #[test]
+    fn test_find_repositories_to_scan() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_directory("repository/.git")
+            .add_directory("repository/target")
+            .add_directory("outside/.git")
+            .build()
+            .unwrap();
+        let repository_path = temp_dir.path().join("repository");
+        let search_directories = BTreeSet::from([repository_path.clone()]);
+        let mut cache = Cache::open_in_memory().unwrap();
+        cache
+            .add_paths([repository_path.join("target")].into_iter())
+            .unwrap();
+
+        let repositories = super::find_repositories_to_scan(
+            &BTreeSet::from([repository_path.join("src").join("main.rs")]),
+            &search_directories,
+            &cache,
+        )
+        .unwrap();
+        assert_eq!(BTreeSet::from([repository_path.clone()]), repositories);
+
+        let repositories = super::find_repositories_to_scan(
+            &BTreeSet::from([repository_path.join("target").join("debug").join("bin")]),
+            &search_directories,
+            &cache,
+        )
+        .unwrap();
+        assert!(
+            repositories.is_empty(),
+            "a path under an already excluded directory must not trigger a scan"
+        );
+
+        let repositories = super::find_repositories_to_scan(
+            &BTreeSet::from([repository_path.join("target")]),
+            &search_directories,
+            &cache,
+        )
+        .unwrap();
+        assert_eq!(
+            BTreeSet::from([repository_path.clone()]),
+            repositories,
+            "an event on the excluded directory itself must trigger a scan"
+        );
+
+        let repositories = super::find_repositories_to_scan(
+            &BTreeSet::from([temp_dir.path().join("outside").join("file")]),
+            &search_directories,
+            &cache,
+        )
+        .unwrap();
+        assert!(
+            repositories.is_empty(),
+            "a repository outside the search directories must not be scanned"
+        );
+    }
 
     #[rstest]
     #[case(Ok(true), true)]

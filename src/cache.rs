@@ -283,6 +283,21 @@ impl Cache {
         Ok(diff)
     }
 
+    pub fn contains_ancestor_of(&self, path: impl AsRef<Path>) -> anyhow::Result<bool> {
+        let connection = self.connection.borrow();
+        let mut stmt = connection.prepare("SELECT * FROM paths WHERE path = ?")?;
+        let mut current = path.as_ref().parent();
+
+        while let Some(ancestor) = current {
+            if stmt.exists(params![path_to_bytes(ancestor)])? {
+                return Ok(true);
+            }
+            current = ancestor.parent();
+        }
+
+        Ok(false)
+    }
+
     pub fn paths(&self) -> anyhow::Result<Vec<PathBuf>> {
         let connection = self.connection.borrow();
         let mut stmt = connection.prepare("SELECT path FROM paths")?;
@@ -325,6 +340,7 @@ impl Cache {
 mod tests {
     use std::{assert_matches, collections::BTreeSet, path::PathBuf};
 
+    use rstest::rstest;
     use temp_dir_builder::TempDirectoryBuilder;
 
     use crate::cache::{MIGRATIONS_SLICE, OpenOrCreateError};
@@ -506,6 +522,22 @@ mod tests {
             paths.len(),
             "only /Users/me/my_project/file should have been removed"
         );
+    }
+
+    #[rstest]
+    #[case("/repo/target/debug/binary", true)]
+    #[case("/repo/target/file", true)]
+    #[case("/repo/target", false)]
+    #[case("/repo/src/main.rs", false)]
+    #[case("/repo-sibling/file", false)]
+    #[case("/", false)]
+    fn test_contains_ancestor_of(#[case] path: &str, #[case] expected: bool) {
+        let mut cache = Cache::open_in_memory().unwrap();
+        cache
+            .reset([PathBuf::from("/repo/target"), PathBuf::from("/repo/a")])
+            .unwrap();
+
+        assert_eq!(expected, cache.contains_ancestor_of(path).unwrap());
     }
 
     #[test]
