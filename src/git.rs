@@ -148,7 +148,12 @@ pub fn find_parent_repository(path: impl AsRef<Path>) -> Option<PathBuf> {
 
 /// Execute git config --get core.excludesFile
 pub fn get_global_git_ignore() -> Option<PathBuf> {
+    get_global_git_ignore_from(std::env::current_dir().ok()?)
+}
+
+fn get_global_git_ignore_from(working_directory: impl AsRef<Path>) -> Option<PathBuf> {
     let output = git_command()
+        .current_dir(working_directory)
         .arg("config")
         .arg("--get")
         .arg("core.excludesFile")
@@ -212,6 +217,32 @@ mod tests {
             "git {:?} failed: {}",
             args,
             String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn test_get_global_git_ignore_ignores_repository_local_config() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file("repository/local_excludes", "secrets\n")
+            .build()
+            .unwrap();
+        let repository_path = temp_dir.path().join("repository");
+        let excludes_path = repository_path.join("local_excludes");
+        run_git(&["init", "-q", repository_path.to_str().unwrap()]);
+        run_git(&[
+            "-C",
+            repository_path.to_str().unwrap(),
+            "config",
+            "core.excludesFile",
+            excludes_path.to_str().unwrap(),
+        ]);
+
+        let result = super::get_global_git_ignore_from(&repository_path);
+
+        assert_ne!(
+            Some(excludes_path),
+            result,
+            "get_global_git_ignore returned the repository-local core.excludesFile"
         );
     }
 
