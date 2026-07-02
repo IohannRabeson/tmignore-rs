@@ -146,7 +146,7 @@ pub fn find_parent_repository(path: impl AsRef<Path>) -> Option<PathBuf> {
     }
 }
 
-/// Execute git config --get core.excludesFile
+/// Execute git config --global --get core.excludesFile
 pub fn get_global_git_ignore() -> Option<PathBuf> {
     get_global_git_ignore_from(std::env::current_dir().ok()?)
 }
@@ -155,6 +155,7 @@ fn get_global_git_ignore_from(working_directory: impl AsRef<Path>) -> Option<Pat
     let output = git_command()
         .current_dir(working_directory)
         .arg("config")
+        .arg("--global")
         .arg("--get")
         .arg("core.excludesFile")
         .output()
