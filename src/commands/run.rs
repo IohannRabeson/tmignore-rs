@@ -64,6 +64,10 @@ pub fn execute(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::path::PathBuf;
+
+    use temp_dir_builder::TempDirectoryBuilder;
+
     use crate::cache::Cache;
 
     #[test]
@@ -90,6 +94,38 @@ pub(crate) mod tests {
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             c_file_path
         ));
+    }
+
+    #[test]
+    fn test_gitignored_symlink_does_not_exclude_target() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_run_gitignored_symlink");
+        if root.exists() && root.is_dir() {
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+        let temp_dir = TempDirectoryBuilder::default()
+            .root_folder(&root)
+            .add_text_file("outside/precious.txt", "precious data")
+            .add_text_file("repository/.gitignore", "link\n")
+            .build()
+            .unwrap();
+        let repository_path = temp_dir.path().join("repository");
+        let target_path = temp_dir.path().join("outside").join("precious.txt");
+        std::os::unix::fs::symlink(&target_path, repository_path.join("link")).unwrap();
+        crate::commands::tests::init_git_repository(&repository_path);
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&repository_path);
+
+        assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
+            &target_path
+        ));
+
+        super::execute(&config, &mut cache, false, false).unwrap();
+
+        assert!(
+            !crate::timemachine::tests::is_excluded_from_time_machine(&target_path),
+            "the Time Machine exclusion was applied to the target of a gitignored symlink, \
+             outside the repository"
+        );
     }
 
     #[test]
