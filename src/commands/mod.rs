@@ -127,6 +127,12 @@ fn find_paths_to_exclude_from_backup(
     let ignored_files = git::find_ignored_files(repository_path)?;
 
     for ignored_file in ignored_files {
+        if ignored_file
+            .symlink_metadata()
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            continue;
+        }
         if let Some(ignored_file) = ignored_file.to_str()
             && whitelist.is_match(ignored_file)
         {
