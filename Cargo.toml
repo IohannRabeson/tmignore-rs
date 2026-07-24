@@ -16,7 +16,7 @@ fnmatch-regex = "0.3.0"
 humantime = "2.3.0"
 ignore = { version = "0.4.28", features = ["simd-accel"] }
 log = "0.4.30"
-notify = { version = "8.2.0", features = ["crossbeam-channel"] }
+notify = { version = "9.0.0-rc.4", features = ["crossbeam-channel"] }
 oslog = "0.2.0"
 regex = "1.12.3"
 rusqlite = { version = "0.39.0", features = ["chrono", "bundled"], default-features = false }
