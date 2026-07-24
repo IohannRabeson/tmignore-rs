@@ -371,8 +371,8 @@ mod monitor_details {
 
     use anyhow::Context;
     use crossbeam_channel::{Receiver, Sender, select};
-    use log::{debug, warn};
-    use notify::Watcher;
+    use log::debug;
+    use notify::{PathOp, Watcher};
 
     use super::EVENT_QUEUE_SIZE;
 
@@ -445,18 +445,16 @@ mod monitor_details {
                             if let Ok(control) = control {
                                 match control {
                                     MonitorControl::SetWatchedPaths(new_paths) => {
-                                        let mut paths = watcher.paths_mut();
-                                        for path in &watched_paths {
-                                            let _ = paths.remove(path);
-                                        }
-                                        watched_paths.clear();
-                                        for path in &new_paths {
-                                            if let Ok(()) = paths.add(path, notify::RecursiveMode::Recursive) {
-                                                watched_paths.insert(path.clone());
+                                        let _ = watcher.update_paths(
+                                            std::mem::take(&mut watched_paths)
+                                                .into_iter()
+                                                .map(PathOp::Unwatch)
+                                                .collect(),
+                                        );
+                                        for path in new_paths {
+                                            if let Ok(()) = watcher.watch(&path, notify::RecursiveMode::Recursive) {
+                                                watched_paths.insert(path);
                                             }
-                                        }
-                                        if let Err(error) = paths.commit() {
-                                            warn!("Failed to commit paths to watch: {error}");
                                         }
                                     },
                                     MonitorControl::SetConfigurationFile(path) => {
