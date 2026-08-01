@@ -36,3 +36,27 @@ jobs:
       run: cargo build --all --verbose --locked --target ${{ matrix.rust-target }}
     - name: Test
       run: cargo test --locked --target ${{ matrix.rust-target }}
+
+  clippy:
+    runs-on: "macos-latest"
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      with:
+        toolchain: stable
+        components: clippy
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      with:
+        key: clippy
+    - name: Run clippy
+      uses: auguwu/clippy-action@9817d076b82df0194935be9db6154c56ac07b317 # 1.5.0
+      with:
+        check-args: --all --all-targets --locked
+        args: -D warnings
+        token: ${{ secrets.GITHUB_TOKEN }}
