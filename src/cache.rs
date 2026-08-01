@@ -368,7 +368,7 @@ mod tests {
         let cache = Cache::open_in_memory().unwrap();
         let version = cache.get_version().unwrap();
 
-        assert_eq!(MIGRATIONS_SLICE.len() as u32, version);
+        assert_eq!(u32::try_from(MIGRATIONS_SLICE.len()), Ok(version));
     }
 
     #[test]
