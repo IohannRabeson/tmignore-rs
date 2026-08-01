@@ -60,3 +60,16 @@ jobs:
         check-args: --all --all-targets --locked
         args: -D warnings
         token: ${{ secrets.GITHUB_TOKEN }}
+
+  fmt:
+    runs-on: "macos-latest"
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      with:
+        toolchain: stable
+        components: rustfmt
+    - name: Run rustfmt
+      run: cargo fmt --all --check
