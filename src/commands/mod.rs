@@ -187,6 +187,10 @@ pub(crate) mod tests {
     /// When `root_directory` is None, the temporary directory is created in `/tmp`
     /// which is excluded from Time Machine backup, meaning all children files and directories
     /// will be considered excluded from Time Machine backup anyway (`tmutil isexcluded` will always returns "[Excluded]").
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "test-only helper always called with `&str` literals or `None`, so taking the value by reference instead would force uglier call sites (`Some(&\"literal\")`) for no real benefit"
+    )]
     pub(crate) fn create_repository(root_directory: Option<impl AsRef<Path>>) -> TempDirectory {
         let root_directory = root_directory.as_ref().map(std::convert::AsRef::as_ref);
         if let Some(root_directory) = root_directory
