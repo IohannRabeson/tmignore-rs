@@ -171,16 +171,12 @@ pub(crate) mod tests {
 
     #[test]
     fn test_is_time_machine_running_true() {
-        assert!(
-            super::is_time_machine_running_impl::<Running>().unwrap()
-        );
+        assert!(super::is_time_machine_running_impl::<Running>().unwrap());
     }
 
     #[test]
     fn test_is_time_machine_running_false() {
-        assert!(
-            !super::is_time_machine_running_impl::<NotRunning>().unwrap()
-        );
+        assert!(!super::is_time_machine_running_impl::<NotRunning>().unwrap());
     }
 
     #[test]
