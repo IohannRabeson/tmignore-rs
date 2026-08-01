@@ -184,8 +184,7 @@ mod tests {
         ignored_directories: &BTreeSet<PathBuf>,
     ) -> Vec<PathBuf> {
         let mut results = vec![];
-        let directories =
-            BTreeSet::from_iter(directories.iter().map(AsRef::as_ref).map(Path::to_path_buf));
+        let directories = directories.iter().map(AsRef::as_ref).map(Path::to_path_buf).collect::<BTreeSet<_>>();
         if let Some((rx, thread_handle)) = find_repositories(&directories, ignored_directories, 0) {
             while let Ok(path) = rx.recv() {
                 results.push(path);
