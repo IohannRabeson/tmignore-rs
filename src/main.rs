@@ -440,8 +440,10 @@ mod tests {
                 std::fs::remove_dir_all(root_directory).unwrap();
             }
             let repository_path = root_directory.join("repository");
-            let mut config = Config::default();
-            config.debounce_duration = Duration::from_secs(1);
+            let mut config = Config {
+                debounce_duration: Duration::from_secs(1),
+                ..Default::default()
+            };
             config.search_directories.clear();
             config.search_directories.insert(repository_path.clone());
             let temp_dir = TempDirectoryBuilder::default()
@@ -513,8 +515,10 @@ mod tests {
                 std::fs::remove_dir_all(root_directory).unwrap();
             }
             let repository_path = root_directory.join("repository");
-            let mut config = Config::default();
-            config.debounce_duration = Duration::from_secs(1);
+            let mut config = Config {
+                debounce_duration: Duration::from_secs(1),
+                ..Default::default()
+            };
             config.search_directories.clear();
             config
                 .search_directories
@@ -563,8 +567,10 @@ mod tests {
         std::fs::write(&a_file_path, "").unwrap();
         std::fs::write(&b_file_path, "").unwrap();
         std::fs::write(&c_file_path, "").unwrap();
-        let mut config = Config::default();
-        config.debounce_duration = Duration::from_secs(1);
+        let mut config = Config {
+            debounce_duration: Duration::from_secs(1),
+            ..Default::default()
+        };
         config.search_directories.clear();
         config
             .search_directories
@@ -598,8 +604,10 @@ mod tests {
                 std::fs::remove_dir_all(root_directory).unwrap();
             }
             let repository_path = root_directory.join("repository");
-            let mut config = Config::default();
-            config.debounce_duration = Duration::from_secs(1);
+            let mut config = Config {
+                debounce_duration: Duration::from_secs(1),
+                ..Default::default()
+            };
             config.search_directories.clear();
             config
                 .search_directories
