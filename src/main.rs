@@ -362,7 +362,7 @@ mod tests {
     fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
         let root_directory = root_directory.as_ref();
         if root_directory.exists() && root_directory.is_dir() {
-            std::fs::remove_dir_all(&root_directory).unwrap();
+            std::fs::remove_dir_all(root_directory).unwrap();
         }
         let repository_path = root_directory.join("repository");
         let mut config = Config::default();
@@ -416,7 +416,7 @@ mod tests {
             &c_file_path
         ));
         if let Err(error) = program(cli, false) {
-            panic!("program returned an error: {}", error);
+            panic!("program returned an error: {error}");
         }
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
             &a_file_path
@@ -437,7 +437,7 @@ mod tests {
         let _temp_dir = {
             let root_directory = &temp_dir_path;
             if root_directory.exists() && root_directory.is_dir() {
-                std::fs::remove_dir_all(&root_directory).unwrap();
+                std::fs::remove_dir_all(root_directory).unwrap();
             }
             let repository_path = root_directory.join("repository");
             let mut config = Config::default();
@@ -510,7 +510,7 @@ mod tests {
         let temp_dir = {
             let root_directory = &temp_dir_path;
             if root_directory.exists() && root_directory.is_dir() {
-                std::fs::remove_dir_all(&root_directory).unwrap();
+                std::fs::remove_dir_all(root_directory).unwrap();
             }
             let repository_path = root_directory.join("repository");
             let mut config = Config::default();
@@ -595,7 +595,7 @@ mod tests {
         let _temp_dir = {
             let root_directory = &temp_dir_path;
             if root_directory.exists() && root_directory.is_dir() {
-                std::fs::remove_dir_all(&root_directory).unwrap();
+                std::fs::remove_dir_all(root_directory).unwrap();
             }
             let repository_path = root_directory.join("repository");
             let mut config = Config::default();

@@ -245,8 +245,8 @@ mod tests {
         let config_file_path = temp_dir.path().join("does_not_exist.json");
         let config = Config::load_or_create_file(&config_file_path).unwrap();
 
-        assert!(config.search_directories.len() > 0);
-        assert!(config.ignored_directories.len() > 0);
+        assert!(!config.search_directories.is_empty());
+        assert!(!config.ignored_directories.is_empty());
         assert!(
             config
                 .search_directories
@@ -325,7 +325,7 @@ mod tests {
         let error = error
             .downcast_ref::<ValidationError>()
             .expect("downcast failed");
-        assert!(error.fails.len() > 0);
+        assert!(!error.fails.is_empty());
         let expected = crate::config::ValidationFail::NotFound(PathBuf::from("/does_not_exist"));
         assert!(error.fails.contains(&expected));
     }
@@ -345,7 +345,7 @@ mod tests {
         let error = error
             .downcast_ref::<ValidationError>()
             .expect("downcast failed");
-        assert!(error.fails.len() > 0);
+        assert!(!error.fails.is_empty());
         assert!(
             error
                 .fails
