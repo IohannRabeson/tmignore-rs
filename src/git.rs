@@ -186,14 +186,11 @@ mod tests {
         let mut results = vec![];
         let directories =
             BTreeSet::from_iter(directories.iter().map(AsRef::as_ref).map(Path::to_path_buf));
-        match find_repositories(&directories, ignored_directories, 0) {
-            Some((rx, thread_handle)) => {
-                while let Ok(path) = rx.recv() {
-                    results.push(path);
-                }
-                thread_handle.join().unwrap();
+        if let Some((rx, thread_handle)) = find_repositories(&directories, ignored_directories, 0) {
+            while let Ok(path) = rx.recv() {
+                results.push(path);
             }
-            None => (),
+            thread_handle.join().unwrap();
         }
 
         results
@@ -296,8 +293,7 @@ mod tests {
         let ignored_directories = BTreeSet::from([temp_dir
             .path()
             .join("subdirectory")
-            .join("ignored")
-            .to_path_buf()]);
+            .join("ignored").clone()]);
         let repositories = find_repositories_vec(&[temp_dir.path()], &ignored_directories);
 
         assert_eq!(repositories.len(), 1);

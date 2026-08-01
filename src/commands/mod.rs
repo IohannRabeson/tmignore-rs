@@ -188,12 +188,11 @@ pub(crate) mod tests {
     /// which is excluded from Time Machine backup, meaning all children files and directories
     /// will be considered excluded from Time Machine backup anyway (`tmutil isexcluded` will always returns "[Excluded]").
     pub(crate) fn create_repository(root_directory: Option<impl AsRef<Path>>) -> TempDirectory {
-        let root_directory = root_directory.as_ref().map(|path| path.as_ref());
-        if let Some(root_directory) = root_directory {
-            if root_directory.exists() && root_directory.is_dir() {
-                std::fs::remove_dir_all(&root_directory).unwrap();
+        let root_directory = root_directory.as_ref().map(std::convert::AsRef::as_ref);
+        if let Some(root_directory) = root_directory
+            && root_directory.exists() && root_directory.is_dir() {
+                std::fs::remove_dir_all(root_directory).unwrap();
             }
-        }
         let mut temp_dir_builder = TempDirectoryBuilder::default();
         if let Some(root_directory) = root_directory {
             temp_dir_builder = temp_dir_builder.root_folder(root_directory);

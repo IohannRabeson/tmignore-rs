@@ -171,17 +171,15 @@ pub(crate) mod tests {
 
     #[test]
     fn test_is_time_machine_running_true() {
-        assert_eq!(
-            true,
+        assert!(
             super::is_time_machine_running_impl::<Running>().unwrap()
         );
     }
 
     #[test]
     fn test_is_time_machine_running_false() {
-        assert_eq!(
-            false,
-            super::is_time_machine_running_impl::<NotRunning>().unwrap()
+        assert!(
+            !super::is_time_machine_running_impl::<NotRunning>().unwrap()
         );
     }
 
@@ -261,9 +259,9 @@ pub(crate) mod tests {
             .build()
             .unwrap();
         let test_file = temp_dir.path().join("test.txt");
-        assert_eq!(false, is_excluded_from_time_machine(&test_file));
+        assert!(!is_excluded_from_time_machine(&test_file));
         assert!(add_exclusions([test_file.clone()].iter()).is_empty());
-        assert_eq!(true, is_excluded_from_time_machine(&test_file));
+        assert!(is_excluded_from_time_machine(&test_file));
     }
 
     #[test]
@@ -274,9 +272,9 @@ pub(crate) mod tests {
             .unwrap();
         let test_file = temp_dir.path().join("test.txt");
         assert!(add_exclusions([test_file.clone()].iter()).is_empty());
-        assert_eq!(true, is_excluded_from_time_machine(&test_file));
+        assert!(is_excluded_from_time_machine(&test_file));
         assert!(remove_exclusions([test_file.clone()].iter()).is_empty());
-        assert_eq!(false, is_excluded_from_time_machine(&test_file));
+        assert!(!is_excluded_from_time_machine(&test_file));
     }
 
     #[test]
@@ -287,10 +285,10 @@ pub(crate) mod tests {
             .unwrap();
         let test_dir = temp_dir.path().join("dir");
         let test_file = test_dir.join("test.txt");
-        assert_eq!(false, is_excluded_from_time_machine(&test_dir));
-        assert_eq!(false, is_excluded_from_time_machine(&test_file));
+        assert!(!is_excluded_from_time_machine(&test_dir));
+        assert!(!is_excluded_from_time_machine(&test_file));
         assert!(add_exclusions([test_dir.clone()].iter()).is_empty());
-        assert_eq!(true, is_excluded_from_time_machine(&test_dir));
-        assert_eq!(true, is_excluded_from_time_machine(&test_file));
+        assert!(is_excluded_from_time_machine(&test_dir));
+        assert!(is_excluded_from_time_machine(&test_file));
     }
 }

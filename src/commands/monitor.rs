@@ -446,7 +446,7 @@ mod monitor_details {
                                 match control {
                                     MonitorControl::SetWatchedPaths(new_paths) => {
                                         for path in &watched_paths {
-                                            let _ = watcher.unwatch(&path);
+                                            let _ = watcher.unwatch(path);
                                         }
                                         watched_paths.clear();
                                         for path in new_paths {
