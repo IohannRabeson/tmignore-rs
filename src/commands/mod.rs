@@ -223,8 +223,10 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn create_config(search_directory: impl AsRef<Path>) -> Config {
-        let mut config = Config::default();
-        config.debounce_duration = Duration::from_secs(1);
+        let mut config = Config {
+            debounce_duration: Duration::from_secs(1),
+            ..Default::default()
+        };
         config.search_directories.clear();
         config
             .search_directories
