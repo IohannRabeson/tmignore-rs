@@ -184,7 +184,11 @@ mod tests {
         ignored_directories: &BTreeSet<PathBuf>,
     ) -> Vec<PathBuf> {
         let mut results = vec![];
-        let directories = directories.iter().map(AsRef::as_ref).map(Path::to_path_buf).collect::<BTreeSet<_>>();
+        let directories = directories
+            .iter()
+            .map(AsRef::as_ref)
+            .map(Path::to_path_buf)
+            .collect::<BTreeSet<_>>();
         if let Some((rx, thread_handle)) = find_repositories(&directories, ignored_directories, 0) {
             while let Ok(path) = rx.recv() {
                 results.push(path);
@@ -289,10 +293,8 @@ mod tests {
             .add_directory("subdirectory/ignored/.git")
             .build()
             .unwrap();
-        let ignored_directories = BTreeSet::from([temp_dir
-            .path()
-            .join("subdirectory")
-            .join("ignored").clone()]);
+        let ignored_directories =
+            BTreeSet::from([temp_dir.path().join("subdirectory").join("ignored").clone()]);
         let repositories = find_repositories_vec(&[temp_dir.path()], &ignored_directories);
 
         assert_eq!(repositories.len(), 1);
