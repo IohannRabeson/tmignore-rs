@@ -158,6 +158,11 @@ The `threads` count. 0 means the count of threads is not limited and the max wil
 ### `debounce_duration`
 Debounce duration, a delay allowing to collect similar events and process them all at once. Default is 2 seconds. The maximum is 1 minute.
 
+# Developer documentation
+
+## How to release
+Create a new release with a version as tag (eg: 1.2.3). This will trigger an action that will build the program and upload it as release artifacts. After that the action will update the Homebrew formula and Nix.
+
 ## Coverage
 I'm using [Tarpaulin](https://github.com/xd009642/tarpaulin) to measure test coverage.
 When developing run tarpaulin before doing changes, then run it later with your changes and tarpaulin will tell you how the coverage progressed.
