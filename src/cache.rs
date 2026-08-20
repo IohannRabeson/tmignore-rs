@@ -146,7 +146,6 @@ impl Cache {
 
     fn setup(&mut self) -> anyhow::Result<()> {
         MIGRATIONS.to_latest(&mut self.connection.borrow_mut())?;
-        Self::set_last_update_connection(&mut self.connection.borrow_mut())?;
         Ok(())
     }
 
@@ -171,14 +170,6 @@ impl Cache {
         let now = chrono::Utc::now();
 
         transaction.execute(Self::SQL_SET_LAST_UPDATE, params![now])?;
-
-        Ok(())
-    }
-
-    fn set_last_update_connection(connection: &mut Connection) -> anyhow::Result<()> {
-        let now = chrono::Utc::now();
-
-        connection.execute(Self::SQL_SET_LAST_UPDATE, params![now])?;
 
         Ok(())
     }
@@ -311,10 +302,7 @@ impl Cache {
     }
 
     /// Get the date and time of the last cache update.
-    ///
-    /// This function will panic for a cache with the schema V0 but that
-    /// supposed to never happen.
-    pub fn last_update(&self) -> anyhow::Result<DateTime<Utc>> {
+    pub fn last_update(&self) -> anyhow::Result<Option<DateTime<Utc>>> {
         if self.get_version()? == 0 {
             return Err(anyhow!(
                 "last_update is only available for schema with version > 0"
@@ -358,9 +346,58 @@ mod tests {
     }
 
     #[test]
-    fn test_last_update() {
+    fn test_last_update_is_none_for_new_cache() {
         let cache = Cache::open_in_memory().unwrap();
-        let _ = cache.last_update();
+        assert!(cache.last_update().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_reset_sets_last_update() {
+        let mut cache = Cache::open_in_memory().unwrap();
+        assert!(cache.last_update().unwrap().is_none());
+
+        cache.reset([PathBuf::from("hello")]).unwrap();
+        let first_update = cache.last_update().unwrap().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        cache.reset([PathBuf::from("world")]).unwrap();
+        let second_update = cache.last_update().unwrap().unwrap();
+
+        assert!(second_update > first_update);
+    }
+
+    #[test]
+    fn test_add_paths_sets_last_update() {
+        let mut cache = Cache::open_in_memory().unwrap();
+        assert!(cache.last_update().unwrap().is_none());
+
+        cache
+            .add_paths([PathBuf::from("hello")].into_iter())
+            .unwrap();
+        let first_update = cache.last_update().unwrap().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        cache
+            .add_paths([PathBuf::from("world")].into_iter())
+            .unwrap();
+        let second_update = cache.last_update().unwrap().unwrap();
+
+        assert!(second_update > first_update);
+    }
+
+    #[test]
+    fn test_remove_paths_in_directory_sets_last_update() {
+        let mut cache = Cache::open_in_memory().unwrap();
+        assert!(cache.last_update().unwrap().is_none());
+
+        cache.remove_paths_in_directory("hello").unwrap();
+        let first_update = cache.last_update().unwrap().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        cache.remove_paths_in_directory("world").unwrap();
+        let second_update = cache.last_update().unwrap().unwrap();
+
+        assert!(second_update > first_update);
     }
 
     #[test]
@@ -569,5 +606,20 @@ mod tests {
         let paths = cache.paths().unwrap();
         assert_eq!(1, paths.len());
         assert_eq!(PathBuf::from("yo"), paths[0]);
+    }
+
+    #[test]
+    fn test_open_does_not_change_last_update() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let cache_file_path = temp_dir.path().join("cache.db");
+        let last_update_after_create = {
+            let mut cache = Cache::open_or_create(&cache_file_path).unwrap();
+            cache.add_paths([PathBuf::from("yo")].into_iter()).unwrap();
+            cache.last_update().unwrap()
+        };
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let cache = Cache::open(&cache_file_path).unwrap();
+
+        assert_eq!(last_update_after_create, cache.last_update().unwrap());
     }
 }
