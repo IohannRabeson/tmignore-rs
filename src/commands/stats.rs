@@ -32,12 +32,14 @@ pub fn execute(cache: &Cache, writer: &mut impl Write, stat: Stats) -> anyhow::R
                 writeln!(writer, "{total}")?;
             }
         }
-        Stats::LastUpdate => {
-            let last_update = cache.last_update()?;
-            let local_time: DateTime<Local> = last_update.with_timezone(&Local);
+        Stats::LastUpdate => match cache.last_update()? {
+            Some(last_update) => {
+                let local_time: DateTime<Local> = last_update.with_timezone(&Local);
 
-            writeln!(writer, "{local_time}")?;
-        }
+                writeln!(writer, "{local_time}")?;
+            }
+            None => writeln!(writer, "never")?,
+        },
     }
     Ok(())
 }
@@ -142,13 +144,24 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_last_update() {
+    fn test_execute_last_update_never() {
         let cache = Cache::open_in_memory().unwrap();
         let mut buffer = vec![];
 
         super::execute(&cache, &mut buffer, Stats::LastUpdate).unwrap();
 
-        assert!(!String::from_utf8(buffer).unwrap().trim().is_empty());
+        assert_eq!("never", String::from_utf8(buffer).unwrap().trim());
+    }
+
+    #[test]
+    fn test_execute_last_update() {
+        let mut cache = Cache::open_in_memory().unwrap();
+        cache.add_paths(std::iter::empty()).unwrap();
+        let mut buffer = vec![];
+
+        super::execute(&cache, &mut buffer, Stats::LastUpdate).unwrap();
+
+        assert_ne!("never", String::from_utf8(buffer).unwrap().trim());
     }
 
     #[test]
