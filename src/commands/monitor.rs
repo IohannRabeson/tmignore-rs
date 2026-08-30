@@ -803,13 +803,186 @@ mod monitor_details {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, time::Duration};
+    use std::{collections::BTreeSet, path::Path, time::Duration};
 
     use rstest::rstest;
     use serial_test::serial;
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::{cache::Cache, json::save_json_file};
+    use crate::{cache::Cache, commands::tests::run_git, json::save_json_file};
+
+    fn commit_all(repository_path: &Path, message: &str) {
+        run_git(&["-C", repository_path.to_str().unwrap(), "add", "-A"]);
+        run_git(&[
+            "-C",
+            repository_path.to_str().unwrap(),
+            "-c",
+            "user.email=a@b.c",
+            "-c",
+            "user.name=a",
+            "commit",
+            "-q",
+            "-m",
+            message,
+        ]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_rescan_main_repository_does_not_remove_submodule_exclusions() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let sub_source_path = temp_dir_path.join("sub_source");
+        let main_path = temp_dir_path.join("main");
+
+        crate::commands::tests::init_git_repository(&sub_source_path);
+        std::fs::write(sub_source_path.join(".gitignore"), "ignored_in_sub\n").unwrap();
+        commit_all(&sub_source_path, "init submodule source");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n").unwrap();
+        commit_all(&main_path, "init main repository");
+        run_git(&[
+            "-c",
+            "protocol.file.allow=always",
+            "-C",
+            main_path.to_str().unwrap(),
+            "submodule",
+            "add",
+            "-q",
+            sub_source_path.to_str().unwrap(),
+            "submodule",
+        ]);
+        commit_all(&main_path, "add submodule");
+
+        std::fs::write(main_path.join("submodule").join("ignored_in_sub"), "").unwrap();
+        std::fs::write(main_path.join("ignored_in_main"), "").unwrap();
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&main_path);
+
+        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+
+        let submodule_ignored_path = main_path.join("submodule").join("ignored_in_sub");
+        let main_ignored_path = main_path.join("ignored_in_main");
+
+        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        assert!(
+            cached_paths.contains(&submodule_ignored_path),
+            "the initial scan should have excluded the submodule's ignored file"
+        );
+        assert!(cached_paths.contains(&main_ignored_path));
+
+        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n\n").unwrap();
+
+        let mut config = config;
+        let mut whitelist = super::super::create_whitelist(&config.whitelist_patterns).unwrap();
+        let mut monitor = super::Monitor::new().unwrap();
+        let config_file_path = temp_dir_path.join("config.json");
+        let mut context = super::HandleEventContext {
+            config: &mut config,
+            config_file_path: &config_file_path,
+            whitelist: &mut whitelist,
+            monitor: &mut monitor,
+            cache: &mut cache,
+            dry_run: false,
+            details: false,
+            is_timemachine_running: false,
+        };
+
+        let _ = super::handle_event(
+            &mut context,
+            super::Event::ScanPaths(BTreeSet::from([main_path.join(".gitignore")])),
+        )
+        .unwrap();
+
+        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+
+        crate::commands::tests::send_sigint();
+        drop(monitor);
+
+        assert!(
+            cached_paths.contains(&submodule_ignored_path),
+            "rescanning the main repository must not remove the submodule's exclusions"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_rescan_main_repository_does_not_remove_nested_worktree_exclusions() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let main_path = temp_dir_path.join("main");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n").unwrap();
+        commit_all(&main_path, "init main repository");
+        run_git(&["-C", main_path.to_str().unwrap(), "branch", "feature"]);
+        run_git(&[
+            "-C",
+            main_path.to_str().unwrap(),
+            "worktree",
+            "add",
+            "-q",
+            "nested_worktree",
+            "feature",
+        ]);
+
+        let worktree_path = main_path.join("nested_worktree");
+        std::fs::write(worktree_path.join(".gitignore"), "ignored_in_worktree\n").unwrap();
+        commit_all(&worktree_path, "add gitignore in worktree");
+
+        std::fs::write(worktree_path.join("ignored_in_worktree"), "").unwrap();
+        std::fs::write(main_path.join("ignored_in_main"), "").unwrap();
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&main_path);
+
+        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+
+        let worktree_ignored_path = worktree_path.join("ignored_in_worktree");
+        let main_ignored_path = main_path.join("ignored_in_main");
+
+        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        assert!(
+            cached_paths.contains(&worktree_ignored_path),
+            "the initial scan should have excluded the worktree's ignored file"
+        );
+        assert!(cached_paths.contains(&main_ignored_path));
+
+        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n\n").unwrap();
+
+        let mut config = config;
+        let mut whitelist = super::super::create_whitelist(&config.whitelist_patterns).unwrap();
+        let mut monitor = super::Monitor::new().unwrap();
+        let config_file_path = temp_dir_path.join("config.json");
+        let mut context = super::HandleEventContext {
+            config: &mut config,
+            config_file_path: &config_file_path,
+            whitelist: &mut whitelist,
+            monitor: &mut monitor,
+            cache: &mut cache,
+            dry_run: false,
+            details: false,
+            is_timemachine_running: false,
+        };
+
+        let _ = super::handle_event(
+            &mut context,
+            super::Event::ScanPaths(BTreeSet::from([main_path.join(".gitignore")])),
+        )
+        .unwrap();
+
+        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+
+        crate::commands::tests::send_sigint();
+        drop(monitor);
+
+        assert!(
+            cached_paths.contains(&worktree_ignored_path),
+            "rescanning the main repository must not remove the nested worktree's exclusions"
+        );
+    }
 
     #[test]
     fn test_find_repositories_to_scan() {
