@@ -18,6 +18,7 @@ use crate::{
         monitor::monitor_details::{DebouncerControl, MonitorControl, TimeMachineControl},
     },
     config::Config,
+    diff::Diff,
 };
 
 const EVENT_QUEUE_SIZE: usize = 128;
@@ -81,9 +82,22 @@ fn handle_event(
                     context.whitelist,
                     &mut exclusions,
                 )?;
-                let diff = context
+
+                let owned_paths: BTreeSet<PathBuf> = context
                     .cache
-                    .find_diff_in_directory(&exclusions, repository_to_scan)?;
+                    .paths_with_prefix(repository_to_scan)?
+                    .into_iter()
+                    .filter(|path| {
+                        crate::git::find_parent_repository(path).as_deref()
+                            == Some(repository_to_scan.as_path())
+                    })
+                    .collect();
+
+                let diff = Diff {
+                    added: exclusions.difference(&owned_paths).cloned().collect(),
+                    removed: owned_paths.difference(&exclusions).cloned().collect(),
+                };
+
                 if diff.added.is_empty() && diff.removed.is_empty() {
                     debug!(
                         "No changes in repository '{}'",
@@ -91,19 +105,23 @@ fn handle_event(
                     );
                     continue;
                 }
+
                 let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
                     &diff,
                     context.dry_run,
                     context.details,
                 );
-                for path in paths_failed_to_add {
-                    exclusions.remove(&path);
-                }
+
                 if !context.dry_run {
-                    context
-                        .cache
-                        .remove_paths_in_directory(repository_to_scan)?;
-                    context.cache.add_paths(exclusions.into_iter())?;
+                    if !diff.removed.is_empty() {
+                        context.cache.remove_paths(diff.removed.iter())?;
+                    }
+                    let paths_to_add = diff
+                        .added
+                        .iter()
+                        .filter(|path| !paths_failed_to_add.contains(path))
+                        .cloned();
+                    context.cache.add_paths(paths_to_add)?;
                 }
             }
         }
@@ -981,6 +999,76 @@ mod tests {
         assert!(
             cached_paths.contains(&worktree_ignored_path),
             "rescanning the main repository must not remove the nested worktree's exclusions"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_rescan_adds_and_removes_exclusions_in_the_same_scan() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let main_path = temp_dir_path.join("main");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), "a\nb\n").unwrap();
+        commit_all(&main_path, "init main repository");
+
+        std::fs::write(main_path.join("a"), "").unwrap();
+        std::fs::write(main_path.join("b"), "").unwrap();
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&main_path);
+
+        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+
+        let a_path = main_path.join("a");
+        let b_path = main_path.join("b");
+        let c_path = main_path.join("c");
+
+        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        assert!(cached_paths.contains(&a_path));
+        assert!(cached_paths.contains(&b_path));
+
+        std::fs::write(main_path.join(".gitignore"), "b\nc\n").unwrap();
+        std::fs::write(&c_path, "").unwrap();
+
+        let mut config = config;
+        let mut whitelist = super::super::create_whitelist(&config.whitelist_patterns).unwrap();
+        let mut monitor = super::Monitor::new().unwrap();
+        let config_file_path = temp_dir_path.join("config.json");
+        let mut context = super::HandleEventContext {
+            config: &mut config,
+            config_file_path: &config_file_path,
+            whitelist: &mut whitelist,
+            monitor: &mut monitor,
+            cache: &mut cache,
+            dry_run: false,
+            details: false,
+            is_timemachine_running: false,
+        };
+
+        let _ = super::handle_event(
+            &mut context,
+            super::Event::ScanPaths(BTreeSet::from([main_path.join(".gitignore")])),
+        )
+        .unwrap();
+
+        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+
+        crate::commands::tests::send_sigint();
+        drop(monitor);
+
+        assert!(
+            !cached_paths.contains(&a_path),
+            "'a' is no longer gitignored, it must be removed from the cache"
+        );
+        assert!(
+            cached_paths.contains(&b_path),
+            "'b' is still gitignored, it must remain in the cache"
+        );
+        assert!(
+            cached_paths.contains(&c_path),
+            "'c' became gitignored, it must be added to the cache"
         );
     }
 
