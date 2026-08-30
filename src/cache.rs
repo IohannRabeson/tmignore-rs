@@ -187,18 +187,37 @@ impl Cache {
         Ok(())
     }
 
-    pub fn remove_paths_in_directory(&mut self, directory: impl AsRef<Path>) -> anyhow::Result<()> {
-        let directory = directory.as_ref();
-        let bounds = DirectoryPrefixBounds::new(directory);
+    pub fn remove_paths<'a>(
+        &mut self,
+        paths: impl Iterator<Item = &'a PathBuf>,
+    ) -> anyhow::Result<()> {
         let mut connection = self.connection.borrow_mut();
         let mut transaction = connection.transaction()?;
-        transaction.execute(
-            "DELETE FROM paths WHERE path = ?1 OR (path >= ?2 AND path < ?3)",
-            params![bounds.exact, bounds.lower, bounds.upper],
-        )?;
+        {
+            let mut delete_stmt = transaction.prepare("DELETE FROM paths WHERE path = ?")?;
+            for path in paths {
+                delete_stmt.execute(params![path_to_bytes(path)])?;
+            }
+        }
         Self::set_last_update_transaction(&mut transaction)?;
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn paths_with_prefix(&self, directory: impl AsRef<Path>) -> anyhow::Result<Vec<PathBuf>> {
+        let directory = directory.as_ref();
+        let bounds = DirectoryPrefixBounds::new(directory);
+        let connection = self.connection.borrow();
+        let mut select_stmt = connection
+            .prepare("SELECT path FROM paths WHERE path = ?1 OR (path >= ?2 AND path < ?3)")?;
+        let paths =
+            select_stmt.query_map(params![bounds.exact, bounds.lower, bounds.upper], |row| {
+                let bytes: Vec<u8> = row.get(0)?;
+
+                Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
+            })?;
+
+        Ok(paths.filter_map(Result::ok).collect())
     }
 
     pub fn find_diff(&self, exclusions: &BTreeSet<PathBuf>) -> anyhow::Result<Diff> {
@@ -222,47 +241,6 @@ impl Cache {
 
                 Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
             })?;
-
-            for path in paths.into_iter().filter_map(Result::ok) {
-                if !exclusions.contains(&path) {
-                    diff.removed.insert(path.clone());
-                }
-            }
-        }
-
-        Ok(diff)
-    }
-
-    pub fn find_diff_in_directory(
-        &self,
-        exclusions: &BTreeSet<PathBuf>,
-        directory: impl AsRef<Path>,
-    ) -> anyhow::Result<Diff> {
-        let mut diff = Diff::default();
-        let directory = directory.as_ref();
-        {
-            let connection = self.connection.borrow();
-            let mut stmt = connection.prepare("SELECT * FROM paths WHERE path = ?")?;
-            for exclusion in exclusions.iter().filter(|path| path.starts_with(directory)) {
-                if !stmt.exists(params![path_to_bytes(exclusion)])? {
-                    diff.added.insert(exclusion.clone());
-                }
-            }
-        }
-
-        {
-            let bounds = DirectoryPrefixBounds::new(directory);
-            let connection = self.connection.borrow();
-            let mut select_stmt = connection
-                .prepare("SELECT path FROM paths WHERE path = ?1 OR (path >= ?2 AND path < ?3)")?;
-            let paths = select_stmt.query_map(
-                params![bounds.exact, bounds.lower, bounds.upper],
-                |row| {
-                    let bytes: Vec<u8> = row.get(0)?;
-
-                    Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
-                },
-            )?;
 
             for path in paths.into_iter().filter_map(Result::ok) {
                 if !exclusions.contains(&path) {
@@ -386,15 +364,15 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_paths_in_directory_sets_last_update() {
+    fn test_remove_paths_sets_last_update() {
         let mut cache = Cache::open_in_memory().unwrap();
         assert!(cache.last_update().unwrap().is_none());
 
-        cache.remove_paths_in_directory("hello").unwrap();
+        cache.remove_paths([PathBuf::from("hello")].iter()).unwrap();
         let first_update = cache.last_update().unwrap().unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(10));
-        cache.remove_paths_in_directory("world").unwrap();
+        cache.remove_paths([PathBuf::from("world")].iter()).unwrap();
         let second_update = cache.last_update().unwrap().unwrap();
 
         assert!(second_update > first_update);
@@ -433,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn test_find_diff_in_directory() {
+    fn test_paths_with_prefix() {
         let mut cache = Cache::open_in_memory().unwrap();
         cache
             .reset([
@@ -444,92 +422,44 @@ mod tests {
                 PathBuf::from("1").join("c"),
             ])
             .unwrap();
-        let exclusions = BTreeSet::from([
-            PathBuf::from("1").join("a"),
-            PathBuf::from("1").join("b"),
-            PathBuf::from("1").join("c"),
-        ]);
-        let diff = cache
-            .find_diff_in_directory(&exclusions, PathBuf::from("1"))
-            .unwrap();
-        assert!(diff.added.is_empty());
-        assert!(diff.removed.is_empty());
-        let exclusions = BTreeSet::from([
-            PathBuf::from("1").join("a"),
-            PathBuf::from("1").join("b"),
-            PathBuf::from("1").join("D"),
-        ]);
-        let diff = cache
-            .find_diff_in_directory(&exclusions, PathBuf::from("1"))
-            .unwrap();
-        assert_eq!(1, diff.added.len());
-        assert!(diff.added.contains(&PathBuf::from("1").join("D")));
-        assert_eq!(1, diff.removed.len());
-        assert!(diff.removed.contains(&PathBuf::from("1").join("c")));
-    }
 
-    #[test]
-    fn test_find_diff_in_directory_does_not_affect_sibling_directory() {
-        let mut cache = Cache::open_in_memory().unwrap();
-        cache
-            .reset([
-                PathBuf::from("/repo/file"),
-                PathBuf::from("/repo-sibling/file"),
-            ])
-            .unwrap();
-        let exclusions = BTreeSet::from([PathBuf::from("/repo/file")]);
-        let diff = cache
-            .find_diff_in_directory(&exclusions, PathBuf::from("/repo"))
-            .unwrap();
+        let paths: BTreeSet<_> = cache
+            .paths_with_prefix(PathBuf::from("1"))
+            .unwrap()
+            .into_iter()
+            .collect();
 
-        assert!(
-            diff.removed.is_empty(),
-            "/repo-sibling/file was incorrectly included in the diff for /repo"
-        );
-        assert!(diff.added.is_empty());
-    }
-
-    #[test]
-    fn test_remove_paths_in_directory() {
-        let mut cache = Cache::open_in_memory().unwrap();
-
-        cache
-            .reset([
-                PathBuf::from("hello").join("removed"),
-                PathBuf::from("world"),
-            ])
-            .unwrap();
-        cache.remove_paths_in_directory("hello").unwrap();
-
-        assert_eq!(1, cache.paths().unwrap().len());
         assert_eq!(
-            Some(&PathBuf::from("world")),
-            cache.paths().unwrap().first()
+            BTreeSet::from([
+                PathBuf::from("1").join("a"),
+                PathBuf::from("1").join("b"),
+                PathBuf::from("1").join("c"),
+            ]),
+            paths
         );
     }
 
     #[test]
-    fn test_remove_paths_in_directory_does_not_affect_sibling_directory() {
+    fn test_paths_with_prefix_does_not_include_sibling_directory() {
         let mut cache = Cache::open_in_memory().unwrap();
-
         cache
             .reset([
                 PathBuf::from("/repo/file"),
                 PathBuf::from("/repo-sibling/file"),
             ])
             .unwrap();
-        cache.remove_paths_in_directory("/repo").unwrap();
 
-        let paths = cache.paths().unwrap();
-        assert_eq!(1, paths.len());
-        assert!(
-            paths.contains(&PathBuf::from("/repo-sibling/file")),
-            "/repo-sibling/file was incorrectly deleted when removing /repo"
+        let paths = cache.paths_with_prefix(PathBuf::from("/repo")).unwrap();
+
+        assert_eq!(
+            vec![PathBuf::from("/repo/file")],
+            paths,
+            "/repo-sibling/file was incorrectly included in the paths for /repo"
         );
     }
 
     #[test]
-    fn test_remove_paths_in_directory_like_wildcards_and_case() {
+    fn test_paths_with_prefix_like_wildcards_and_case() {
         let mut cache = Cache::open_in_memory().unwrap();
 
         cache
@@ -540,24 +470,58 @@ mod tests {
             ])
             .unwrap();
 
+        let paths = cache
+            .paths_with_prefix(PathBuf::from("/Users/me/my_project"))
+            .unwrap();
+
+        assert_eq!(
+            vec![PathBuf::from("/Users/me/my_project/file")],
+            paths,
+            "'_' should not be treated as a SQL LIKE wildcard, and matching should be \
+             case-sensitive"
+        );
+    }
+
+    #[test]
+    fn test_remove_paths() {
+        let mut cache = Cache::open_in_memory().unwrap();
+
         cache
-            .remove_paths_in_directory("/Users/me/my_project")
+            .reset([
+                PathBuf::from("hello").join("removed"),
+                PathBuf::from("world"),
+            ])
+            .unwrap();
+        cache
+            .remove_paths([PathBuf::from("hello").join("removed")].iter())
+            .unwrap();
+
+        assert_eq!(1, cache.paths().unwrap().len());
+        assert_eq!(
+            Some(&PathBuf::from("world")),
+            cache.paths().unwrap().first()
+        );
+    }
+
+    #[test]
+    fn test_remove_paths_does_not_affect_paths_not_listed() {
+        let mut cache = Cache::open_in_memory().unwrap();
+
+        cache
+            .reset([
+                PathBuf::from("/repo/file"),
+                PathBuf::from("/repo-sibling/file"),
+            ])
+            .unwrap();
+        cache
+            .remove_paths([PathBuf::from("/repo/file")].iter())
             .unwrap();
 
         let paths = cache.paths().unwrap();
+        assert_eq!(1, paths.len());
         assert!(
-            paths.contains(&PathBuf::from("/Users/me/myXproject/file")),
-            "'_' in the directory name was treated as a SQL LIKE wildcard, \
-             so the unrelated sibling /Users/me/myXproject/file was deleted"
-        );
-        assert!(
-            paths.contains(&PathBuf::from("/Users/me/MY_PROJECT/file")),
-            "SQL LIKE matched case-insensitively, so /Users/me/MY_PROJECT/file was deleted"
-        );
-        assert_eq!(
-            2,
-            paths.len(),
-            "only /Users/me/my_project/file should have been removed"
+            paths.contains(&PathBuf::from("/repo-sibling/file")),
+            "/repo-sibling/file was incorrectly deleted"
         );
     }
 
