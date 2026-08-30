@@ -224,6 +224,19 @@ pub(crate) mod tests {
             .unwrap();
     }
 
+    pub(crate) fn run_git(args: &[&str]) {
+        let output = std::process::Command::new("/usr/bin/git")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     pub(crate) fn create_config(search_directory: impl AsRef<Path>) -> Config {
         let mut config = Config {
             debounce_duration: Duration::from_secs(1),
