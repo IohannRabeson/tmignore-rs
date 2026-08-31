@@ -361,6 +361,29 @@ mod tests {
     }
 
     #[test]
+    fn test_find_ignored_files_returns_paths_in_the_given_form() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file("repository/.gitignore", "ignored\n")
+            .add_empty_file("repository/ignored")
+            .build()
+            .unwrap();
+        let repository_path = temp_dir.path().join("repository");
+        let symlink_path = temp_dir.path().join("symlink_to_repository");
+        crate::commands::tests::init_git_repository(&repository_path);
+        std::os::unix::fs::symlink(&repository_path, &symlink_path).unwrap();
+
+        let ignored_files = super::find_ignored_files(&symlink_path).unwrap();
+
+        assert_eq!(
+            ignored_files,
+            vec![symlink_path.join("ignored")],
+            "find_ignored_files must return paths built from the path it was given, \
+             not from its canonicalized form, so callers can match them against paths \
+             derived the same way (e.g. cached paths, filesystem watcher events)"
+        );
+    }
+
+    #[test]
     fn test_worktree() {
         let temp_dir = TempDirectoryBuilder::default()
             .add_directory("worktree")
