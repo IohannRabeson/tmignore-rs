@@ -90,11 +90,12 @@ pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<Pat
         return Ok(vec![]);
     }
 
-    let repository_directory = repository_directory.canonicalize()?;
+    let absolute_repository_directory = std::path::absolute(repository_directory)?;
+    let canonical_repository_directory = repository_directory.canonicalize()?;
 
     let output = git_command()
         .arg("-C")
-        .arg(&repository_directory)
+        .arg(&canonical_repository_directory)
         .arg("ls-files")
         .arg("--directory")
         .arg("--exclude-standard")
@@ -106,7 +107,7 @@ pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<Pat
     if !output.status.success() {
         warn!(
             "Failed to find ignored file in repository '{}': {}",
-            repository_directory.display(),
+            canonical_repository_directory.display(),
             String::from_utf8_lossy(&output.stderr)
         );
 
@@ -120,7 +121,7 @@ pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<Pat
         .filter_map(|bytes| {
             std::str::from_utf8(bytes)
                 .ok()
-                .map(|s| repository_directory.join(s))
+                .map(|s| absolute_repository_directory.join(s))
         })
         .collect())
 }
