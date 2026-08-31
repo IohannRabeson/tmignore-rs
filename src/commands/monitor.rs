@@ -821,13 +821,47 @@ mod monitor_details {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, path::Path, time::Duration};
+    use std::{
+        collections::BTreeSet,
+        path::{Path, PathBuf},
+        time::Duration,
+    };
 
     use rstest::rstest;
     use serial_test::serial;
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::{cache::Cache, commands::tests::run_git, json::save_json_file};
+    use crate::{cache::Cache, commands::tests::run_git, config::Config, json::save_json_file};
+
+    fn rescan(
+        cache: &mut Cache,
+        mut config: Config,
+        temp_dir_path: &Path,
+        changed_paths: BTreeSet<PathBuf>,
+    ) -> BTreeSet<PathBuf> {
+        let mut whitelist = super::super::create_whitelist(&config.whitelist_patterns).unwrap();
+        let mut monitor = super::Monitor::new().unwrap();
+        let config_file_path = temp_dir_path.join("config.json");
+        let mut context = super::HandleEventContext {
+            config: &mut config,
+            config_file_path: &config_file_path,
+            whitelist: &mut whitelist,
+            monitor: &mut monitor,
+            cache,
+            dry_run: false,
+            details: false,
+            is_timemachine_running: false,
+        };
+
+        let _ = super::handle_event(&mut context, super::Event::ScanPaths(changed_paths)).unwrap();
+
+        let cached_paths = cache.paths().unwrap().into_iter().collect();
+
+        crate::commands::tests::send_sigint();
+        drop(monitor);
+
+        cached_paths
+    }
 
     fn commit_all(repository_path: &Path, message: &str) {
         run_git(&["-C", repository_path.to_str().unwrap(), "add", "-A"]);
@@ -893,31 +927,12 @@ mod tests {
 
         std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n\n").unwrap();
 
-        let mut config = config;
-        let mut whitelist = super::super::create_whitelist(&config.whitelist_patterns).unwrap();
-        let mut monitor = super::Monitor::new().unwrap();
-        let config_file_path = temp_dir_path.join("config.json");
-        let mut context = super::HandleEventContext {
-            config: &mut config,
-            config_file_path: &config_file_path,
-            whitelist: &mut whitelist,
-            monitor: &mut monitor,
-            cache: &mut cache,
-            dry_run: false,
-            details: false,
-            is_timemachine_running: false,
-        };
-
-        let _ = super::handle_event(
-            &mut context,
-            super::Event::ScanPaths(BTreeSet::from([main_path.join(".gitignore")])),
-        )
-        .unwrap();
-
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
-
-        crate::commands::tests::send_sigint();
-        drop(monitor);
+        let cached_paths = rescan(
+            &mut cache,
+            config,
+            &temp_dir_path,
+            BTreeSet::from([main_path.join(".gitignore")]),
+        );
 
         assert!(
             cached_paths.contains(&submodule_ignored_path),
@@ -970,31 +985,12 @@ mod tests {
 
         std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n\n").unwrap();
 
-        let mut config = config;
-        let mut whitelist = super::super::create_whitelist(&config.whitelist_patterns).unwrap();
-        let mut monitor = super::Monitor::new().unwrap();
-        let config_file_path = temp_dir_path.join("config.json");
-        let mut context = super::HandleEventContext {
-            config: &mut config,
-            config_file_path: &config_file_path,
-            whitelist: &mut whitelist,
-            monitor: &mut monitor,
-            cache: &mut cache,
-            dry_run: false,
-            details: false,
-            is_timemachine_running: false,
-        };
-
-        let _ = super::handle_event(
-            &mut context,
-            super::Event::ScanPaths(BTreeSet::from([main_path.join(".gitignore")])),
-        )
-        .unwrap();
-
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
-
-        crate::commands::tests::send_sigint();
-        drop(monitor);
+        let cached_paths = rescan(
+            &mut cache,
+            config,
+            &temp_dir_path,
+            BTreeSet::from([main_path.join(".gitignore")]),
+        );
 
         assert!(
             cached_paths.contains(&worktree_ignored_path),
@@ -1032,31 +1028,12 @@ mod tests {
         std::fs::write(main_path.join(".gitignore"), "b\nc\n").unwrap();
         std::fs::write(&c_path, "").unwrap();
 
-        let mut config = config;
-        let mut whitelist = super::super::create_whitelist(&config.whitelist_patterns).unwrap();
-        let mut monitor = super::Monitor::new().unwrap();
-        let config_file_path = temp_dir_path.join("config.json");
-        let mut context = super::HandleEventContext {
-            config: &mut config,
-            config_file_path: &config_file_path,
-            whitelist: &mut whitelist,
-            monitor: &mut monitor,
-            cache: &mut cache,
-            dry_run: false,
-            details: false,
-            is_timemachine_running: false,
-        };
-
-        let _ = super::handle_event(
-            &mut context,
-            super::Event::ScanPaths(BTreeSet::from([main_path.join(".gitignore")])),
-        )
-        .unwrap();
-
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
-
-        crate::commands::tests::send_sigint();
-        drop(monitor);
+        let cached_paths = rescan(
+            &mut cache,
+            config,
+            &temp_dir_path,
+            BTreeSet::from([main_path.join(".gitignore")]),
+        );
 
         assert!(
             !cached_paths.contains(&a_path),
