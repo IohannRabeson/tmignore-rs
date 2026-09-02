@@ -1166,6 +1166,72 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    #[ignore = "large-scale scenario kept for stress-testing and manual profiling; run explicitly with `cargo test -- --ignored`"]
+    fn test_rescan_large_ignored_tree_preserves_exclusions_at_scale() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let main_path = temp_dir_path.join("main");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), "*.ignored\n").unwrap();
+        commit_all(&main_path, "init main repository");
+
+        let deep_path = main_path.join("a").join("b").join("c");
+        std::fs::create_dir_all(&deep_path).unwrap();
+        std::fs::write(deep_path.join(".keep"), "").unwrap();
+        commit_all(&main_path, "add deep sentinel");
+
+        // Defaults to a genuinely large scenario for manual stress-testing/profiling;
+        // CI overrides this to a tiny value via TMIGNORE_RS_TEST_ITERATIONS, since it
+        // only needs to confirm the scenario still passes, not exercise it at scale.
+        let iterations: usize = match std::env::var("TMIGNORE_RS_TEST_ITERATIONS") {
+            Ok(value) => value.parse().unwrap_or_else(|error| {
+                panic!("TMIGNORE_RS_TEST_ITERATIONS='{value}' is not a valid usize: {error}")
+            }),
+            Err(_) => 100000,
+        };
+
+        let mut ignored_paths = BTreeSet::new();
+        for i in 0..iterations {
+            let file_path = deep_path.join(format!("file_{i}.ignored"));
+            std::fs::write(&file_path, "").unwrap();
+            ignored_paths.insert(file_path);
+        }
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&main_path);
+
+        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+
+        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        for path in &ignored_paths {
+            assert!(
+                cached_paths.contains(path),
+                "the initial scan should have excluded every ignored file"
+            );
+        }
+        assert_eq!(cached_paths.len(), ignored_paths.len());
+
+        std::fs::write(main_path.join(".gitignore"), "*.ignored\n\n").unwrap();
+
+        let cached_paths = rescan(
+            &mut cache,
+            config,
+            &temp_dir_path,
+            BTreeSet::from([main_path.join(".gitignore")]),
+        );
+
+        for path in &ignored_paths {
+            assert!(
+                cached_paths.contains(path),
+                "rescanning must not drop cached exclusions under a large ignored directory"
+            );
+        }
+        assert_eq!(cached_paths.len(), ignored_paths.len());
+    }
+
+    #[test]
     fn test_find_repositories_to_scan() {
         let temp_dir = TempDirectoryBuilder::default()
             .add_directory("repository/.git")

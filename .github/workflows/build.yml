@@ -35,7 +35,9 @@ jobs:
     - name: Build
       run: cargo build --all --verbose --locked --target ${{ matrix.rust-target }}
     - name: Test
-      run: cargo test --locked --target ${{ matrix.rust-target }}
+      env:
+        TMIGNORE_RS_TEST_ITERATIONS: "2"
+      run: cargo test --locked --target ${{ matrix.rust-target }} -- --include-ignored
 
   clippy:
     runs-on: "macos-latest"
