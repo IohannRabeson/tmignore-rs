@@ -872,6 +872,15 @@ mod tests {
         cached_paths
     }
 
+    fn test_iterations(default: usize) -> usize {
+        match std::env::var("TMIGNORE_RS_TEST_ITERATIONS") {
+            Ok(value) => value.parse().unwrap_or_else(|error| {
+                panic!("TMIGNORE_RS_TEST_ITERATIONS='{value}' is not a valid usize: {error}")
+            }),
+            Err(_) => default,
+        }
+    }
+
     fn commit_all(repository_path: &Path, message: &str) {
         run_git(&["-C", repository_path.to_str().unwrap(), "add", "-A"]);
         run_git(&[
@@ -1192,15 +1201,7 @@ mod tests {
         std::fs::write(deep_path.join(".keep"), "").unwrap();
         commit_all(&main_path, "add deep sentinel");
 
-        // Defaults to a genuinely large scenario for manual stress-testing/profiling;
-        // CI overrides this to a tiny value via TMIGNORE_RS_TEST_ITERATIONS, since it
-        // only needs to confirm the scenario still passes, not exercise it at scale.
-        let iterations: usize = match std::env::var("TMIGNORE_RS_TEST_ITERATIONS") {
-            Ok(value) => value.parse().unwrap_or_else(|error| {
-                panic!("TMIGNORE_RS_TEST_ITERATIONS='{value}' is not a valid usize: {error}")
-            }),
-            Err(_) => 100_000,
-        };
+        let iterations = test_iterations(100_000);
 
         let mut ignored_paths = BTreeSet::new();
         for i in 0..iterations {
@@ -1239,6 +1240,49 @@ mod tests {
             );
         }
         assert_eq!(cached_paths.len(), ignored_paths.len());
+    }
+
+    #[test]
+    #[serial]
+    #[ignore = "kept for stress-testing and manual profiling; run explicitly with `cargo test -- --ignored`"]
+    fn test_rescan_huge_ignored_tree_with_no_nested_repositories() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let main_path = temp_dir_path.join("main");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), "big_dir\n").unwrap();
+        commit_all(&main_path, "init main repository");
+
+        let big_dir = main_path.join("big_dir");
+        std::fs::create_dir_all(&big_dir).unwrap();
+        let iterations = test_iterations(200_000);
+        for i in 0..iterations {
+            std::fs::write(big_dir.join(format!("file_{i}")), "").unwrap();
+        }
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&main_path);
+
+        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+
+        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        assert_eq!(
+            cached_paths,
+            BTreeSet::from([big_dir.clone()]),
+            "git ls-files --directory collapses a wholly-ignored directory into one entry"
+        );
+
+        std::fs::write(main_path.join(".gitignore"), "big_dir\n\n").unwrap();
+
+        let cached_paths = rescan(
+            &mut cache,
+            config,
+            &temp_dir_path,
+            BTreeSet::from([main_path.join(".gitignore")]),
+        );
+
+        assert_eq!(cached_paths, BTreeSet::from([big_dir]));
     }
 
     #[test]
