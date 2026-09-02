@@ -83,28 +83,22 @@ fn handle_event(
                     &mut exclusions,
                 )?;
 
-                let cached_paths = context.cache.paths_with_prefix(repository_to_scan)?;
-                let nested_repositories = crate::git::find_nested_repositories(
-                    repository_to_scan,
-                    &context.config.ignored_directories,
-                    context.config.threads,
-                )?;
-                let owned_paths: BTreeSet<PathBuf> = if nested_repositories.is_empty() {
-                    cached_paths.into_iter().collect()
-                } else {
-                    cached_paths
-                        .into_iter()
-                        .filter(|path| {
-                            !nested_repositories
-                                .iter()
-                                .any(|nested| path.starts_with(nested))
-                        })
-                        .collect()
-                };
+                let cached_paths: BTreeSet<PathBuf> = context
+                    .cache
+                    .paths_with_prefix(repository_to_scan)?
+                    .into_iter()
+                    .collect();
 
                 let diff = Diff {
-                    added: exclusions.difference(&owned_paths).cloned().collect(),
-                    removed: owned_paths.difference(&exclusions).cloned().collect(),
+                    added: exclusions.difference(&cached_paths).cloned().collect(),
+                    removed: cached_paths
+                        .difference(&exclusions)
+                        .filter(|path| {
+                            crate::git::find_parent_repository(path).as_deref()
+                                == Some(repository_to_scan.as_path())
+                        })
+                        .cloned()
+                        .collect(),
                 };
 
                 if diff.added.is_empty() && diff.removed.is_empty() {

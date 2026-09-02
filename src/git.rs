@@ -25,45 +25,12 @@ pub fn find_repositories(
     ignored_directories: &BTreeSet<PathBuf>,
     threads: usize,
 ) -> Option<(Receiver<PathBuf>, JoinHandle<()>)> {
-    find_git_entries(directories, ignored_directories, threads, true)
-}
-
-pub fn find_nested_repositories(
-    repository: &Path,
-    ignored_directories: &BTreeSet<PathBuf>,
-    threads: usize,
-) -> anyhow::Result<BTreeSet<PathBuf>> {
-    let directories = BTreeSet::from([repository.to_path_buf()]);
-    let mut nested_repositories = BTreeSet::new();
-
-    if let Some((rx, thread_handle)) =
-        find_git_entries(&directories, ignored_directories, threads, false)
-    {
-        while let Ok(found) = rx.recv() {
-            if found != repository {
-                nested_repositories.insert(found);
-            }
-        }
-        thread_handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("nested repository discovery thread panicked"))?;
-    }
-
-    Ok(nested_repositories)
-}
-
-fn find_git_entries(
-    directories: &BTreeSet<PathBuf>,
-    ignored_directories: &BTreeSet<PathBuf>,
-    threads: usize,
-    respect_gitignore: bool,
-) -> Option<(Receiver<PathBuf>, JoinHandle<()>)> {
     if directories.is_empty() {
         return None;
     }
 
     let ignored_directories = Arc::new(ignored_directories.clone());
-    let walker = create_walk_builder(directories, respect_gitignore)
+    let walker = create_walk_builder(directories, true)
         .threads(threads)
         .build_parallel();
     let (tx, rx) = crossbeam_channel::bounded(128);
