@@ -76,30 +76,23 @@ fn handle_event(
             )?;
             for repository_to_scan in &repositories_to_scan {
                 debug!("Scanning repository '{}'", repository_to_scan.display());
-                let mut exclusions = BTreeSet::new();
+                let mut exclusions = Vec::new();
                 super::find_paths_to_exclude_from_backup(
                     repository_to_scan,
                     context.whitelist,
                     &mut exclusions,
                 )?;
+                exclusions.sort_unstable();
+                exclusions.dedup();
 
-                let cached_paths: BTreeSet<PathBuf> = context
-                    .cache
-                    .paths_with_prefix(repository_to_scan)?
-                    .into_iter()
-                    .collect();
+                let mut cached_paths = context.cache.paths_with_prefix(repository_to_scan)?;
+                cached_paths.sort_unstable();
 
-                let diff = Diff {
-                    added: exclusions.difference(&cached_paths).cloned().collect(),
-                    removed: cached_paths
-                        .difference(&exclusions)
-                        .filter(|path| {
-                            crate::git::find_parent_repository(path).as_deref()
-                                == Some(repository_to_scan.as_path())
-                        })
-                        .cloned()
-                        .collect(),
-                };
+                let mut diff = Diff::from_sorted(&exclusions, &cached_paths);
+                diff.removed.retain(|path| {
+                    crate::git::find_parent_repository(path).as_deref()
+                        == Some(repository_to_scan.as_path())
+                });
 
                 if diff.added.is_empty() && diff.removed.is_empty() {
                     debug!(
@@ -122,7 +115,7 @@ fn handle_event(
                     let paths_to_add = diff
                         .added
                         .iter()
-                        .filter(|path| !paths_failed_to_add.contains(path))
+                        .filter(|path| !paths_failed_to_add.contains(*path))
                         .cloned();
                     context.cache.add_paths(paths_to_add)?;
                 }
