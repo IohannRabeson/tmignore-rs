@@ -1,6 +1,5 @@
 use std::{
     cell::RefCell,
-    collections::BTreeSet,
     ffi::OsStr,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
@@ -220,36 +219,21 @@ impl Cache {
         Ok(paths.filter_map(Result::ok).collect())
     }
 
-    pub fn find_diff(&self, exclusions: &BTreeSet<PathBuf>) -> anyhow::Result<Diff> {
-        let mut diff = Diff::default();
-
-        {
-            let connection = self.connection.borrow();
-            let mut stmt = connection.prepare("SELECT * FROM paths WHERE path = ?")?;
-            for exclusion in exclusions {
-                if !stmt.exists(params![path_to_bytes(exclusion)])? {
-                    diff.added.insert(exclusion.clone());
-                }
-            }
-        }
-
-        {
-            let connection = self.connection.borrow();
-            let mut select_stmt = connection.prepare("SELECT path FROM paths")?;
-            let paths = select_stmt.query_map(params![], |row| {
+    /// `exclusions` must already be sorted: this uses `binary_search` against it.
+    pub fn find_diff(&self, exclusions: &[PathBuf]) -> anyhow::Result<Diff> {
+        let connection = self.connection.borrow();
+        let mut select_stmt = connection.prepare("SELECT path FROM paths")?;
+        let mut cached_paths: Vec<PathBuf> = select_stmt
+            .query_map(params![], |row| {
                 let bytes: Vec<u8> = row.get(0)?;
 
                 Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
-            })?;
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        cached_paths.sort_unstable();
 
-            for path in paths.into_iter().filter_map(Result::ok) {
-                if !exclusions.contains(&path) {
-                    diff.removed.insert(path.clone());
-                }
-            }
-        }
-
-        Ok(diff)
+        Ok(Diff::from_sorted(exclusions, &cached_paths))
     }
 
     pub fn contains_ancestor_of(&self, path: impl AsRef<Path>) -> anyhow::Result<bool> {
@@ -402,7 +386,8 @@ mod tests {
         cache
             .reset([PathBuf::from("hello"), PathBuf::from("world")])
             .unwrap();
-        let exclusions = BTreeSet::from([PathBuf::from("world"), PathBuf::from("hey")]);
+        let mut exclusions = vec![PathBuf::from("world"), PathBuf::from("hey")];
+        exclusions.sort_unstable();
         let diff = cache.find_diff(&exclusions).unwrap();
         assert_eq!(1, diff.added.len());
         assert!(diff.added.contains(&PathBuf::from("hey")));

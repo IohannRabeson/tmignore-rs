@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, path::PathBuf};
 
 use log::info;
 
@@ -17,7 +17,7 @@ pub fn execute(
 ) -> anyhow::Result<()> {
     let whitelist = super::create_whitelist(&config.whitelist_patterns)?;
     let mut repositories = BTreeSet::new();
-    let mut exclusions = BTreeSet::new();
+    let mut exclusions: Vec<PathBuf> = Vec::new();
 
     info!("Searching for Git repositories...");
     if let Some((rx, thread_handle)) = git::find_repositories(
@@ -32,6 +32,8 @@ pub fn execute(
         }
 
         super::join_thread(thread_handle)?;
+        exclusions.sort_unstable();
+        exclusions.dedup();
 
         info!(
             "Found {} {}",
@@ -50,9 +52,7 @@ pub fn execute(
         let paths_failed_to_add =
             super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details);
 
-        for path in paths_failed_to_add {
-            exclusions.remove(&path);
-        }
+        exclusions.retain(|path| !paths_failed_to_add.contains(path));
 
         if !dry_run {
             cache.reset(exclusions)?;

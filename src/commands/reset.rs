@@ -1,9 +1,7 @@
 use crate::{cache::Cache, commands::TimeMachine};
 
-use std::collections::BTreeSet;
-
 pub fn execute(cache: &mut Cache, dry_run: bool, details: bool) -> anyhow::Result<()> {
-    let diff = cache.find_diff(&BTreeSet::new())?;
+    let diff = cache.find_diff(&[])?;
 
     super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details);
 

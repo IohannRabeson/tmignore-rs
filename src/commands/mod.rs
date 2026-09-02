@@ -6,7 +6,7 @@ pub mod run;
 pub mod stats;
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -42,8 +42,8 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     diff: &crate::diff::Diff,
     dry_run: bool,
     details: bool,
-) -> Vec<PathBuf> {
-    let mut add_failed_paths = BTreeSet::new();
+) -> HashSet<PathBuf> {
+    let mut add_failed_paths = HashSet::new();
 
     let mut add_errors = Vec::new();
     if !dry_run {
@@ -100,7 +100,7 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
         warn!("Error: {}: {}", error.path.display(), error.message);
     }
 
-    add_errors.into_iter().map(|error| error.path).collect()
+    add_failed_paths
 }
 
 fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, regex::Error> {
@@ -117,11 +117,12 @@ fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, r
 
 /// Find the paths in a repository to exclude from Time Machine backup.
 /// If a path matches at least one of the regexes in the `whitelist` `RegexSet` it will not be
-/// added to the `exclusion` set.
+/// added to `exclusions`. Paths may be pushed more than once; callers that need uniqueness
+/// must dedup after collecting.
 fn find_paths_to_exclude_from_backup(
     repository_path: impl AsRef<Path>,
     whitelist: &RegexSet,
-    exclusions: &mut BTreeSet<std::path::PathBuf>,
+    exclusions: &mut Vec<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
     let repository_path = repository_path.as_ref();
     let ignored_files = git::find_ignored_files(repository_path)?;
@@ -138,7 +139,7 @@ fn find_paths_to_exclude_from_backup(
         {
             continue;
         }
-        exclusions.insert(ignored_file);
+        exclusions.push(ignored_file);
     }
 
     Ok(())
