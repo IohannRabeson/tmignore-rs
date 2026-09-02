@@ -83,15 +83,24 @@ fn handle_event(
                     &mut exclusions,
                 )?;
 
-                let owned_paths: BTreeSet<PathBuf> = context
-                    .cache
-                    .paths_with_prefix(repository_to_scan)?
-                    .into_iter()
-                    .filter(|path| {
-                        crate::git::find_parent_repository(path).as_deref()
-                            == Some(repository_to_scan.as_path())
-                    })
-                    .collect();
+                let cached_paths = context.cache.paths_with_prefix(repository_to_scan)?;
+                let nested_repositories = crate::git::find_nested_repositories(
+                    repository_to_scan,
+                    &context.config.ignored_directories,
+                    context.config.threads,
+                )?;
+                let owned_paths: BTreeSet<PathBuf> = if nested_repositories.is_empty() {
+                    cached_paths.into_iter().collect()
+                } else {
+                    cached_paths
+                        .into_iter()
+                        .filter(|path| {
+                            !nested_repositories
+                                .iter()
+                                .any(|nested| path.starts_with(nested))
+                        })
+                        .collect()
+                };
 
                 let diff = Diff {
                     added: exclusions.difference(&owned_paths).cloned().collect(),
@@ -1051,7 +1060,8 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_rescan_main_repository_does_not_remove_submodule_exclusions_when_submodule_directory_is_gitignored() {
+    fn test_rescan_main_repository_does_not_remove_submodule_exclusions_when_submodule_directory_is_gitignored()
+     {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let sub_source_path = temp_dir_path.join("sub_source");
@@ -1189,7 +1199,7 @@ mod tests {
             Ok(value) => value.parse().unwrap_or_else(|error| {
                 panic!("TMIGNORE_RS_TEST_ITERATIONS='{value}' is not a valid usize: {error}")
             }),
-            Err(_) => 100000,
+            Err(_) => 100_000,
         };
 
         let mut ignored_paths = BTreeSet::new();
