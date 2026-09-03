@@ -9,6 +9,9 @@ pub struct Diff {
 impl Diff {
     /// `current` and `previous` must already be sorted: this uses `binary_search` against them.
     pub fn from_sorted(current: &[PathBuf], previous: &[PathBuf]) -> Self {
+        debug_assert!(current.is_sorted(), "`current` must be sorted");
+        debug_assert!(previous.is_sorted(), "`previous` must be sorted");
+
         Self {
             added: current
                 .iter()
