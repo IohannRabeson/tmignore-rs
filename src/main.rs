@@ -380,6 +380,33 @@ mod tests {
         temp_dir
     }
 
+    fn create_monitored_repository(
+        root_directory: impl AsRef<Path>,
+        search_directory: &str,
+    ) -> TempDirectory {
+        let root_directory = root_directory.as_ref();
+        let repository_path = root_directory.join("repository");
+        let mut config = Config {
+            debounce_duration: Duration::from_secs(1),
+            ..Default::default()
+        };
+        config.search_directories.clear();
+        config
+            .search_directories
+            .insert(root_directory.join(search_directory));
+        let temp_dir = TempDirectoryBuilder::default()
+            .root_folder(root_directory)
+            .add_directory("empty_dir")
+            .add_text_file("config.json", serde_json::to_string(&config).unwrap())
+            .add_text_file("repository/.gitignore", "a\nb\n")
+            .build()
+            .unwrap();
+
+        crate::commands::tests::init_git_repository(repository_path);
+
+        temp_dir
+    }
+
     #[test]
     fn test_program_run() {
         let temp_dir_path = crate::commands::tests::prepare_test_directory("test_program_run");
@@ -429,26 +456,7 @@ mod tests {
     #[serial]
     fn test_program_monitor() {
         let temp_dir_path = crate::commands::tests::prepare_test_directory("test_program_monitor");
-        let _temp_dir = {
-            let root_directory = &temp_dir_path;
-            let repository_path = root_directory.join("repository");
-            let mut config = Config {
-                debounce_duration: Duration::from_secs(1),
-                ..Default::default()
-            };
-            config.search_directories.clear();
-            config.search_directories.insert(repository_path.clone());
-            let temp_dir = TempDirectoryBuilder::default()
-                .root_folder(root_directory)
-                .add_text_file("config.json", serde_json::to_string(&config).unwrap())
-                .add_text_file("repository/.gitignore", "a\nb\n")
-                .build()
-                .unwrap();
-
-            crate::commands::tests::init_git_repository(repository_path);
-
-            temp_dir
-        };
+        let _temp_dir = create_monitored_repository(&temp_dir_path, "repository");
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {
@@ -501,29 +509,7 @@ mod tests {
     fn test_program_monitor_reload_config() {
         let temp_dir_path =
             crate::commands::tests::prepare_test_directory("test_program_monitor_reload_config");
-        let temp_dir = {
-            let root_directory = &temp_dir_path;
-            let repository_path = root_directory.join("repository");
-            let mut config = Config {
-                debounce_duration: Duration::from_secs(1),
-                ..Default::default()
-            };
-            config.search_directories.clear();
-            config
-                .search_directories
-                .insert(root_directory.join("empty_dir"));
-            let temp_dir = TempDirectoryBuilder::default()
-                .root_folder(root_directory)
-                .add_directory("empty_dir")
-                .add_text_file("config.json", serde_json::to_string(&config).unwrap())
-                .add_text_file("repository/.gitignore", "a\nb\n")
-                .build()
-                .unwrap();
-
-            crate::commands::tests::init_git_repository(repository_path);
-
-            temp_dir
-        };
+        let temp_dir = create_monitored_repository(&temp_dir_path, "empty_dir");
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {
@@ -588,29 +574,7 @@ mod tests {
         let temp_dir_path = crate::commands::tests::prepare_test_directory(
             "test_program_monitor_reload_config_error",
         );
-        let _temp_dir = {
-            let root_directory = &temp_dir_path;
-            let repository_path = root_directory.join("repository");
-            let mut config = Config {
-                debounce_duration: Duration::from_secs(1),
-                ..Default::default()
-            };
-            config.search_directories.clear();
-            config
-                .search_directories
-                .insert(root_directory.join("empty_dir"));
-            let temp_dir = TempDirectoryBuilder::default()
-                .root_folder(root_directory)
-                .add_directory("empty_dir")
-                .add_text_file("config.json", serde_json::to_string(&config).unwrap())
-                .add_text_file("repository/.gitignore", "a\nb\n")
-                .build()
-                .unwrap();
-
-            crate::commands::tests::init_git_repository(repository_path);
-
-            temp_dir
-        };
+        let _temp_dir = create_monitored_repository(&temp_dir_path, "empty_dir");
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {
