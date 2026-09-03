@@ -131,6 +131,44 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_case_only_rename_keeps_the_directory_excluded() {
+        let root = crate::commands::tests::prepare_test_directory("test_run_case_only_rename");
+        let temp_dir = TempDirectoryBuilder::default()
+            .root_folder(&root)
+            .add_text_file("repository/.gitignore", "Foo\n")
+            .add_empty_file("repository/Foo/a")
+            .build()
+            .unwrap();
+        let repository_path = temp_dir.path().join("repository");
+        crate::commands::tests::init_git_repository(&repository_path);
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&repository_path);
+
+        super::execute(&config, &mut cache, false, false).unwrap();
+
+        let upper_case_path = repository_path.join("Foo");
+        assert!(
+            crate::timemachine::tests::is_excluded_from_time_machine(&upper_case_path),
+            "the initial scan should have excluded the ignored directory"
+        );
+
+        let lower_case_path = repository_path.join("foo");
+        std::fs::rename(&upper_case_path, repository_path.join("renamed")).unwrap();
+        std::fs::rename(repository_path.join("renamed"), &lower_case_path).unwrap();
+        std::fs::write(repository_path.join(".gitignore"), "foo\n").unwrap();
+
+        super::execute(&config, &mut cache, false, false).unwrap();
+
+        assert!(
+            crate::timemachine::tests::is_excluded_from_time_machine(&lower_case_path),
+            "the directory was renamed by case only so it is the same directory, and the \
+             filesystem is case insensitive, so removing the old spelling must not undo the \
+             exclusion of the new one"
+        );
+    }
+
+    #[test]
     fn test_overlapping_search_directories_scan_every_repository_once() {
         let root = crate::commands::tests::prepare_test_directory("test_run_overlapping_search");
         let temp_dir = TempDirectoryBuilder::default()
