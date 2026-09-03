@@ -160,6 +160,27 @@ Debounce duration, a delay allowing to collect similar events and process them a
 
 # Developer documentation
 
+## Hidden options
+| Option | Default |
+| --- | --- |
+| `--config` | `~/.config/tmignore-rs/config.json` |
+| `--cache` | `~/Library/Caches/tmignore-rs/cache.db` |
+| `--legacy-config` | `~/.config/tmignore/config.json` |
+| `--legacy-cache` | `~/Library/Caches/tmignore/cache.json` |
+
+Set the legacy paths too: every command starts by importing the legacy config and cache when they exist.
+
+```
+tmignore-rs \
+  --config        /tmp/bench/config.json \
+  --cache         /tmp/bench/cache.db \
+  --legacy-config /tmp/bench/none.json \
+  --legacy-cache  /tmp/bench/none.json \
+  run --dry-run
+```
+
+`--cache` does not protect the backup exclusion list, it is system state. Use `--dry-run` for that.
+
 ## How to release
 Create a new release with a version as tag (eg: 1.2.3). This will trigger an action that will build the program and upload it as release artifacts. After that the action will update the Homebrew formula and Nix.
 
