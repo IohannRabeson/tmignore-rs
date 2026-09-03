@@ -193,7 +193,7 @@ pub(crate) mod tests {
 
     /// Return the path of a test directory in the crate directory, deleted first if a previous
     /// run left it behind.
-    /// 
+    ///
     /// `std::env::temp_dir` is unusable: it is excluded from Time Machine.
     pub(crate) fn prepare_test_directory(name: &str) -> PathBuf {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name);
