@@ -68,8 +68,6 @@ pub fn execute(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::path::PathBuf;
-
     use temp_dir_builder::TempDirectoryBuilder;
 
     use crate::cache::Cache;
@@ -102,10 +100,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_gitignored_symlink_does_not_exclude_target() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_run_gitignored_symlink");
-        if root.exists() && root.is_dir() {
-            std::fs::remove_dir_all(&root).unwrap();
-        }
+        let root = crate::commands::tests::prepare_test_directory("test_run_gitignored_symlink");
         let temp_dir = TempDirectoryBuilder::default()
             .root_folder(&root)
             .add_text_file("outside/precious.txt", "precious data")
@@ -134,10 +129,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_overlapping_search_directories_scan_every_repository_once() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_run_overlapping_search");
-        if root.exists() && root.is_dir() {
-            std::fs::remove_dir_all(&root).unwrap();
-        }
+        let root = crate::commands::tests::prepare_test_directory("test_run_overlapping_search");
         let temp_dir = TempDirectoryBuilder::default()
             .root_folder(&root)
             .add_text_file("nested/repository/.gitignore", "a\n")
