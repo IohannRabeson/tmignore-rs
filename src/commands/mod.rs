@@ -45,6 +45,16 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
 ) -> HashSet<PathBuf> {
     let mut add_failed_paths = HashSet::new();
 
+    // Remove before adding: on a case insensitive filesystem a directory renamed by case only is
+    // removed under its old spelling and added under the new one, and both spellings are the same
+    // item, so adding first would let the removal undo it.
+    let mut remove_errors = Vec::new();
+    if !dry_run {
+        let mut exclusion_errors = TM::remove_exclusions(diff.removed.iter());
+
+        remove_errors.append(&mut exclusion_errors);
+    }
+
     let mut add_errors = Vec::new();
     if !dry_run {
         let mut exclusion_errors = TM::add_exclusions(diff.added.iter());
@@ -52,13 +62,6 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
             add_failed_paths.insert(exclusion_error.path.clone());
         }
         add_errors.append(&mut exclusion_errors);
-    }
-
-    let mut remove_errors = Vec::new();
-    if !dry_run {
-        let mut exclusion_errors = TM::remove_exclusions(diff.removed.iter());
-
-        remove_errors.append(&mut exclusion_errors);
     }
 
     let add_count = diff.added.len().saturating_sub(add_errors.len());
