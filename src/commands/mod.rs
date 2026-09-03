@@ -124,6 +124,9 @@ fn find_paths_to_exclude_from_backup(
     whitelist: &RegexSet,
     exclusions: &mut Vec<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
+    #[cfg(test)]
+    tests::FIND_PATHS_TO_EXCLUDE_CALLS.with(|calls| calls.set(calls.get() + 1));
+
     let repository_path = repository_path.as_ref();
     let ignored_files = git::find_ignored_files(repository_path)?;
 
@@ -182,6 +185,11 @@ pub(crate) mod tests {
         diff::Diff,
         timemachine::Error,
     };
+
+    thread_local! {
+        pub(crate) static FIND_PATHS_TO_EXCLUDE_CALLS: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
+    }
 
     /// Create a Git repository with some files.
     ///

@@ -26,9 +26,13 @@ pub fn execute(
         config.threads,
     ) {
         while let Ok(repository_path) = rx.recv() {
-            repositories.insert(repository_path.clone());
-
-            super::find_paths_to_exclude_from_backup(repository_path, &whitelist, &mut exclusions)?;
+            if repositories.insert(repository_path.clone()) {
+                super::find_paths_to_exclude_from_backup(
+                    repository_path,
+                    &whitelist,
+                    &mut exclusions,
+                )?;
+            }
         }
 
         super::join_thread(thread_handle)?;
@@ -125,6 +129,57 @@ pub(crate) mod tests {
             !crate::timemachine::tests::is_excluded_from_time_machine(&target_path),
             "the Time Machine exclusion was applied to the target of a gitignored symlink, \
              outside the repository"
+        );
+    }
+
+    #[test]
+    fn test_overlapping_search_directories_scan_every_repository_once() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_run_overlapping_search");
+        if root.exists() && root.is_dir() {
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+        let temp_dir = TempDirectoryBuilder::default()
+            .root_folder(&root)
+            .add_text_file("nested/repository/.gitignore", "a\n")
+            .add_empty_file("nested/repository/a")
+            .add_empty_file("nested/repository/kept")
+            .add_text_file("other_repository/.gitignore", "b\n")
+            .add_empty_file("other_repository/b")
+            .add_empty_file("other_repository/kept")
+            .build()
+            .unwrap();
+        let nested_path = temp_dir.path().join("nested");
+        let repository_path = nested_path.join("repository");
+        let other_repository_path = temp_dir.path().join("other_repository");
+        crate::commands::tests::init_git_repository(&repository_path);
+        crate::commands::tests::init_git_repository(&other_repository_path);
+
+        let mut config = crate::commands::tests::create_config(temp_dir.path());
+        config.search_directories.insert(nested_path);
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        crate::commands::tests::FIND_PATHS_TO_EXCLUDE_CALLS.with(|calls| calls.set(0));
+
+        super::execute(&config, &mut cache, false, false).unwrap();
+
+        assert_eq!(
+            2,
+            crate::commands::tests::FIND_PATHS_TO_EXCLUDE_CALLS.with(std::cell::Cell::get),
+            "'nested/repository' is reported by both overlapping search directories, so it was \
+             scanned twice instead of once"
+        );
+
+        let mut expected = vec![
+            repository_path.canonicalize().unwrap().join("a"),
+            other_repository_path.canonicalize().unwrap().join("b"),
+        ];
+        expected.sort_unstable();
+        let mut paths = cache.paths().unwrap();
+        paths.sort_unstable();
+
+        assert_eq!(
+            expected, paths,
+            "scanning each repository once dropped the exclusions of a repository"
         );
     }
 
