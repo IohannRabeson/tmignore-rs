@@ -68,13 +68,16 @@ pub fn execute(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::path::Path;
+
     use temp_dir_builder::TempDirectoryBuilder;
 
     use crate::cache::Cache;
 
     #[test]
     fn test_command() {
-        let temp_dir = crate::commands::tests::create_repository(Some("test_run_command"));
+        let temp_dir =
+            crate::commands::tests::create_repository(Some(Path::new("test_run_command")));
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = false;
@@ -177,8 +180,9 @@ pub(crate) mod tests {
 
     #[test]
     fn test_dry_run() {
-        let temp_dir =
-            crate::commands::tests::create_repository(Some("run_command_test_command_dry_run"));
+        let temp_dir = crate::commands::tests::create_repository(Some(Path::new(
+            "run_command_test_command_dry_run",
+        )));
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = true;
