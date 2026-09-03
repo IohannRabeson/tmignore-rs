@@ -1123,6 +1123,124 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_rescan_removes_a_directory_exclusion_when_a_non_ignored_file_appears_in_it() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let main_path = temp_dir_path.join("main");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), "*.log\n").unwrap();
+        commit_all(&main_path, "init main repository");
+
+        let big_dir_path = main_path.join("big_dir");
+        std::fs::create_dir_all(&big_dir_path).unwrap();
+        std::fs::write(big_dir_path.join("a.log"), "").unwrap();
+        std::fs::write(big_dir_path.join("b.log"), "").unwrap();
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&main_path);
+
+        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+
+        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        assert!(
+            cached_paths.contains(&big_dir_path),
+            "the initial scan should have excluded the wholly ignored directory"
+        );
+
+        let kept_path = big_dir_path.join("keep.txt");
+        std::fs::write(&kept_path, "").unwrap();
+
+        let cached_paths = rescan(
+            &mut cache,
+            config,
+            &temp_dir_path,
+            BTreeSet::from([kept_path]),
+        );
+
+        assert_eq!(
+            cached_paths,
+            BTreeSet::from([big_dir_path.join("a.log"), big_dir_path.join("b.log")]),
+            "the directory is no longer wholly ignored so git stopped collapsing it: its \
+             exclusion must be removed, otherwise the new file is left out of the backup, \
+             and the exclusions of the ignored files it contains must be kept"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_rescan_main_repository_removes_the_exclusion_it_created_for_a_nested_repository() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let main_path = temp_dir_path.join("main");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n").unwrap();
+        commit_all(&main_path, "init main repository");
+
+        let nested_path = main_path.join("nested");
+        crate::commands::tests::init_git_repository(&nested_path);
+        std::fs::write(nested_path.join(".gitignore"), "ignored_in_nested\n").unwrap();
+        commit_all(&nested_path, "init nested repository");
+
+        std::fs::write(nested_path.join("ignored_in_nested"), "").unwrap();
+        std::fs::write(main_path.join("ignored_in_main"), "").unwrap();
+
+        let main_ignored_path = main_path.join("ignored_in_main");
+        let nested_ignored_path = nested_path.join("ignored_in_nested");
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&main_path);
+
+        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+
+        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        assert_eq!(
+            cached_paths,
+            BTreeSet::from([main_ignored_path.clone(), nested_ignored_path.clone()]),
+            "the initial scan should have excluded the ignored file of each repository"
+        );
+
+        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\nnested/\n").unwrap();
+
+        let cached_paths = rescan(
+            &mut cache,
+            config,
+            &temp_dir_path,
+            BTreeSet::from([main_path.join(".gitignore")]),
+        );
+
+        assert_eq!(
+            cached_paths,
+            BTreeSet::from([
+                main_ignored_path.clone(),
+                nested_path.clone(),
+                nested_ignored_path.clone()
+            ]),
+            "the main repository now gitignores the nested repository, so it must exclude it \
+             without dropping the exclusion owned by the nested repository"
+        );
+
+        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n").unwrap();
+
+        let cached_paths = rescan(
+            &mut cache,
+            crate::commands::tests::create_config(&main_path),
+            &temp_dir_path,
+            BTreeSet::from([main_path.join(".gitignore")]),
+        );
+
+        assert_eq!(
+            cached_paths,
+            BTreeSet::from([main_ignored_path, nested_ignored_path]),
+            "the main repository created the exclusion of the nested repository and no longer \
+             gitignores it, so rescanning the main repository must remove it and keep the \
+             exclusion owned by the nested repository"
+        );
+    }
+
+    #[test]
+    #[serial]
     fn test_rescan_large_ignored_tree_preserves_exclusions() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
