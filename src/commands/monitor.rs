@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     ops::ControlFlow,
     path::{Path, PathBuf},
     thread::JoinHandle,
@@ -90,7 +90,9 @@ fn handle_event(
 
                 let mut diff = Diff::from_sorted(&exclusions, &cached_paths);
                 diff.removed.retain(|path| {
-                    crate::git::find_parent_repository(path).as_deref()
+                    path.parent()
+                        .and_then(crate::git::find_parent_repository)
+                        .as_deref()
                         == Some(repository_to_scan.as_path())
                 });
 
@@ -131,24 +133,51 @@ fn handle_event(
 
 /// Search the repositories related to some paths.
 /// The repositories listed are in one of the search directories.
-/// Paths with an ancestor already in the exclusion list are skipped: they are
-/// already excluded from backup so a new scan cannot change anything for them.
+///
+/// A path is skipped only when all three of these hold, because each one alone leaves a way for
+/// the scan of the repository to report something new:
+/// - it still exists: a path that is gone may be an exclusion to remove;
+/// - a cached exclusion already covers one of its ancestors: otherwise the path is a new entry of
+///   `git ls-files`, so a new exclusion to add;
+/// - it is ignored: a path that is not ignored stops `git ls-files --directory` from collapsing
+///   its directory, so the exclusion of that directory must be removed.
+///
+/// The repository is scanned as soon as one of its paths is not skipped.
 fn find_repositories_to_scan(
     paths: &BTreeSet<PathBuf>,
     search_directories: &BTreeSet<PathBuf>,
     cache: &Cache,
 ) -> Result<BTreeSet<PathBuf>, anyhow::Error> {
-    let mut repositories = BTreeSet::new();
+    let mut paths_by_repository: BTreeMap<PathBuf, Vec<&Path>> = BTreeMap::new();
 
     for path in paths {
-        if cache.contains_ancestor_of(path)? {
-            continue;
-        }
         if let Some(repository_path) = crate::git::find_parent_repository(path)
             && search_directories
                 .iter()
                 .any(|search_directory| repository_path.starts_with(search_directory))
         {
+            paths_by_repository
+                .entry(repository_path)
+                .or_default()
+                .push(path.as_path());
+        }
+    }
+
+    let mut repositories = BTreeSet::new();
+
+    for (repository_path, repository_paths) in paths_by_repository {
+        let mut scan = false;
+
+        for path in &repository_paths {
+            if !path.exists() || !cache.contains_ancestor_of(path)? {
+                scan = true;
+                break;
+            }
+        }
+
+        // Checking whether the paths are ignored costs a git process, so it runs once for the
+        // whole batch and only when the cheap checks did not already settle the repository.
+        if scan || crate::git::contains_not_ignored_path(&repository_path, &repository_paths)? {
             repositories.insert(repository_path);
         }
     }
@@ -1123,6 +1152,91 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_rescan_excludes_a_new_ignored_file_in_a_not_collapsed_directory() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let main_path = temp_dir_path.join("main");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), "*.log\n").unwrap();
+        let source_path = main_path.join("src");
+        std::fs::create_dir_all(&source_path).unwrap();
+        std::fs::write(source_path.join("main.rs"), "").unwrap();
+        commit_all(&main_path, "init main repository");
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&main_path);
+
+        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+        assert!(
+            cache.paths().unwrap().is_empty(),
+            "the repository has nothing ignored yet"
+        );
+
+        let new_log_path = source_path.join("new.log");
+        std::fs::write(&new_log_path, "").unwrap();
+
+        let cached_paths = rescan(
+            &mut cache,
+            config,
+            &temp_dir_path,
+            BTreeSet::from([new_log_path.clone()]),
+        );
+
+        assert_eq!(
+            cached_paths,
+            BTreeSet::from([new_log_path]),
+            "'src' holds a tracked file so git does not collapse it: the new ignored file is a \
+             new entry of git ls-files and no cached exclusion covers it, so it must be excluded"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_rescan_excludes_a_new_wholly_ignored_directory() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let main_path = temp_dir_path.join("main");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), "node_modules/\n").unwrap();
+        commit_all(&main_path, "init main repository");
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&main_path);
+
+        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+        assert!(
+            cache.paths().unwrap().is_empty(),
+            "'node_modules' does not exist yet"
+        );
+
+        let node_modules_path = main_path.join("node_modules");
+        std::fs::create_dir_all(&node_modules_path).unwrap();
+        std::fs::write(node_modules_path.join("a.js"), "").unwrap();
+        std::fs::write(node_modules_path.join("b.js"), "").unwrap();
+
+        let cached_paths = rescan(
+            &mut cache,
+            config,
+            &temp_dir_path,
+            BTreeSet::from([
+                node_modules_path.clone(),
+                node_modules_path.join("a.js"),
+                node_modules_path.join("b.js"),
+            ]),
+        );
+
+        assert_eq!(
+            cached_paths,
+            BTreeSet::from([node_modules_path]),
+            "every path an install creates is ignored and exists, but no cached exclusion \
+             covers them, so the new directory must be excluded"
+        );
+    }
+
+    #[test]
+    #[serial]
     fn test_rescan_removes_a_directory_exclusion_when_a_non_ignored_file_appears_in_it() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
@@ -1392,59 +1506,94 @@ mod tests {
 
     #[test]
     fn test_find_repositories_to_scan() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_directory("repository/.git")
-            .add_directory("repository/target")
-            .add_directory("outside/.git")
-            .build()
-            .unwrap();
-        let repository_path = temp_dir.path().join("repository");
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let repository_path = temp_dir_path.join("repository");
+        let outside_path = temp_dir_path.join("outside");
+
+        crate::commands::tests::init_git_repository(&repository_path);
+        crate::commands::tests::init_git_repository(&outside_path);
+        std::fs::write(repository_path.join(".gitignore"), "target\n*.log\n").unwrap();
+
+        let target_path = repository_path.join("target").join("debug");
+        std::fs::create_dir_all(&target_path).unwrap();
+        std::fs::write(target_path.join("binary"), "").unwrap();
+
+        let logs_path = repository_path.join("logs");
+        std::fs::create_dir_all(&logs_path).unwrap();
+        std::fs::write(logs_path.join("a.log"), "").unwrap();
+
+        let kept_path = logs_path.join("keep.txt");
+        std::fs::write(&kept_path, "").unwrap();
+
+        let source_path = repository_path.join("src");
+        std::fs::create_dir_all(&source_path).unwrap();
+        std::fs::write(source_path.join("main.rs"), "").unwrap();
+
+        let new_log_path = repository_path.join("new.log");
+        std::fs::write(&new_log_path, "").unwrap();
+
+        std::fs::write(outside_path.join("file"), "").unwrap();
+
         let search_directories = BTreeSet::from([repository_path.clone()]);
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .add_paths([repository_path.join("target")].into_iter())
+            .reset([repository_path.join("target"), repository_path.join("logs")])
             .unwrap();
 
-        let repositories = super::find_repositories_to_scan(
-            &BTreeSet::from([repository_path.join("src").join("main.rs")]),
-            &search_directories,
-            &cache,
-        )
-        .unwrap();
-        assert_eq!(BTreeSet::from([repository_path.clone()]), repositories);
+        let scan = |paths: [PathBuf; 1]| {
+            super::find_repositories_to_scan(&BTreeSet::from(paths), &search_directories, &cache)
+                .unwrap()
+        };
+        let scanned = BTreeSet::from([repository_path.clone()]);
 
-        let repositories = super::find_repositories_to_scan(
-            &BTreeSet::from([repository_path.join("target").join("debug").join("bin")]),
-            &search_directories,
-            &cache,
-        )
-        .unwrap();
+        assert_eq!(scanned, scan([source_path.join("main.rs")]));
+
         assert!(
-            repositories.is_empty(),
-            "a path under an already excluded directory must not trigger a scan"
+            scan([target_path.join("binary")]).is_empty(),
+            "an ignored path a cached exclusion already covers cannot change what the scan of \
+             the repository reports"
+        );
+
+        assert!(
+            scan([logs_path.join("a.log")]).is_empty(),
+            "a directory wholly ignored stays collapsed when another ignored file changes in it"
+        );
+
+        assert_eq!(
+            scanned,
+            scan([new_log_path]),
+            "no cached exclusion covers this ignored path, so it is a new entry of git ls-files \
+             and a new exclusion to add"
+        );
+
+        assert_eq!(
+            scanned,
+            scan([kept_path.clone()]),
+            "a path that is not ignored stops the collapsing of its directory, so the exclusion \
+             of that directory must be recomputed"
+        );
+
+        assert_eq!(
+            scanned,
+            scan([target_path.join("deleted_binary")]),
+            "an ignored path that no longer exists may have been an exclusion to remove"
+        );
+
+        assert!(
+            scan([outside_path.join("file")]).is_empty(),
+            "a repository outside the search directories must not be scanned"
         );
 
         let repositories = super::find_repositories_to_scan(
-            &BTreeSet::from([repository_path.join("target")]),
+            &BTreeSet::from([logs_path.join("a.log"), kept_path]),
             &search_directories,
             &cache,
         )
         .unwrap();
         assert_eq!(
-            BTreeSet::from([repository_path.clone()]),
-            repositories,
-            "an event on the excluded directory itself must trigger a scan"
-        );
-
-        let repositories = super::find_repositories_to_scan(
-            &BTreeSet::from([temp_dir.path().join("outside").join("file")]),
-            &search_directories,
-            &cache,
-        )
-        .unwrap();
-        assert!(
-            repositories.is_empty(),
-            "a repository outside the search directories must not be scanned"
+            scanned, repositories,
+            "a single path that is not ignored is enough to scan the repository"
         );
     }
 
