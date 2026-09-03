@@ -191,6 +191,20 @@ pub(crate) mod tests {
             const { std::cell::Cell::new(0) };
     }
 
+    /// Return the path of a test directory in the crate directory, deleted first if a previous
+    /// run left it behind.
+    /// 
+    /// `std::env::temp_dir` is unusable: it is excluded from Time Machine.
+    pub(crate) fn prepare_test_directory(name: &str) -> PathBuf {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name);
+
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path).unwrap();
+        }
+
+        path
+    }
+
     /// Create a Git repository with some files.
     ///
     /// When `root_directory` is None, the temporary directory is created in `/tmp`

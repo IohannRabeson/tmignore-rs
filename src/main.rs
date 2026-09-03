@@ -361,9 +361,6 @@ mod tests {
 
     fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
         let root_directory = root_directory.as_ref();
-        if root_directory.exists() && root_directory.is_dir() {
-            std::fs::remove_dir_all(root_directory).unwrap();
-        }
         let repository_path = root_directory.join("repository");
         let mut config = Config::default();
         config.search_directories.clear();
@@ -385,8 +382,7 @@ mod tests {
 
     #[test]
     fn test_program_run() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let temp_dir_path = root.join("test_program_run");
+        let temp_dir_path = crate::commands::tests::prepare_test_directory("test_program_run");
         let _temp_dir = create_repository(&temp_dir_path);
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
@@ -432,13 +428,9 @@ mod tests {
     #[test]
     #[serial]
     fn test_program_monitor() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let temp_dir_path = root.join("test_program_monitor");
+        let temp_dir_path = crate::commands::tests::prepare_test_directory("test_program_monitor");
         let _temp_dir = {
             let root_directory = &temp_dir_path;
-            if root_directory.exists() && root_directory.is_dir() {
-                std::fs::remove_dir_all(root_directory).unwrap();
-            }
             let repository_path = root_directory.join("repository");
             let mut config = Config {
                 debounce_duration: Duration::from_secs(1),
@@ -507,13 +499,10 @@ mod tests {
     #[test]
     #[serial]
     fn test_program_monitor_reload_config() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let temp_dir_path = root.join("test_program_monitor_reload_config");
+        let temp_dir_path =
+            crate::commands::tests::prepare_test_directory("test_program_monitor_reload_config");
         let temp_dir = {
             let root_directory = &temp_dir_path;
-            if root_directory.exists() && root_directory.is_dir() {
-                std::fs::remove_dir_all(root_directory).unwrap();
-            }
             let repository_path = root_directory.join("repository");
             let mut config = Config {
                 debounce_duration: Duration::from_secs(1),
@@ -596,13 +585,11 @@ mod tests {
     #[test]
     #[serial]
     fn test_program_monitor_reload_config_error() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let temp_dir_path = root.join("test_program_monitor_reload_config_error");
+        let temp_dir_path = crate::commands::tests::prepare_test_directory(
+            "test_program_monitor_reload_config_error",
+        );
         let _temp_dir = {
             let root_directory = &temp_dir_path;
-            if root_directory.exists() && root_directory.is_dir() {
-                std::fs::remove_dir_all(root_directory).unwrap();
-            }
             let repository_path = root_directory.join("repository");
             let mut config = Config {
                 debounce_duration: Duration::from_secs(1),
