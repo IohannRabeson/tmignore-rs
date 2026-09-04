@@ -223,14 +223,11 @@ impl Cache {
 
     pub fn contains_ancestor_of(&self, path: impl AsRef<Path>) -> anyhow::Result<bool> {
         let connection = self.connection.borrow();
-        let mut stmt = connection.prepare("SELECT * FROM paths WHERE path = ?1 OR path = ?2")?;
+        let mut stmt = connection.prepare("SELECT * FROM paths WHERE path = ?")?;
         let mut current = path.as_ref().parent();
 
         while let Some(ancestor) = current {
-            let exact = path_to_bytes(ancestor);
-            let mut with_separator = exact.to_vec();
-            with_separator.push(b'/');
-            if stmt.exists(params![exact, with_separator])? {
+            if stmt.exists(params![path_to_bytes(ancestor)])? {
                 return Ok(true);
             }
             current = ancestor.parent();
@@ -512,21 +509,6 @@ pub(crate) mod tests {
         cache
             .reset(owned("/repo", ["/repo/target", "/repo/a"]))
             .unwrap();
-
-        assert_eq!(expected, cache.contains_ancestor_of(path).unwrap());
-    }
-
-    #[rstest]
-    #[case("/repo/target/debug/binary", true)]
-    #[case("/repo/target/file", true)]
-    #[case("/repo/target", false)]
-    #[case("/repo/src/main.rs", false)]
-    fn test_contains_ancestor_of_directory_stored_with_trailing_separator(
-        #[case] path: &str,
-        #[case] expected: bool,
-    ) {
-        let mut cache = Cache::open_in_memory().unwrap();
-        cache.reset(owned("/repo", ["/repo/target/"])).unwrap();
 
         assert_eq!(expected, cache.contains_ancestor_of(path).unwrap());
     }
