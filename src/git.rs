@@ -139,10 +139,22 @@ pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<Pat
 ///
 /// A path that cannot be expressed relative to `repository_directory`, which includes the
 /// repository directory itself, is reported as not ignored.
-pub fn contains_not_ignored_path(
-    repository_directory: &Path,
-    paths: &[&Path],
-) -> anyhow::Result<bool> {
+pub fn contains_not_ignored_path(repository_directory: &Path, paths: &[&Path]) -> bool {
+    match run_check_ignore(repository_directory, paths) {
+        Ok(result) => result,
+        Err(error) => {
+            warn!(
+                "Failed to check the ignored paths of repository '{}': {}",
+                repository_directory.display(),
+                error
+            );
+
+            true
+        }
+    }
+}
+
+fn run_check_ignore(repository_directory: &Path, paths: &[&Path]) -> anyhow::Result<bool> {
     if paths.is_empty() {
         return Ok(false);
     }
@@ -329,7 +341,7 @@ mod tests {
         let paths: Vec<&Path> = ignored_paths.iter().map(PathBuf::as_path).collect();
 
         assert!(
-            !super::contains_not_ignored_path(&repository_path, &paths).unwrap(),
+            !super::contains_not_ignored_path(&repository_path, &paths),
             "every path of the batch is ignored"
         );
 
@@ -338,7 +350,7 @@ mod tests {
         paths.push(&kept_path);
 
         assert!(
-            super::contains_not_ignored_path(&repository_path, &paths).unwrap(),
+            super::contains_not_ignored_path(&repository_path, &paths),
             "one path of the batch is not ignored"
         );
     }

@@ -176,7 +176,7 @@ fn find_repositories_to_scan(
 
         // Checking whether the paths are ignored costs a git process, so it runs once for the
         // whole batch and only when the cheap checks did not already settle the repository.
-        if scan || crate::git::contains_not_ignored_path(&repository_path, &repository_paths)? {
+        if scan || crate::git::contains_not_ignored_path(&repository_path, &repository_paths) {
             repositories.insert(repository_path);
         }
     }
