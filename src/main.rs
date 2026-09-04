@@ -380,6 +380,19 @@ mod tests {
         temp_dir
     }
 
+    fn poll_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+
+        while std::time::Instant::now() < deadline {
+            if condition() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        condition()
+    }
+
     fn create_monitored_repository(
         root_directory: impl AsRef<Path>,
         search_directory: &str,
@@ -387,7 +400,7 @@ mod tests {
         let root_directory = root_directory.as_ref();
         let repository_path = root_directory.join("repository");
         let mut config = Config {
-            debounce_duration: Duration::from_secs(1),
+            debounce_duration: Duration::from_millis(100),
             ..Default::default()
         };
         config.search_directories.clear();
@@ -489,9 +502,17 @@ mod tests {
         std::fs::write(&a_file_path, "").unwrap();
         std::fs::write(&b_file_path, "").unwrap();
         std::fs::write(&c_file_path, "").unwrap();
-        std::thread::sleep(Duration::from_secs(5));
+        let excluded = poll_until(Duration::from_secs(10), || {
+            crate::timemachine::tests::is_excluded_from_time_machine(&a_file_path)
+                && crate::timemachine::tests::is_excluded_from_time_machine(&b_file_path)
+        });
         crate::commands::tests::send_sigint();
         handle.join().unwrap();
+
+        assert!(
+            excluded,
+            "the monitor did not exclude the gitignored files it was notified about"
+        );
 
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
             &a_file_path
