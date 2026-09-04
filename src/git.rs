@@ -121,6 +121,7 @@ pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<Pat
     Ok(output
         .stdout
         .split(|&b| b == 0)
+        .map(|bytes| bytes.strip_suffix(b"/").unwrap_or(bytes))
         .filter(|s| !s.is_empty())
         .filter_map(|bytes| {
             std::str::from_utf8(bytes)
@@ -461,6 +462,29 @@ mod tests {
             super::find_ignored_files(Path::new("/this/path/does/not/exist"))
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_find_ignored_files_strips_the_trailing_separator_of_a_collapsed_directory() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file("repository/.gitignore", "big_dir\n")
+            .add_empty_file("repository/big_dir/a")
+            .build()
+            .unwrap();
+        let repository_path = temp_dir.path().join("repository");
+        crate::commands::tests::init_git_repository(&repository_path);
+
+        let ignored_files = super::find_ignored_files(&repository_path).unwrap();
+
+        assert_eq!(ignored_files, vec![repository_path.join("big_dir")]);
+        assert!(
+            !ignored_files[0].as_os_str().as_bytes().ends_with(b"/"),
+            "git ls-files --directory emits a collapsed directory with a trailing separator: it \
+             must be stripped so the cache holds a single spelling of each path, otherwise every \
+             byte-level lookup has to probe both"
         );
     }
 
