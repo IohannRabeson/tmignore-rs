@@ -357,9 +357,12 @@ impl Monitor {
     }
 
     pub fn set_watched_paths(&mut self, paths: &BTreeSet<PathBuf>) {
-        let _ = self
-            .control_sender
-            .send(MonitorControl::SetWatchedPaths(paths.clone()));
+        let (registered_sender, registered_receiver) = crossbeam_channel::bounded(1);
+        let _ = self.control_sender.send(MonitorControl::SetWatchedPaths(
+            paths.clone(),
+            registered_sender,
+        ));
+        let _ = registered_receiver.recv();
     }
 
     pub fn set_debounce_duration(&mut self, duration: Duration) {
@@ -441,7 +444,7 @@ mod monitor_details {
     }
 
     pub enum MonitorControl {
-        SetWatchedPaths(BTreeSet<PathBuf>),
+        SetWatchedPaths(BTreeSet<PathBuf>, Sender<()>),
         SetConfigurationFile(PathBuf),
         SetGlobalGitIgnore(PathBuf),
         Shutdown,
@@ -486,7 +489,7 @@ mod monitor_details {
                         recv(control_receiver) -> control => {
                             if let Ok(control) = control {
                                 match control {
-                                    MonitorControl::SetWatchedPaths(new_paths) => {
+                                    MonitorControl::SetWatchedPaths(new_paths, registered) => {
                                         for path in &watched_paths {
                                             let _ = watcher.unwatch(path);
                                         }
@@ -496,6 +499,7 @@ mod monitor_details {
                                                 watched_paths.insert(path);
                                             }
                                         }
+                                        let _ = registered.send(());
                                     },
                                     MonitorControl::SetConfigurationFile(path) => {
                                         if let Some(configuration_file_path) = configuration_file_path.take() {
@@ -885,6 +889,40 @@ mod tests {
         drop(monitor);
 
         cached_paths
+    }
+
+    #[test]
+    #[serial]
+    fn test_set_watched_paths_registers_the_watch_before_returning() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let mut monitor = super::Monitor::new().unwrap();
+
+        monitor.set_debounce_duration(Duration::from_millis(100));
+        monitor.set_watched_paths(&BTreeSet::from([temp_dir_path.clone()]));
+
+        let created_path = temp_dir_path.join("created");
+        std::fs::write(&created_path, "").unwrap();
+
+        // Read the channel directly instead of calling get_event because it blocks without a timeout, so
+        // a regression would hang the suite instead of failing it.
+        let event = monitor
+            .event_receiver_final
+            .recv_timeout(Duration::from_secs(10));
+
+        crate::commands::tests::send_sigint();
+        drop(monitor);
+
+        match event {
+            Ok(super::Event::ScanPaths(paths)) => assert!(
+                paths.contains(&created_path),
+                "the watcher reported an event, but not for the created path: {paths:?}"
+            ),
+            other => panic!(
+                "a path created right after set_watched_paths returned was not reported, so the \
+                 watch was not registered yet when it returned: {other:?}"
+            ),
+        }
     }
 
     fn test_iterations(default: usize) -> usize {
