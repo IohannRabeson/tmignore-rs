@@ -19,7 +19,7 @@ mod tests {
     fn test_execute() {
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .reset([PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")])
+            .reset(["a", "b", "c"].map(|path| crate::diff::Exclusion::orphan(PathBuf::from(path))))
             .unwrap();
         let mut writer = Vec::new();
 

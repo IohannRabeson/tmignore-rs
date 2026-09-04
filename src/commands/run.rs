@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, path::PathBuf};
+use std::collections::BTreeSet;
 
 use log::info;
 
@@ -6,6 +6,7 @@ use crate::{
     cache::Cache,
     commands::TimeMachine,
     config::Config,
+    diff::Exclusion,
     git::{self},
 };
 
@@ -17,7 +18,7 @@ pub fn execute(
 ) -> anyhow::Result<()> {
     let whitelist = super::create_whitelist(&config.whitelist_patterns)?;
     let mut repositories = BTreeSet::new();
-    let mut exclusions: Vec<PathBuf> = Vec::new();
+    let mut exclusions: Vec<Exclusion> = Vec::new();
 
     info!("Searching for Git repositories...");
     if let Some((rx, thread_handle)) = git::find_repositories(
@@ -56,7 +57,7 @@ pub fn execute(
         let paths_failed_to_add =
             super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details);
 
-        exclusions.retain(|path| !paths_failed_to_add.contains(path));
+        exclusions.retain(|exclusion| !paths_failed_to_add.contains(exclusion.path()));
 
         if !dry_run {
             cache.reset(exclusions)?;

@@ -261,7 +261,7 @@ fn import_legacy_cache_file(
     let legacy_cache: LegacyCache = json::load_json_file(legacy_cache_file_path)?;
     let mut cache = Cache::create(cache_file_path)?;
 
-    cache.reset(legacy_cache.paths)?;
+    cache.reset(legacy_cache.paths.into_iter().map(diff::Exclusion::orphan))?;
 
     Ok(())
 }

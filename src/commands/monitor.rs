@@ -85,16 +85,10 @@ fn handle_event(
                 exclusions.sort_unstable();
                 exclusions.dedup();
 
-                let mut cached_paths = context.cache.paths_with_prefix(repository_to_scan)?;
+                let mut cached_paths = context.cache.paths_created_by(repository_to_scan)?;
                 cached_paths.sort_unstable();
 
-                let mut diff = Diff::from_sorted(&exclusions, &cached_paths);
-                diff.removed.retain(|path| {
-                    path.parent()
-                        .and_then(crate::git::find_parent_repository)
-                        .as_deref()
-                        == Some(repository_to_scan.as_path())
-                });
+                let diff = Diff::from_sorted(&exclusions, &cached_paths);
 
                 if diff.added.is_empty() && diff.removed.is_empty() {
                     debug!(
@@ -112,13 +106,17 @@ fn handle_event(
 
                 if !context.dry_run {
                     if !diff.removed.is_empty() {
-                        context.cache.remove_paths(diff.removed.iter())?;
+                        context
+                            .cache
+                            .remove_paths(diff.removed.iter(), repository_to_scan)?;
                     }
                     let paths_to_add = diff
                         .added
                         .iter()
                         .filter(|path| !paths_failed_to_add.contains(*path))
-                        .cloned();
+                        .map(|path| {
+                            crate::diff::Exclusion::new(path.clone(), repository_to_scan.clone())
+                        });
                     context.cache.add_paths(paths_to_add)?;
                 }
             }
@@ -1355,6 +1353,109 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_rescan_removes_an_exclusion_after_a_repository_appears_under_it() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let main_path = temp_dir_path.join("main");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), "vendor/thing\n").unwrap();
+        let thing_path = main_path.join("vendor").join("thing");
+        std::fs::create_dir_all(&thing_path).unwrap();
+        std::fs::write(thing_path.join("file"), "").unwrap();
+        commit_all(&main_path, "init main repository");
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&main_path);
+
+        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+
+        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        assert!(
+            cached_paths.contains(&thing_path),
+            "the initial scan should have excluded the ignored directory"
+        );
+
+        crate::commands::tests::init_git_repository(main_path.join("vendor"));
+        std::fs::write(main_path.join(".gitignore"), "\n").unwrap();
+
+        let cached_paths = rescan(
+            &mut cache,
+            config,
+            &temp_dir_path,
+            BTreeSet::from([main_path.join(".gitignore")]),
+        );
+
+        assert!(
+            !cached_paths.contains(&thing_path),
+            "the main repository created this exclusion and no longer gitignores it, so \
+             rescanning the main repository must remove it even though a repository has since \
+             appeared between it and the main repository"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_a_cache_written_before_the_repository_was_recorded_is_usable_after_a_full_scan() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let main_path = temp_dir_path.join("main");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), "a\nbig_dir\n").unwrap();
+        commit_all(&main_path, "init main repository");
+
+        let a_path = main_path.join("a");
+        let big_dir_path = main_path.join("big_dir");
+        std::fs::write(&a_path, "").unwrap();
+        std::fs::create_dir_all(&big_dir_path).unwrap();
+        std::fs::write(big_dir_path.join("b"), "").unwrap();
+
+        let cache_file_path = temp_dir_path.join("cache.db");
+        crate::cache::tests::write_version_1_cache(
+            &cache_file_path,
+            &[
+                a_path.clone(),
+                PathBuf::from(format!("{}/", big_dir_path.display())),
+            ],
+        );
+        let mut cache = Cache::open(&cache_file_path).unwrap();
+        let config = crate::commands::tests::create_config(&main_path);
+
+        assert!(
+            cache.paths_created_by(&main_path).unwrap().is_empty(),
+            "the migrated exclusions have no owner yet"
+        );
+
+        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+
+        let mut owned = cache.paths_created_by(&main_path).unwrap();
+        owned.sort_unstable();
+        assert_eq!(
+            vec![a_path.clone(), big_dir_path.clone()],
+            owned,
+            "the full scan must re-attribute every exclusion to the repository that produced it"
+        );
+
+        std::fs::write(main_path.join(".gitignore"), "big_dir\n").unwrap();
+
+        let cached_paths = rescan(
+            &mut cache,
+            config,
+            &temp_dir_path,
+            BTreeSet::from([main_path.join(".gitignore")]),
+        );
+
+        assert_eq!(
+            BTreeSet::from([big_dir_path]),
+            cached_paths,
+            "'a' is no longer gitignored so the rescan must remove it, which it can only do now \
+             that the migrated rows carry an owner"
+        );
+    }
+
+    #[test]
+    #[serial]
     fn test_rescan_large_ignored_tree_preserves_exclusions() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
@@ -1538,7 +1639,10 @@ mod tests {
         let search_directories = BTreeSet::from([repository_path.clone()]);
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .reset([repository_path.join("target"), repository_path.join("logs")])
+            .reset(
+                [repository_path.join("target"), repository_path.join("logs")]
+                    .map(|path| crate::diff::Exclusion::new(path, repository_path.clone())),
+            )
             .unwrap();
 
         let scan = |paths: [PathBuf; 1]| {
