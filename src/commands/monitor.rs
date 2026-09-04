@@ -132,11 +132,12 @@ fn handle_event(
 /// Search the repositories related to some paths.
 /// The repositories listed are in one of the search directories.
 ///
-/// A path is skipped only when all three of these hold, because each one alone leaves a way for
-/// the scan of the repository to report something new:
-/// - it still exists: a path that is gone may be an exclusion to remove;
+/// A path is skipped only when both of these hold, because each one alone leaves a way for the
+/// scan of the repository to report something new:
 /// - a cached exclusion already covers one of its ancestors: otherwise the path is a new entry of
-///   `git ls-files`, so a new exclusion to add;
+///   `git ls-files`, so a new exclusion to add. A path that was deleted is covered by this too:
+///   an exclusion to remove is never covered by another one, because `git ls-files --directory`
+///   collapses, so the cache never holds both a directory and something under it;
 /// - it is ignored: a path that is not ignored stops `git ls-files --directory` from collapsing
 ///   its directory, so the exclusion of that directory must be removed.
 ///
@@ -167,7 +168,7 @@ fn find_repositories_to_scan(
         let mut scan = false;
 
         for path in &repository_paths {
-            if !path.exists() || !cache.contains_ancestor_of(path)? {
+            if !cache.contains_ancestor_of(path)? {
                 scan = true;
                 break;
             }
@@ -1678,10 +1679,17 @@ mod tests {
              of that directory must be recomputed"
         );
 
+        assert!(
+            scan([target_path.join("deleted_binary")]).is_empty(),
+            "the exclusion covering this path is still there, so deleting a path under it cannot \
+             change what the scan of the repository reports"
+        );
+
         assert_eq!(
             scanned,
-            scan([target_path.join("deleted_binary")]),
-            "an ignored path that no longer exists may have been an exclusion to remove"
+            scan([repository_path.join("target")]),
+            "the deleted path is itself the cached exclusion: nothing covers it any more, so it \
+             is an exclusion to remove"
         );
 
         assert!(
