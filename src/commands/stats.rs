@@ -97,7 +97,9 @@ mod tests {
         let mut cache = Cache::open_in_memory().unwrap();
         let a = temp_dir.path().join("a");
         let dir = temp_dir.path().join("dir");
-        cache.add_paths([a, dir].into_iter()).unwrap();
+        cache
+            .add_paths([a, dir].into_iter().map(crate::diff::Exclusion::orphan))
+            .unwrap();
         let mut buffer = vec![];
         let stat_command = Stats::Size { humanize: false };
         super::execute(&cache, &mut buffer, stat_command).unwrap();
@@ -115,7 +117,11 @@ mod tests {
             .unwrap();
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .add_paths([temp_dir.path().join("a")].into_iter())
+            .add_paths(
+                [temp_dir.path().join("a")]
+                    .into_iter()
+                    .map(crate::diff::Exclusion::orphan),
+            )
             .unwrap();
         let mut buffer = vec![];
 
@@ -133,7 +139,11 @@ mod tests {
             .unwrap();
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .add_paths([temp_dir.path().join("top")].into_iter())
+            .add_paths(
+                [temp_dir.path().join("top")]
+                    .into_iter()
+                    .map(crate::diff::Exclusion::orphan),
+            )
             .unwrap();
         let mut buffer = vec![];
 

@@ -11,7 +11,7 @@ use log::{debug, info};
 use rusqlite::{Connection, Row, Transaction, params};
 use rusqlite_migration::{M, Migrations};
 
-use crate::diff::Diff;
+use crate::diff::{Diff, Exclusion};
 
 /// The cache stores the list of paths to exclude from Time Machine backup.
 /// I refer to it by "the exclusion list" in the public documentation.
@@ -38,30 +38,10 @@ fn path_to_bytes(path: &Path) -> &[u8] {
     path.as_os_str().as_bytes()
 }
 
-struct DirectoryPrefixBounds {
-    exact: Vec<u8>,
-    lower: Vec<u8>,
-    upper: Vec<u8>,
-}
-
-impl DirectoryPrefixBounds {
-    fn new(directory: &Path) -> Self {
-        let exact = path_to_bytes(directory).to_vec();
-        let mut lower = exact.clone();
-        lower.push(b'/');
-        let mut upper = exact.clone();
-        upper.push(b'/' + 1);
-        Self {
-            exact,
-            lower,
-            upper,
-        }
-    }
-}
-
 const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(include_str!("sql/v0.sql")),
     M::up(include_str!("sql/v1.sql")),
+    M::up(include_str!("sql/v2.sql")),
 ];
 const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 
@@ -148,16 +128,19 @@ impl Cache {
         Ok(())
     }
 
-    const SQL_INSERT_PATH: &str = "INSERT INTO paths (path) VALUES (?)";
+    const SQL_INSERT_PATH: &str = "INSERT INTO paths (path, repository) VALUES (?, ?)";
     const SQL_SET_LAST_UPDATE: &str = "UPDATE metadata SET last_update=?";
 
-    pub fn reset(&mut self, iter: impl IntoIterator<Item = PathBuf>) -> anyhow::Result<()> {
+    pub fn reset(&mut self, iter: impl IntoIterator<Item = Exclusion>) -> anyhow::Result<()> {
         let mut connection = self.connection.borrow_mut();
         let mut transaction = connection.transaction()?;
         let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH)?;
         transaction.execute("DELETE FROM paths", params![])?;
-        for path in iter {
-            insert_stmt.execute(params![path_to_bytes(&path)])?;
+        for exclusion in iter {
+            insert_stmt.execute(params![
+                path_to_bytes(exclusion.path()),
+                exclusion.repository().map(path_to_bytes)
+            ])?;
         }
         drop(insert_stmt);
         Self::set_last_update_transaction(&mut transaction)?;
@@ -173,12 +156,15 @@ impl Cache {
         Ok(())
     }
 
-    pub fn add_paths(&mut self, iter: impl Iterator<Item = PathBuf>) -> anyhow::Result<()> {
+    pub fn add_paths(&mut self, iter: impl Iterator<Item = Exclusion>) -> anyhow::Result<()> {
         let mut connection = self.connection.borrow_mut();
         let mut transaction = connection.transaction()?;
         let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH)?;
-        for path in iter {
-            insert_stmt.execute(params![path_to_bytes(&path)])?;
+        for exclusion in iter {
+            insert_stmt.execute(params![
+                path_to_bytes(exclusion.path()),
+                exclusion.repository().map(path_to_bytes)
+            ])?;
         }
         drop(insert_stmt);
         Self::set_last_update_transaction(&mut transaction)?;
@@ -189,13 +175,16 @@ impl Cache {
     pub fn remove_paths<'a>(
         &mut self,
         paths: impl Iterator<Item = &'a PathBuf>,
+        repository: &Path,
     ) -> anyhow::Result<()> {
+        let repository = path_to_bytes(repository);
         let mut connection = self.connection.borrow_mut();
         let mut transaction = connection.transaction()?;
         {
-            let mut delete_stmt = transaction.prepare("DELETE FROM paths WHERE path = ?")?;
+            let mut delete_stmt =
+                transaction.prepare("DELETE FROM paths WHERE path = ? AND repository = ?")?;
             for path in paths {
-                delete_stmt.execute(params![path_to_bytes(path)])?;
+                delete_stmt.execute(params![path_to_bytes(path), repository])?;
             }
         }
         Self::set_last_update_transaction(&mut transaction)?;
@@ -203,26 +192,22 @@ impl Cache {
         Ok(())
     }
 
-    pub fn paths_with_prefix(&self, directory: impl AsRef<Path>) -> anyhow::Result<Vec<PathBuf>> {
-        let directory = directory.as_ref();
-        let bounds = DirectoryPrefixBounds::new(directory);
+    pub fn paths_created_by(&self, repository: impl AsRef<Path>) -> anyhow::Result<Vec<PathBuf>> {
         let connection = self.connection.borrow();
-        let mut select_stmt = connection
-            .prepare("SELECT path FROM paths WHERE path = ?1 OR (path >= ?2 AND path < ?3)")?;
-        let paths =
-            select_stmt.query_map(params![bounds.exact, bounds.lower, bounds.upper], |row| {
-                let bytes: Vec<u8> = row.get(0)?;
+        let mut select_stmt = connection.prepare("SELECT path FROM paths WHERE repository = ?")?;
+        let paths = select_stmt.query_map(params![path_to_bytes(repository.as_ref())], |row| {
+            let bytes: Vec<u8> = row.get(0)?;
 
-                Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
-            })?;
+            Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
+        })?;
 
         Ok(paths.filter_map(Result::ok).collect())
     }
 
-    /// `exclusions` must already be sorted: this uses `binary_search` against it.
-    pub fn find_diff(&self, exclusions: &[PathBuf]) -> anyhow::Result<Diff> {
+    /// `exclusions` must already be sorted by path: this uses `binary_search` against it.
+    pub fn find_diff(&self, exclusions: &[Exclusion]) -> anyhow::Result<Diff> {
         let connection = self.connection.borrow();
-        let mut select_stmt = connection.prepare("SELECT path FROM paths")?;
+        let mut select_stmt = connection.prepare("SELECT DISTINCT path FROM paths")?;
         let mut cached_paths: Vec<PathBuf> = select_stmt
             .query_map(params![], |row| {
                 let bytes: Vec<u8> = row.get(0)?;
@@ -256,7 +241,7 @@ impl Cache {
 
     pub fn paths(&self) -> anyhow::Result<Vec<PathBuf>> {
         let connection = self.connection.borrow();
-        let mut stmt = connection.prepare("SELECT path FROM paths")?;
+        let mut stmt = connection.prepare("SELECT DISTINCT path FROM paths")?;
         let paths = stmt.query_map(params![], |row| {
             let bytes: Vec<u8> = row.get(0)?;
 
@@ -290,15 +275,49 @@ impl Cache {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{assert_matches, collections::BTreeSet, path::PathBuf};
+pub(crate) mod tests {
+    use std::{
+        assert_matches,
+        collections::BTreeSet,
+        path::{Path, PathBuf},
+    };
 
     use rstest::rstest;
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::cache::{MIGRATIONS_SLICE, OpenOrCreateError};
+    use crate::{
+        cache::{MIGRATIONS_SLICE, OpenOrCreateError},
+        diff::Exclusion,
+    };
 
     use super::Cache;
+
+    pub(crate) fn write_version_1_cache(cache_file_path: &Path, paths: &[PathBuf]) {
+        let connection = rusqlite::Connection::open(cache_file_path).unwrap();
+        connection
+            .execute_batch(include_str!("sql/v0.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("sql/v1.sql"))
+            .unwrap();
+        connection.pragma_update(None, "user_version", 2).unwrap();
+        let mut insert_stmt = connection
+            .prepare("INSERT INTO paths (path) VALUES (?)")
+            .unwrap();
+        for path in paths {
+            insert_stmt
+                .execute(super::params![super::path_to_bytes(path)])
+                .unwrap();
+        }
+    }
+
+    fn orphans<const N: usize>(paths: [&str; N]) -> [Exclusion; N] {
+        paths.map(|path| Exclusion::orphan(PathBuf::from(path)))
+    }
+
+    fn owned<const N: usize>(repository: &str, paths: [&str; N]) -> [Exclusion; N] {
+        paths.map(|path| Exclusion::new(PathBuf::from(path), PathBuf::from(repository)))
+    }
 
     #[test]
     fn test_migrations() {
@@ -321,11 +340,11 @@ mod tests {
         let mut cache = Cache::open_in_memory().unwrap();
         assert!(cache.last_update().unwrap().is_none());
 
-        cache.reset([PathBuf::from("hello")]).unwrap();
+        cache.reset(orphans(["hello"])).unwrap();
         let first_update = cache.last_update().unwrap().unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(10));
-        cache.reset([PathBuf::from("world")]).unwrap();
+        cache.reset(orphans(["world"])).unwrap();
         let second_update = cache.last_update().unwrap().unwrap();
 
         assert!(second_update > first_update);
@@ -336,15 +355,11 @@ mod tests {
         let mut cache = Cache::open_in_memory().unwrap();
         assert!(cache.last_update().unwrap().is_none());
 
-        cache
-            .add_paths([PathBuf::from("hello")].into_iter())
-            .unwrap();
+        cache.add_paths(orphans(["hello"]).into_iter()).unwrap();
         let first_update = cache.last_update().unwrap().unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(10));
-        cache
-            .add_paths([PathBuf::from("world")].into_iter())
-            .unwrap();
+        cache.add_paths(orphans(["world"]).into_iter()).unwrap();
         let second_update = cache.last_update().unwrap().unwrap();
 
         assert!(second_update > first_update);
@@ -355,11 +370,15 @@ mod tests {
         let mut cache = Cache::open_in_memory().unwrap();
         assert!(cache.last_update().unwrap().is_none());
 
-        cache.remove_paths([PathBuf::from("hello")].iter()).unwrap();
+        cache
+            .remove_paths([PathBuf::from("hello")].iter(), Path::new("/repo"))
+            .unwrap();
         let first_update = cache.last_update().unwrap().unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(10));
-        cache.remove_paths([PathBuf::from("world")].iter()).unwrap();
+        cache
+            .remove_paths([PathBuf::from("world")].iter(), Path::new("/repo"))
+            .unwrap();
         let second_update = cache.last_update().unwrap().unwrap();
 
         assert!(second_update > first_update);
@@ -377,19 +396,15 @@ mod tests {
     fn test_reset() {
         let mut cache = Cache::open_in_memory().unwrap();
         assert!(cache.paths().unwrap().is_empty());
-        cache
-            .reset([PathBuf::from("hello"), PathBuf::from("world")])
-            .unwrap();
+        cache.reset(orphans(["hello", "world"])).unwrap();
         assert_eq!(2, cache.paths().unwrap().len());
     }
 
     #[test]
     fn test_find_diff() {
         let mut cache = Cache::open_in_memory().unwrap();
-        cache
-            .reset([PathBuf::from("hello"), PathBuf::from("world")])
-            .unwrap();
-        let mut exclusions = vec![PathBuf::from("world"), PathBuf::from("hey")];
+        cache.reset(orphans(["hello", "world"])).unwrap();
+        let mut exclusions = owned("/repo", ["world", "hey"]);
         exclusions.sort_unstable();
         let diff = cache.find_diff(&exclusions).unwrap();
         assert_eq!(1, diff.added.len());
@@ -399,74 +414,48 @@ mod tests {
     }
 
     #[test]
-    fn test_paths_with_prefix() {
+    fn test_paths_created_by() {
         let mut cache = Cache::open_in_memory().unwrap();
-        cache
-            .reset([
-                PathBuf::from("hello"),
-                PathBuf::from("world"),
-                PathBuf::from("1").join("a"),
-                PathBuf::from("1").join("b"),
-                PathBuf::from("1").join("c"),
-            ])
-            .unwrap();
+        let mut exclusions = owned("/repo", ["/repo/a", "/repo/b"]).to_vec();
+        exclusions.extend(owned("/repo/nested", ["/repo/nested/c"]));
+        exclusions.extend(owned("/repo-sibling", ["/repo-sibling/d"]));
+        exclusions.extend(orphans(["/repo/e"]));
+        cache.reset(exclusions).unwrap();
 
         let paths: BTreeSet<_> = cache
-            .paths_with_prefix(PathBuf::from("1"))
+            .paths_created_by("/repo")
             .unwrap()
             .into_iter()
             .collect();
 
         assert_eq!(
-            BTreeSet::from([
-                PathBuf::from("1").join("a"),
-                PathBuf::from("1").join("b"),
-                PathBuf::from("1").join("c"),
-            ]),
-            paths
+            BTreeSet::from([PathBuf::from("/repo/a"), PathBuf::from("/repo/b")]),
+            paths,
+            "only the exclusions '/repo' created must be reported: not those of the repository \
+             nested in it, not those of a repository whose path shares its prefix, and not those \
+             read from a cache written before the repository was recorded"
         );
     }
 
     #[test]
-    fn test_paths_with_prefix_does_not_include_sibling_directory() {
+    fn test_paths_created_by_reports_a_path_two_repositories_created() {
         let mut cache = Cache::open_in_memory().unwrap();
-        cache
-            .reset([
-                PathBuf::from("/repo/file"),
-                PathBuf::from("/repo-sibling/file"),
-            ])
-            .unwrap();
-
-        let paths = cache.paths_with_prefix(PathBuf::from("/repo")).unwrap();
+        let mut exclusions = owned("/repo", ["/repo/shared"]).to_vec();
+        exclusions.extend(owned("/other", ["/repo/shared"]));
+        cache.reset(exclusions).unwrap();
 
         assert_eq!(
-            vec![PathBuf::from("/repo/file")],
-            paths,
-            "/repo-sibling/file was incorrectly included in the paths for /repo"
+            vec![PathBuf::from("/repo/shared")],
+            cache.paths_created_by("/repo").unwrap()
         );
-    }
-
-    #[test]
-    fn test_paths_with_prefix_like_wildcards_and_case() {
-        let mut cache = Cache::open_in_memory().unwrap();
-
-        cache
-            .reset([
-                PathBuf::from("/Users/me/my_project/file"),
-                PathBuf::from("/Users/me/myXproject/file"),
-                PathBuf::from("/Users/me/MY_PROJECT/file"),
-            ])
-            .unwrap();
-
-        let paths = cache
-            .paths_with_prefix(PathBuf::from("/Users/me/my_project"))
-            .unwrap();
-
         assert_eq!(
-            vec![PathBuf::from("/Users/me/my_project/file")],
-            paths,
-            "'_' should not be treated as a SQL LIKE wildcard, and matching should be \
-             case-sensitive"
+            vec![PathBuf::from("/repo/shared")],
+            cache.paths_created_by("/other").unwrap()
+        );
+        assert_eq!(
+            vec![PathBuf::from("/repo/shared")],
+            cache.paths().unwrap(),
+            "a path two repositories created is one exclusion"
         );
     }
 
@@ -475,41 +464,39 @@ mod tests {
         let mut cache = Cache::open_in_memory().unwrap();
 
         cache
-            .reset([
-                PathBuf::from("hello").join("removed"),
-                PathBuf::from("world"),
-            ])
+            .reset(owned("/repo", ["/repo/removed", "/repo/kept"]))
             .unwrap();
         cache
-            .remove_paths([PathBuf::from("hello").join("removed")].iter())
+            .remove_paths([PathBuf::from("/repo/removed")].iter(), Path::new("/repo"))
             .unwrap();
 
-        assert_eq!(1, cache.paths().unwrap().len());
         assert_eq!(
-            Some(&PathBuf::from("world")),
-            cache.paths().unwrap().first()
+            vec![PathBuf::from("/repo/kept")],
+            cache.paths().unwrap(),
+            "the path that was not listed was deleted"
         );
     }
 
     #[test]
-    fn test_remove_paths_does_not_affect_paths_not_listed() {
+    fn test_remove_paths_only_removes_what_the_repository_created() {
         let mut cache = Cache::open_in_memory().unwrap();
 
+        let mut exclusions = owned("/repo", ["/repo/shared"]).to_vec();
+        exclusions.extend(owned("/other", ["/repo/shared"]));
+        cache.reset(exclusions).unwrap();
         cache
-            .reset([
-                PathBuf::from("/repo/file"),
-                PathBuf::from("/repo-sibling/file"),
-            ])
-            .unwrap();
-        cache
-            .remove_paths([PathBuf::from("/repo/file")].iter())
+            .remove_paths([PathBuf::from("/repo/shared")].iter(), Path::new("/repo"))
             .unwrap();
 
-        let paths = cache.paths().unwrap();
-        assert_eq!(1, paths.len());
         assert!(
-            paths.contains(&PathBuf::from("/repo-sibling/file")),
-            "/repo-sibling/file was incorrectly deleted"
+            cache.paths_created_by("/repo").unwrap().is_empty(),
+            "the exclusion '/repo' created was not deleted"
+        );
+        assert_eq!(
+            vec![PathBuf::from("/repo/shared")],
+            cache.paths_created_by("/other").unwrap(),
+            "removing the exclusion '/repo' created also deleted the one '/other' created for \
+             the same path"
         );
     }
 
@@ -523,7 +510,7 @@ mod tests {
     fn test_contains_ancestor_of(#[case] path: &str, #[case] expected: bool) {
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .reset([PathBuf::from("/repo/target"), PathBuf::from("/repo/a")])
+            .reset(owned("/repo", ["/repo/target", "/repo/a"]))
             .unwrap();
 
         assert_eq!(expected, cache.contains_ancestor_of(path).unwrap());
@@ -539,9 +526,41 @@ mod tests {
         #[case] expected: bool,
     ) {
         let mut cache = Cache::open_in_memory().unwrap();
-        cache.reset([PathBuf::from("/repo/target/")]).unwrap();
+        cache.reset(owned("/repo", ["/repo/target/"])).unwrap();
 
         assert_eq!(expected, cache.contains_ancestor_of(path).unwrap());
+    }
+
+    #[test]
+    fn test_open_migrates_a_cache_written_before_the_repository_was_recorded() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let cache_file_path = temp_dir.path().join("cache.db");
+        write_version_1_cache(
+            &cache_file_path,
+            &[PathBuf::from("/repo/big_dir/"), PathBuf::from("/repo/a")],
+        );
+
+        let cache = Cache::open(&cache_file_path).unwrap();
+
+        assert_eq!(
+            u32::try_from(MIGRATIONS_SLICE.len()),
+            Ok(cache.get_version().unwrap())
+        );
+        assert_eq!(
+            2,
+            cache.paths().unwrap().len(),
+            "the exclusions of the previous schema must survive the migration"
+        );
+        assert!(
+            cache.paths_created_by("/repo").unwrap().is_empty(),
+            "no repository created these exclusions, so no rescan of a repository may remove them"
+        );
+        assert_eq!(
+            2,
+            cache.find_diff(&[]).unwrap().removed.len(),
+            "a full scan must still see them, otherwise an exclusion that is no longer gitignored \
+             would stay in the Time Machine exclusion list forever"
+        );
     }
 
     #[test]
@@ -567,7 +586,7 @@ mod tests {
         let cache_file_path = temp_dir.path().join("cache.db");
         {
             let mut cache = Cache::open_or_create(&cache_file_path).unwrap();
-            cache.add_paths([PathBuf::from("yo")].into_iter()).unwrap();
+            cache.add_paths(orphans(["yo"]).into_iter()).unwrap();
         }
         let cache = Cache::open_or_create(&cache_file_path).unwrap();
         let paths = cache.paths().unwrap();
@@ -581,7 +600,7 @@ mod tests {
         let cache_file_path = temp_dir.path().join("cache.db");
         let last_update_after_create = {
             let mut cache = Cache::open_or_create(&cache_file_path).unwrap();
-            cache.add_paths([PathBuf::from("yo")].into_iter()).unwrap();
+            cache.add_paths(orphans(["yo"]).into_iter()).unwrap();
             cache.last_update().unwrap()
         };
         std::thread::sleep(std::time::Duration::from_millis(10));

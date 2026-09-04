@@ -15,6 +15,7 @@ use log::{error, info, warn};
 use regex::RegexSet;
 
 use crate::{
+    diff::Exclusion,
     git,
     timemachine::{self, Error},
 };
@@ -125,7 +126,7 @@ fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, r
 fn find_paths_to_exclude_from_backup(
     repository_path: impl AsRef<Path>,
     whitelist: &RegexSet,
-    exclusions: &mut Vec<std::path::PathBuf>,
+    exclusions: &mut Vec<Exclusion>,
 ) -> anyhow::Result<()> {
     #[cfg(test)]
     tests::FIND_PATHS_TO_EXCLUDE_CALLS.with(|calls| calls.set(calls.get() + 1));
@@ -145,7 +146,7 @@ fn find_paths_to_exclude_from_backup(
         {
             continue;
         }
-        exclusions.push(ignored_file);
+        exclusions.push(Exclusion::new(ignored_file, repository_path.to_path_buf()));
     }
 
     Ok(())
