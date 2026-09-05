@@ -409,6 +409,7 @@ fn log_status(status: anyhow::Result<bool>) -> bool {
 mod monitor_details {
     use std::{
         collections::BTreeSet,
+        ops::ControlFlow,
         path::PathBuf,
         thread::JoinHandle,
         time::{Duration, Instant},
@@ -450,75 +451,121 @@ mod monitor_details {
         Shutdown,
     }
 
+    struct MonitorState {
+        watcher: notify::RecommendedWatcher,
+        watched_paths: BTreeSet<PathBuf>,
+        configuration_file_path: Option<PathBuf>,
+        global_gitignore: Option<PathBuf>,
+    }
+
+    fn handle_control(state: &mut MonitorState, control: MonitorControl) -> ControlFlow<()> {
+        match control {
+            MonitorControl::SetWatchedPaths(new_paths, registered) => {
+                for path in &state.watched_paths {
+                    let _ = state.watcher.unwatch(path);
+                }
+                state.watched_paths.clear();
+                for path in new_paths {
+                    if let Ok(()) = state.watcher.watch(&path, notify::RecursiveMode::Recursive) {
+                        state.watched_paths.insert(path);
+                    }
+                }
+                let _ = registered.send(());
+            }
+            MonitorControl::SetConfigurationFile(path) => {
+                if let Some(configuration_file_path) = state.configuration_file_path.take() {
+                    let _ = state.watcher.unwatch(&configuration_file_path);
+                }
+                let _ = state
+                    .watcher
+                    .watch(&path, notify::RecursiveMode::NonRecursive);
+                state.configuration_file_path = Some(path);
+            }
+            MonitorControl::SetGlobalGitIgnore(path) => {
+                if let Some(global_gitignore) = state.global_gitignore.take() {
+                    let _ = state.watcher.unwatch(&global_gitignore);
+                }
+                let _ = state
+                    .watcher
+                    .watch(&path, notify::RecursiveMode::NonRecursive);
+                state.global_gitignore = Some(path);
+            }
+            MonitorControl::Shutdown => return ControlFlow::Break(()),
+        }
+
+        ControlFlow::Continue(())
+    }
+
+    fn send_event(
+        state: &mut MonitorState,
+        event_sender: &Sender<super::Event>,
+        control_receiver: &Receiver<MonitorControl>,
+        mut event: super::Event,
+    ) -> ControlFlow<()> {
+        const SEND_TIMEOUT: Duration = Duration::from_millis(50);
+
+        loop {
+            match event_sender.send_timeout(event, SEND_TIMEOUT) {
+                Ok(()) | Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                    return ControlFlow::Continue(());
+                }
+                Err(crossbeam_channel::SendTimeoutError::Timeout(not_sent)) => {
+                    event = not_sent;
+                    while let Ok(control) = control_receiver.try_recv() {
+                        handle_control(state, control)?;
+                    }
+                }
+            }
+        }
+    }
+
     pub fn spawn_monitor_thread(
         event_sender: Sender<super::Event>,
     ) -> anyhow::Result<(JoinHandle<()>, Sender<MonitorControl>)> {
         let (control_sender, control_receiver) = crossbeam_channel::bounded(1);
-        let (fs_event_sender, fs_event_receiver) = crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
+        let (fs_event_sender, fs_event_receiver) = crossbeam_channel::unbounded();
         let watcher_config = notify::Config::default();
         let watcher = notify::RecommendedWatcher::new(fs_event_sender, watcher_config)?;
-        let mut watched_paths: BTreeSet<PathBuf> = BTreeSet::new();
-        let mut configuration_file_path = None;
-        let mut global_gitignore = None;
 
         let thread_handle = std::thread::Builder::new()
             .name("Monitor Thread".to_string())
             .spawn(move || {
-                let mut watcher = watcher;
+                let mut state = MonitorState {
+                    watcher,
+                    watched_paths: BTreeSet::new(),
+                    configuration_file_path: None,
+                    global_gitignore: None,
+                };
+
                 debug!("Monitor starts");
                 loop {
                     select! {
                         recv(fs_event_receiver) -> event => {
                             if let Ok(Ok(event)) = event
                             {
-                                if configuration_file_path.as_ref().is_some_and(|configuration_file_path|{
+                                if (state.configuration_file_path.as_ref().is_some_and(|configuration_file_path|{
                                     event.paths.contains(configuration_file_path)
                                 })
-                                    || global_gitignore
+                                    || state.global_gitignore
                                         .as_ref()
-                                        .is_some_and(|global_gitignore| event.paths.contains(global_gitignore))
+                                        .is_some_and(|global_gitignore| event.paths.contains(global_gitignore)))
+                                    && send_event(&mut state, &event_sender, &control_receiver, crate::commands::monitor::Event::ReloadConfiguration).is_break()
                                 {
-                                    let _ = event_sender.send(crate::commands::monitor::Event::ReloadConfiguration);
+                                    break;
                                 }
 
-                                if accept_event(&event) {
-                                    let _ = event_sender.send(crate::commands::monitor::Event::ScanPaths(event.paths.into_iter().collect()));
+                                if accept_event(&event)
+                                    && send_event(&mut state, &event_sender, &control_receiver, crate::commands::monitor::Event::ScanPaths(event.paths.into_iter().collect())).is_break()
+                                {
+                                    break;
                                 }
                             }
                         }
                         recv(control_receiver) -> control => {
-                            if let Ok(control) = control {
-                                match control {
-                                    MonitorControl::SetWatchedPaths(new_paths, registered) => {
-                                        for path in &watched_paths {
-                                            let _ = watcher.unwatch(path);
-                                        }
-                                        watched_paths.clear();
-                                        for path in new_paths {
-                                            if let Ok(()) = watcher.watch(&path, notify::RecursiveMode::Recursive) {
-                                                watched_paths.insert(path);
-                                            }
-                                        }
-                                        let _ = registered.send(());
-                                    },
-                                    MonitorControl::SetConfigurationFile(path) => {
-                                        if let Some(configuration_file_path) = configuration_file_path.take() {
-                                            let _ = watcher.unwatch(&configuration_file_path);
-                                        }
-                                        let _ = watcher.watch(&path, notify::RecursiveMode::NonRecursive);
-                                        configuration_file_path = Some(path);
-                                    }
-                                    MonitorControl::SetGlobalGitIgnore(path) => {
-                                        if let Some(global_gitignore) = global_gitignore.take() {
-                                            let _ = watcher.unwatch(&global_gitignore);
-                                        }
-                                        let _ = watcher.watch(&path, notify::RecursiveMode::NonRecursive);
-                                        global_gitignore = Some(path);
-                                    }
-                                    MonitorControl::Shutdown => {
-                                        break;
-                                    },
-                                }
+                            if let Ok(control) = control
+                                && handle_control(&mut state, control).is_break()
+                            {
+                                break;
                             }
                         }
                     }
@@ -706,9 +753,17 @@ mod monitor_details {
     #[cfg(test)]
     mod tests {
         use rstest::rstest;
-        use std::{collections::BTreeSet, path::PathBuf, time::Duration};
+        use std::{
+            collections::BTreeSet,
+            path::PathBuf,
+            time::{Duration, Instant},
+        };
+        use temp_dir_builder::TempDirectoryBuilder;
 
-        use crate::commands::monitor::{Event, monitor_details::DebouncerControl};
+        use crate::commands::monitor::{
+            Event,
+            monitor_details::{DebouncerControl, MonitorControl},
+        };
 
         #[rstest]
         #[case(notify::Event::default().set_kind(notify::EventKind::Create(notify::event::CreateKind::File)), true)]
@@ -722,6 +777,99 @@ mod monitor_details {
             let result = super::accept_event(&event);
 
             assert_eq!(accepted, result);
+        }
+
+        fn set_watched_paths(
+            control_sender: &crossbeam_channel::Sender<MonitorControl>,
+            paths: BTreeSet<PathBuf>,
+            timeout: Duration,
+        ) -> Result<(), crossbeam_channel::RecvTimeoutError> {
+            let (registered_sender, registered_receiver) = crossbeam_channel::bounded(1);
+
+            control_sender
+                .send(MonitorControl::SetWatchedPaths(paths, registered_sender))
+                .unwrap();
+
+            registered_receiver.recv_timeout(timeout)
+        }
+
+        #[test]
+        fn test_spawn_monitor_thread_handles_a_control_while_the_event_channel_is_full() {
+            let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+            let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+            let (event_sender, event_receiver) = crossbeam_channel::bounded(1);
+            let (thread_handle, control_sender) =
+                super::spawn_monitor_thread(event_sender).unwrap();
+
+            set_watched_paths(
+                &control_sender,
+                BTreeSet::from([temp_dir_path.clone()]),
+                Duration::from_secs(10),
+            )
+            .unwrap();
+
+            for index in 0..8 {
+                std::fs::write(temp_dir_path.join(format!("filler{index}")), "").unwrap();
+            }
+
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !event_receiver.is_full() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                event_receiver.is_full(),
+                "the watcher never filled the event channel, so the monitor thread never blocked"
+            );
+
+            for index in 0..8 {
+                std::fs::write(temp_dir_path.join(format!("blocked{index}")), "").unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(500));
+
+            let registered =
+                set_watched_paths(&control_sender, BTreeSet::new(), Duration::from_secs(5));
+
+            drop(event_receiver);
+            let _ = control_sender.send(MonitorControl::Shutdown);
+            thread_handle.join().unwrap();
+
+            assert!(
+                registered.is_ok(),
+                "the monitor thread never acknowledged the control because it stayed blocked \
+                 sending an event, so a caller waiting for that acknowledgement deadlocks"
+            );
+        }
+
+        #[test]
+        fn test_spawn_monitor_thread_handles_a_control_while_the_watcher_queue_is_full() {
+            let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+            let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+            let (event_sender, event_receiver) = crossbeam_channel::bounded(1);
+            let (thread_handle, control_sender) =
+                super::spawn_monitor_thread(event_sender).unwrap();
+
+            set_watched_paths(
+                &control_sender,
+                BTreeSet::from([temp_dir_path.clone()]),
+                Duration::from_secs(10),
+            )
+            .unwrap();
+
+            for index in 0..(super::EVENT_QUEUE_SIZE * 4) {
+                std::fs::write(temp_dir_path.join(format!("filler{index}")), "").unwrap();
+            }
+            std::thread::sleep(Duration::from_secs(2));
+
+            assert!(
+                set_watched_paths(&control_sender, BTreeSet::new(), Duration::from_secs(10))
+                    .is_ok(),
+                "the monitor thread never acknowledged the control: unwatch joins the watcher \
+                 thread, which is blocked sending into the queue only the monitor thread drains"
+            );
+
+            drop(event_receiver);
+            let _ = control_sender.send(MonitorControl::Shutdown);
+            thread_handle.join().unwrap();
         }
 
         #[test]
