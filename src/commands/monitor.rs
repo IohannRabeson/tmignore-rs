@@ -380,11 +380,16 @@ impl Monitor {
 
 impl Drop for Monitor {
     fn drop(&mut self) {
+        const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
         let _ = self.control_sender.send(MonitorControl::Shutdown);
         let _ = self
             .timemachine_control_sender
             .send(TimeMachineControl::Shutdown);
         while let Some(handle) = self.thread_handles.pop() {
+            while !handle.is_finished() {
+                let _ = self.event_receiver_final.recv_timeout(DRAIN_POLL_INTERVAL);
+            }
             if let Err(error) = super::join_thread(handle) {
                 error!("Failed to join thread: {error}");
             }
@@ -1000,7 +1005,7 @@ mod tests {
     use std::{
         collections::BTreeSet,
         path::{Path, PathBuf},
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use rstest::rstest;
@@ -1071,6 +1076,42 @@ mod tests {
                  watch was not registered yet when it returned: {other:?}"
             ),
         }
+    }
+
+    #[test]
+    #[serial]
+    fn test_dropping_the_monitor_returns_when_the_event_queue_is_full() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let mut monitor = super::Monitor::new().unwrap();
+
+        monitor.set_debounce_duration(Duration::from_millis(1));
+        monitor.set_watched_paths(&BTreeSet::from([temp_dir_path.clone()]));
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut index = 0;
+        while !monitor.event_receiver_final.is_full() && Instant::now() < deadline {
+            std::fs::write(temp_dir_path.join(format!("file{index}")), "").unwrap();
+            index += 1;
+        }
+        assert!(
+            monitor.event_receiver_final.is_full(),
+            "the watcher never filled the event queue, so the debouncer never blocked"
+        );
+
+        crate::commands::tests::send_sigint();
+
+        let (dropped_sender, dropped_receiver) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            drop(monitor);
+            let _ = dropped_sender.send(());
+        });
+
+        assert!(
+            dropped_receiver.recv_timeout(Duration::from_secs(30)).is_ok(),
+            "dropping the monitor never returned: it joins the debouncer while it is blocked \
+             sending into the full event queue, and it stopped draining that queue"
+        );
     }
 
     fn test_iterations(default: usize) -> usize {
