@@ -297,6 +297,7 @@ struct Monitor {
     control_sender: Sender<MonitorControl>,
     debouncer_control_sender: Sender<DebouncerControl>,
     timemachine_control_sender: Sender<TimeMachineControl>,
+    signals_handle: signal_hook::iterator::Handle,
     event_receiver_final: Receiver<Event>,
     thread_handles: Vec<JoinHandle<()>>,
     pending_events: BTreeSet<Event>,
@@ -308,7 +309,7 @@ impl Monitor {
             crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let (debouncer_thread_handle, debouncer_control_sender, event_receiver_final) =
             monitor_details::spawn_debouncer_thread(event_receiver_debouncer)?;
-        let signals_thread_handle =
+        let (signals_thread_handle, signals_handle) =
             monitor_details::spawn_signals_thread(event_sender_to_debouncer.clone())?;
         let (monitor_thread_handle, monitor_control_sender) =
             monitor_details::spawn_monitor_thread(event_sender_to_debouncer.clone())?;
@@ -319,6 +320,7 @@ impl Monitor {
             control_sender: monitor_control_sender,
             debouncer_control_sender,
             timemachine_control_sender,
+            signals_handle,
             event_receiver_final,
             thread_handles: vec![
                 signals_thread_handle,
@@ -382,6 +384,7 @@ impl Drop for Monitor {
     fn drop(&mut self) {
         const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+        self.signals_handle.close();
         let _ = self.control_sender.send(MonitorControl::Shutdown);
         let _ = self
             .timemachine_control_sender
@@ -429,12 +432,13 @@ mod monitor_details {
 
     pub fn spawn_signals_thread(
         event_sender: Sender<super::Event>,
-    ) -> anyhow::Result<JoinHandle<()>> {
+    ) -> anyhow::Result<(JoinHandle<()>, signal_hook::iterator::Handle)> {
         let mut signals = signal_hook::iterator::Signals::new([
             signal_hook::consts::SIGTERM,
             signal_hook::consts::SIGINT,
         ])
         .context("Failed to setup signals hooks")?;
+        let signals_handle = signals.handle();
 
         let thread_handle = std::thread::Builder::new()
             .name("Signals Thread".to_string())
@@ -446,7 +450,7 @@ mod monitor_details {
                 debug!("Signals thread shutdowns");
             })?;
 
-        Ok(thread_handle)
+        Ok((thread_handle, signals_handle))
     }
 
     pub enum MonitorControl {
@@ -1112,6 +1116,50 @@ mod tests {
             "dropping the monitor never returned: it joins the debouncer while it is blocked \
              sending into the full event queue, and it stopped draining that queue"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn test_the_event_loop_returns_the_error_it_failed_on() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let repository_path = temp_dir_path.join("repository");
+
+        crate::commands::tests::init_git_repository(&repository_path);
+        std::fs::write(repository_path.join(".gitignore"), "ignored\n").unwrap();
+        std::fs::write(repository_path.join("ignored"), "").unwrap();
+
+        let config_file_path = temp_dir_path.join("config.json");
+        let config = crate::commands::tests::create_config(&repository_path);
+        save_json_file(&config_file_path, &config).unwrap();
+
+        let cache_directory_path = temp_dir_path.join("cache");
+        std::fs::create_dir(&cache_directory_path).unwrap();
+        let cache_file_path = cache_directory_path.join("cache.db");
+        let mut cache = Cache::open_or_create(&cache_file_path).unwrap();
+
+        std::fs::set_permissions(&cache_file_path, PermissionsExt::from_mode(0o444)).unwrap();
+        std::fs::set_permissions(&cache_directory_path, PermissionsExt::from_mode(0o555)).unwrap();
+
+        let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            let result = super::execute(&config_file_path, None, &mut cache, false, false);
+            let _ = done_sender.send(format!("{result:?}"));
+        });
+
+        let finished = done_receiver.recv_timeout(Duration::from_secs(15));
+
+        crate::commands::tests::send_sigint();
+        std::fs::set_permissions(&cache_directory_path, PermissionsExt::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&cache_file_path, PermissionsExt::from_mode(0o644)).unwrap();
+
+        let finished = finished.expect(
+            "monitoring never returned after the scan failed: dropping the monitor joins the \
+             signals thread, which stays blocked until a signal arrives",
+        );
+        assert!(finished.contains("readonly"), "unexpected outcome: {finished}");
     }
 
     fn test_iterations(default: usize) -> usize {
