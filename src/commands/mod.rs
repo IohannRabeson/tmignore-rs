@@ -111,27 +111,22 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
 }
 
 fn removals_to_apply(diff: &crate::diff::Diff) -> Vec<&PathBuf> {
-    if diff.added.is_empty() {
+    if diff.added.is_empty() || diff.removed.is_empty() {
         return diff.removed.iter().collect();
     }
 
-    let mut canonical_added: Option<HashSet<PathBuf>> = None;
+    let canonical_added: HashSet<PathBuf> = diff
+        .added
+        .iter()
+        .filter_map(|path| path.canonicalize().ok())
+        .collect();
 
     diff.removed
         .iter()
         .filter(|path| {
-            let Ok(canonical_path) = path.canonicalize() else {
-                return true;
-            };
-
-            let canonical_added = canonical_added.get_or_insert_with(|| {
-                diff.added
-                    .iter()
-                    .filter_map(|added_path| added_path.canonicalize().ok())
-                    .collect()
-            });
-
-            !canonical_added.contains(&canonical_path)
+            !path
+                .canonicalize()
+                .is_ok_and(|canonical_path| canonical_added.contains(&canonical_path))
         })
         .collect()
 }
