@@ -292,7 +292,10 @@ mod tests {
 
     #[test]
     fn test_find_ignored_files_of_a_repository_deleted_while_it_is_scanned() {
-        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
         use std::time::{Duration, Instant};
 
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
