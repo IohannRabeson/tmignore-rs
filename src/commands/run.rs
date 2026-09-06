@@ -161,12 +161,112 @@ pub(crate) mod tests {
 
         super::execute(&config, &mut cache, false, false).unwrap();
 
+        let diagnostics = diagnostics(&repository_path, &upper_case_path, &lower_case_path, &cache);
+
         assert!(
             crate::timemachine::tests::is_excluded_from_time_machine(&lower_case_path),
             "the directory was renamed by case only so it is the same directory, and the \
              filesystem is case insensitive, so removing the old spelling must not undo the \
-             exclusion of the new one"
+             exclusion of the new one\n{diagnostics}"
         );
+    }
+
+    fn diagnostics(
+        repository_path: &std::path::Path,
+        upper_case_path: &std::path::Path,
+        lower_case_path: &std::path::Path,
+        cache: &Cache,
+    ) -> String {
+        use std::fmt::Write;
+
+        let mut report = String::new();
+
+        writeln!(
+            report,
+            "upper case path exists: {}",
+            upper_case_path.exists()
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "lower case path exists: {}",
+            lower_case_path.exists()
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "read_dir: {:?}",
+            std::fs::read_dir(repository_path).map(|entries| entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name())
+                .collect::<Vec<_>>())
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "gitignore: {:?}",
+            std::fs::read_to_string(repository_path.join(".gitignore"))
+        )
+        .unwrap();
+        writeln!(report, "cached paths: {:?}", cache.paths()).unwrap();
+        writeln!(
+            report,
+            "find_ignored_files: {:?}",
+            crate::git::find_ignored_files(repository_path)
+        )
+        .unwrap();
+
+        let ls_files = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repository_path)
+            .arg("ls-files")
+            .arg("--directory")
+            .arg("--exclude-standard")
+            .arg("--ignored")
+            .arg("--others")
+            .output();
+
+        writeln!(report, "{}", describe("git ls-files", ls_files)).unwrap();
+
+        for path in [upper_case_path, lower_case_path] {
+            let xattr = std::process::Command::new("/usr/bin/xattr")
+                .arg("-l")
+                .arg(path)
+                .output();
+
+            writeln!(
+                report,
+                "{}",
+                describe(&format!("xattr {}", path.display()), xattr)
+            )
+            .unwrap();
+
+            let isexcluded = std::process::Command::new("/usr/bin/tmutil")
+                .arg("isexcluded")
+                .arg(path)
+                .output();
+
+            writeln!(
+                report,
+                "{}",
+                describe(&format!("tmutil isexcluded {}", path.display()), isexcluded)
+            )
+            .unwrap();
+        }
+
+        report
+    }
+
+    fn describe(label: &str, result: std::io::Result<std::process::Output>) -> String {
+        match result {
+            Ok(output) => format!(
+                "{label}: status {}, stdout {:?}, stderr {:?}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+            Err(error) => format!("{label} failed to spawn: {error}"),
+        }
     }
 
     #[test]
