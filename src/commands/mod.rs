@@ -297,10 +297,48 @@ pub(crate) mod tests {
         config
     }
 
+    pub(crate) static SIGINT_LOG: std::sync::Mutex<Vec<(std::time::Instant, String)>> =
+        std::sync::Mutex::new(Vec::new());
+
     pub(crate) fn send_sigint() {
+        if let Ok(mut log) = SIGINT_LOG.lock() {
+            log.push((
+                std::time::Instant::now(),
+                std::thread::current()
+                    .name()
+                    .unwrap_or("<unnamed>")
+                    .to_string(),
+            ));
+        }
+
         unsafe {
             libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
         }
+    }
+
+    pub(crate) fn sigint_log_report(reference: std::time::Instant) -> String {
+        let Ok(log) = SIGINT_LOG.lock() else {
+            return String::from("<poisoned>");
+        };
+
+        let entries: Vec<String> = log
+            .iter()
+            .map(|(instant, thread)| {
+                if *instant >= reference {
+                    format!(
+                        "{thread} +{}ms",
+                        instant.duration_since(reference).as_millis()
+                    )
+                } else {
+                    format!(
+                        "{thread} -{}ms",
+                        reference.duration_since(*instant).as_millis()
+                    )
+                }
+            })
+            .collect();
+
+        format!("{} sigints: [{}]", entries.len(), entries.join(", "))
     }
 
     #[test]

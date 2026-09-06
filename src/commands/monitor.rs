@@ -1065,6 +1065,7 @@ mod tests {
     fn test_set_watched_paths_registers_the_watch_before_returning() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+        let monitor_created_at = Instant::now();
         let mut monitor = super::Monitor::new().unwrap();
 
         monitor.set_debounce_duration(Duration::from_millis(100));
@@ -1089,7 +1090,8 @@ mod tests {
             ),
             other => panic!(
                 "a path created right after set_watched_paths returned was not reported, so the \
-                 watch was not registered yet when it returned: {other:?}"
+                 watch was not registered yet when it returned: {other:?}\n{}",
+                crate::commands::tests::sigint_log_report(monitor_created_at)
             ),
         }
     }
