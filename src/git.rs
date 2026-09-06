@@ -95,7 +95,11 @@ pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<Pat
     }
 
     let absolute_repository_directory = std::path::absolute(repository_directory)?;
-    let canonical_repository_directory = repository_directory.canonicalize()?;
+    let canonical_repository_directory = match repository_directory.canonicalize() {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(error) => return Err(error.into()),
+    };
 
     let output = git_command()
         .arg("-C")
@@ -284,6 +288,45 @@ mod tests {
         }
 
         results
+    }
+
+    #[test]
+    fn test_find_ignored_files_of_a_repository_deleted_while_it_is_scanned() {
+        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        use std::time::{Duration, Instant};
+
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let repository_path = temp_dir.path().canonicalize().unwrap().join("repository");
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let deleted_path = repository_path.clone();
+        let deleter_stop = stop.clone();
+        let deleter = std::thread::spawn(move || {
+            while !deleter_stop.load(Ordering::Relaxed) {
+                std::fs::create_dir_all(deleted_path.join(".git")).unwrap();
+                let _ = std::fs::remove_dir_all(&deleted_path);
+            }
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut errors = 0;
+        for _ in 0..3000 {
+            if Instant::now() >= deadline {
+                break;
+            }
+            if super::find_ignored_files(&repository_path).is_err() {
+                errors += 1;
+            }
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        deleter.join().unwrap();
+
+        assert_eq!(
+            0, errors,
+            "a repository deleted between the existence check and the canonicalization failed \
+             the scan, which stops the monitoring instead of skipping the repository"
+        );
     }
 
     fn run_git(args: &[&str]) {
