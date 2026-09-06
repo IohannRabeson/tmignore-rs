@@ -74,7 +74,7 @@ fn handle_event(
                 &context.config.search_directories,
                 context.cache,
             )?;
-            for repository_to_scan in &repositories_to_scan {
+            for (repository_to_scan, changed_paths) in &repositories_to_scan {
                 debug!("Scanning repository '{}'", repository_to_scan.display());
                 let mut exclusions = Vec::new();
                 super::find_paths_to_exclude_from_backup(
@@ -96,6 +96,18 @@ fn handle_event(
                         repository_to_scan.display()
                     );
                     continue;
+                }
+
+                if context.details {
+                    info!(
+                        "Detected {} changed {} in '{}'",
+                        changed_paths.len(),
+                        crate::text::plural("path", changed_paths.len()),
+                        repository_to_scan.display()
+                    );
+                    for changed_path in changed_paths {
+                        info!("~ {}", changed_path.display());
+                    }
                 }
 
                 let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
@@ -142,11 +154,11 @@ fn handle_event(
 ///   its directory, so the exclusion of that directory must be removed.
 ///
 /// The repository is scanned as soon as one of its paths is not skipped.
-fn find_repositories_to_scan(
-    paths: &BTreeSet<PathBuf>,
+fn find_repositories_to_scan<'a>(
+    paths: &'a BTreeSet<PathBuf>,
     search_directories: &BTreeSet<PathBuf>,
     cache: &Cache,
-) -> Result<BTreeSet<PathBuf>, anyhow::Error> {
+) -> Result<BTreeMap<PathBuf, Vec<&'a Path>>, anyhow::Error> {
     let mut paths_by_repository: BTreeMap<PathBuf, Vec<&Path>> = BTreeMap::new();
 
     for path in paths {
@@ -162,7 +174,7 @@ fn find_repositories_to_scan(
         }
     }
 
-    let mut repositories = BTreeSet::new();
+    let mut repositories = BTreeMap::new();
 
     for (repository_path, repository_paths) in paths_by_repository {
         let mut scan = false;
@@ -177,7 +189,7 @@ fn find_repositories_to_scan(
         // Checking whether the paths are ignored costs a git process, so it runs once for the
         // whole batch and only when the cheap checks did not already settle the repository.
         if scan || crate::git::contains_not_ignored_path(&repository_path, &repository_paths) {
-            repositories.insert(repository_path);
+            repositories.insert(repository_path, repository_paths);
         }
     }
 
@@ -1112,7 +1124,9 @@ mod tests {
         });
 
         assert!(
-            dropped_receiver.recv_timeout(Duration::from_secs(30)).is_ok(),
+            dropped_receiver
+                .recv_timeout(Duration::from_secs(30))
+                .is_ok(),
             "dropping the monitor never returned: it joins the debouncer while it is blocked \
              sending into the full event queue, and it stopped draining that queue"
         );
@@ -1159,7 +1173,10 @@ mod tests {
             "monitoring never returned after the scan failed: dropping the monitor joins the \
              signals thread, which stays blocked until a signal arrives",
         );
-        assert!(finished.contains("readonly"), "unexpected outcome: {finished}");
+        assert!(
+            finished.contains("readonly"),
+            "unexpected outcome: {finished}"
+        );
     }
 
     fn test_iterations(default: usize) -> usize {
@@ -1924,6 +1941,8 @@ mod tests {
         let scan = |paths: [PathBuf; 1]| {
             super::find_repositories_to_scan(&BTreeSet::from(paths), &search_directories, &cache)
                 .unwrap()
+                .into_keys()
+                .collect::<BTreeSet<_>>()
         };
         let scanned = BTreeSet::from([repository_path.clone()]);
 
@@ -1972,15 +1991,23 @@ mod tests {
             "a repository outside the search directories must not be scanned"
         );
 
-        let repositories = super::find_repositories_to_scan(
-            &BTreeSet::from([logs_path.join("a.log"), kept_path]),
-            &search_directories,
-            &cache,
-        )
-        .unwrap();
+        let changed_paths = [logs_path.join("a.log"), kept_path];
+        let paths = BTreeSet::from(changed_paths.clone());
+        let repositories =
+            super::find_repositories_to_scan(&paths, &search_directories, &cache).unwrap();
         assert_eq!(
-            scanned, repositories,
+            scanned,
+            repositories.keys().cloned().collect::<BTreeSet<_>>(),
             "a single path that is not ignored is enough to scan the repository"
+        );
+        assert_eq!(
+            changed_paths
+                .iter()
+                .map(PathBuf::as_path)
+                .collect::<Vec<_>>(),
+            repositories[&repository_path],
+            "the repository keeps every changed path that belongs to it, so the caller can report \
+             what triggered the scan"
         );
     }
 
