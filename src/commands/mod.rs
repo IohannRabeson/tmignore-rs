@@ -46,12 +46,15 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
 ) -> HashSet<PathBuf> {
     let mut add_failed_paths = HashSet::new();
 
-    // Remove before adding: on a case insensitive filesystem a directory renamed by case only is
-    // removed under its old spelling and added under the new one, and both spellings are the same
-    // item, so adding first would let the removal undo it.
+    // On a case insensitive filesystem a directory renamed by case only is removed under its old
+    // spelling and added under the new one, and both spellings are the same item: excluding and
+    // unexcluding the same item in one pass is not applied in the order the calls are made, so the
+    // removal is dropped instead.
+    let removed = removals_to_apply(diff);
+
     let mut remove_errors = Vec::new();
     if !dry_run {
-        let mut exclusion_errors = TM::remove_exclusions(diff.removed.iter());
+        let mut exclusion_errors = TM::remove_exclusions(removed.iter().copied());
 
         remove_errors.append(&mut exclusion_errors);
     }
@@ -66,7 +69,7 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     }
 
     let add_count = diff.added.len().saturating_sub(add_errors.len());
-    let remove_count = diff.removed.len();
+    let remove_count = removed.len();
 
     if add_count > 0 {
         info!(
@@ -95,7 +98,7 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     }
 
     if details {
-        for path in &diff.removed {
+        for path in &removed {
             info!("- {}", path.display());
         }
     }
@@ -105,6 +108,27 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     }
 
     add_failed_paths
+}
+
+fn removals_to_apply(diff: &crate::diff::Diff) -> Vec<&PathBuf> {
+    if diff.added.is_empty() || diff.removed.is_empty() {
+        return diff.removed.iter().collect();
+    }
+
+    let canonical_added: HashSet<PathBuf> = diff
+        .added
+        .iter()
+        .filter_map(|path| path.canonicalize().ok())
+        .collect();
+
+    diff.removed
+        .iter()
+        .filter(|path| {
+            !path
+                .canonicalize()
+                .is_ok_and(|canonical_path| canonical_added.contains(&canonical_path))
+        })
+        .collect()
 }
 
 fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, regex::Error> {
@@ -176,6 +200,7 @@ fn join_thread<T>(thread_handle: std::thread::JoinHandle<T>) -> anyhow::Result<T
 #[cfg(test)]
 pub(crate) mod tests {
     use std::{
+        cell::RefCell,
         collections::BTreeSet,
         path::{Path, PathBuf},
         time::Duration,
@@ -333,5 +358,61 @@ pub(crate) mod tests {
             added: BTreeSet::new(),
         };
         let _ = apply_diff_and_print::<MockTimeMachineError>(&diff, false, false);
+    }
+
+    thread_local! {
+        static RECORDED_CALLS: RefCell<Vec<(&'static str, PathBuf)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    struct MockTimeMachineRecorder;
+
+    impl TimeMachineTrait for MockTimeMachineRecorder {
+        fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error> {
+            RECORDED_CALLS.with_borrow_mut(|calls| {
+                calls.extend(paths.map(|path| ("add", path.clone())));
+            });
+
+            Vec::new()
+        }
+
+        fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error> {
+            RECORDED_CALLS.with_borrow_mut(|calls| {
+                calls.extend(paths.map(|path| ("remove", path.clone())));
+            });
+
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn test_apply_diff_does_not_remove_an_item_it_adds_under_another_spelling() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_empty_file("foo/a")
+            .build()
+            .unwrap();
+        let lower_case_path = temp_dir.path().join("foo");
+        let upper_case_path = temp_dir.path().join("Foo");
+
+        assert!(
+            upper_case_path.exists(),
+            "this test needs a case insensitive filesystem"
+        );
+
+        let diff = Diff {
+            added: BTreeSet::from([lower_case_path.clone()]),
+            removed: BTreeSet::from([upper_case_path]),
+        };
+
+        RECORDED_CALLS.with_borrow_mut(Vec::clear);
+
+        let error_paths = apply_diff_and_print::<MockTimeMachineRecorder>(&diff, false, false);
+
+        assert!(error_paths.is_empty());
+        assert_eq!(
+            vec![("add", lower_case_path)],
+            RECORDED_CALLS.with_borrow(Clone::clone),
+            "both spellings are the same item, so removing the old one would undo the addition of \
+             the new one"
+        );
     }
 }
