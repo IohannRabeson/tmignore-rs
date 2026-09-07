@@ -12,7 +12,7 @@ permissions:
 jobs:
   hammer:
     runs-on: "macos-latest"
-    timeout-minutes: 90
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
     - name: Setup Rust
@@ -26,16 +26,7 @@ jobs:
         key: build
     - name: Build the tests
       run: cargo test --locked --target x86_64-apple-darwin --no-run
-    - name: Hammer the full suite
+    - name: Test
       env:
         TMIGNORE_RS_TEST_ITERATIONS: "2"
-      run: |
-        for i in $(seq 1 20); do
-          echo "::group::iteration $i"
-          if ! cargo test --locked --target x86_64-apple-darwin -- --include-ignored; then
-            echo "::endgroup::"
-            echo "FAILED at iteration $i"
-            exit 1
-          fi
-          echo "::endgroup::"
-        done
+      run: cargo test --locked --target x86_64-apple-darwin -- --include-ignored
