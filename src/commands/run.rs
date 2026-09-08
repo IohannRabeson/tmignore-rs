@@ -6,6 +6,7 @@ use crate::{
     cache::Cache,
     commands::TimeMachine,
     config::Config,
+    diff::Exclusion,
     git::{self},
 };
 
@@ -17,7 +18,7 @@ pub fn execute(
 ) -> anyhow::Result<()> {
     let whitelist = super::create_whitelist(&config.whitelist_patterns)?;
     let mut repositories = BTreeSet::new();
-    let mut exclusions = BTreeSet::new();
+    let mut exclusions: Vec<Exclusion> = Vec::new();
 
     info!("Searching for Git repositories...");
     if let Some((rx, thread_handle)) = git::find_repositories(
@@ -26,12 +27,18 @@ pub fn execute(
         config.threads,
     ) {
         while let Ok(repository_path) = rx.recv() {
-            repositories.insert(repository_path.clone());
-
-            super::find_paths_to_exclude_from_backup(repository_path, &whitelist, &mut exclusions)?;
+            if repositories.insert(repository_path.clone()) {
+                super::find_paths_to_exclude_from_backup(
+                    repository_path,
+                    &whitelist,
+                    &mut exclusions,
+                )?;
+            }
         }
 
         super::join_thread(thread_handle)?;
+        exclusions.sort_unstable();
+        exclusions.dedup();
 
         info!(
             "Found {} {}",
@@ -50,9 +57,7 @@ pub fn execute(
         let paths_failed_to_add =
             super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details);
 
-        for path in paths_failed_to_add {
-            exclusions.remove(&path);
-        }
+        exclusions.retain(|exclusion| !paths_failed_to_add.contains(exclusion.path()));
 
         if !dry_run {
             cache.reset(exclusions)?;
@@ -64,7 +69,7 @@ pub fn execute(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::path::PathBuf;
+    use std::path::Path;
 
     use temp_dir_builder::TempDirectoryBuilder;
 
@@ -72,7 +77,8 @@ pub(crate) mod tests {
 
     #[test]
     fn test_command() {
-        let temp_dir = crate::commands::tests::create_repository(Some("test_run_command"));
+        let temp_dir =
+            crate::commands::tests::create_repository(Some(Path::new("test_run_command")));
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = false;
@@ -98,10 +104,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_gitignored_symlink_does_not_exclude_target() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_run_gitignored_symlink");
-        if root.exists() && root.is_dir() {
-            std::fs::remove_dir_all(&root).unwrap();
-        }
+        let root = crate::commands::tests::prepare_test_directory("test_run_gitignored_symlink");
         let temp_dir = TempDirectoryBuilder::default()
             .root_folder(&root)
             .add_text_file("outside/precious.txt", "precious data")
@@ -129,9 +132,96 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_case_only_rename_keeps_the_directory_excluded() {
+        let root = crate::commands::tests::prepare_test_directory("test_run_case_only_rename");
+        let temp_dir = TempDirectoryBuilder::default()
+            .root_folder(&root)
+            .add_text_file("repository/.gitignore", "Foo\n")
+            .add_empty_file("repository/Foo/a")
+            .build()
+            .unwrap();
+        let repository_path = temp_dir.path().join("repository");
+        crate::commands::tests::init_git_repository(&repository_path);
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&repository_path);
+
+        super::execute(&config, &mut cache, false, false).unwrap();
+
+        let upper_case_path = repository_path.join("Foo");
+        assert!(
+            crate::timemachine::tests::is_excluded_from_time_machine(&upper_case_path),
+            "the initial scan should have excluded the ignored directory"
+        );
+
+        let lower_case_path = repository_path.join("foo");
+        std::fs::rename(&upper_case_path, repository_path.join("renamed")).unwrap();
+        std::fs::rename(repository_path.join("renamed"), &lower_case_path).unwrap();
+        std::fs::write(repository_path.join(".gitignore"), "foo\n").unwrap();
+
+        super::execute(&config, &mut cache, false, false).unwrap();
+
+        assert!(
+            crate::timemachine::tests::is_excluded_from_time_machine(&lower_case_path),
+            "the directory was renamed by case only so it is the same directory, and the \
+             filesystem is case insensitive, so removing the old spelling must not undo the \
+             exclusion of the new one"
+        );
+    }
+
+    #[test]
+    fn test_overlapping_search_directories_scan_every_repository_once() {
+        let root = crate::commands::tests::prepare_test_directory("test_run_overlapping_search");
+        let temp_dir = TempDirectoryBuilder::default()
+            .root_folder(&root)
+            .add_text_file("nested/repository/.gitignore", "a\n")
+            .add_empty_file("nested/repository/a")
+            .add_empty_file("nested/repository/kept")
+            .add_text_file("other_repository/.gitignore", "b\n")
+            .add_empty_file("other_repository/b")
+            .add_empty_file("other_repository/kept")
+            .build()
+            .unwrap();
+        let nested_path = temp_dir.path().join("nested");
+        let repository_path = nested_path.join("repository");
+        let other_repository_path = temp_dir.path().join("other_repository");
+        crate::commands::tests::init_git_repository(&repository_path);
+        crate::commands::tests::init_git_repository(&other_repository_path);
+
+        let mut config = crate::commands::tests::create_config(temp_dir.path());
+        config.search_directories.insert(nested_path);
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        crate::commands::tests::FIND_PATHS_TO_EXCLUDE_CALLS.with(|calls| calls.set(0));
+
+        super::execute(&config, &mut cache, false, false).unwrap();
+
+        assert_eq!(
+            2,
+            crate::commands::tests::FIND_PATHS_TO_EXCLUDE_CALLS.with(std::cell::Cell::get),
+            "'nested/repository' is reported by both overlapping search directories, so it was \
+             scanned twice instead of once"
+        );
+
+        let mut expected = vec![
+            repository_path.canonicalize().unwrap().join("a"),
+            other_repository_path.canonicalize().unwrap().join("b"),
+        ];
+        expected.sort_unstable();
+        let mut paths = cache.paths().unwrap();
+        paths.sort_unstable();
+
+        assert_eq!(
+            expected, paths,
+            "scanning each repository once dropped the exclusions of a repository"
+        );
+    }
+
+    #[test]
     fn test_dry_run() {
-        let temp_dir =
-            crate::commands::tests::create_repository(Some("run_command_test_command_dry_run"));
+        let temp_dir = crate::commands::tests::create_repository(Some(Path::new(
+            "run_command_test_command_dry_run",
+        )));
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(temp_dir.path());
         let dry_run = true;

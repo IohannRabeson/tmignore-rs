@@ -261,7 +261,7 @@ fn import_legacy_cache_file(
     let legacy_cache: LegacyCache = json::load_json_file(legacy_cache_file_path)?;
     let mut cache = Cache::create(cache_file_path)?;
 
-    cache.reset(legacy_cache.paths)?;
+    cache.reset(legacy_cache.paths.into_iter().map(diff::Exclusion::orphan))?;
 
     Ok(())
 }
@@ -361,9 +361,6 @@ mod tests {
 
     fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
         let root_directory = root_directory.as_ref();
-        if root_directory.exists() && root_directory.is_dir() {
-            std::fs::remove_dir_all(root_directory).unwrap();
-        }
         let repository_path = root_directory.join("repository");
         let mut config = Config::default();
         config.search_directories.clear();
@@ -383,10 +380,49 @@ mod tests {
         temp_dir
     }
 
+    fn poll_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+
+        while std::time::Instant::now() < deadline {
+            if condition() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        condition()
+    }
+
+    fn create_monitored_repository(
+        root_directory: impl AsRef<Path>,
+        search_directory: &str,
+    ) -> TempDirectory {
+        let root_directory = root_directory.as_ref();
+        let repository_path = root_directory.join("repository");
+        let mut config = Config {
+            debounce_duration: Duration::from_millis(100),
+            ..Default::default()
+        };
+        config.search_directories.clear();
+        config
+            .search_directories
+            .insert(root_directory.join(search_directory));
+        let temp_dir = TempDirectoryBuilder::default()
+            .root_folder(root_directory)
+            .add_directory("empty_dir")
+            .add_text_file("config.json", serde_json::to_string(&config).unwrap())
+            .add_text_file("repository/.gitignore", "a\nb\n")
+            .build()
+            .unwrap();
+
+        crate::commands::tests::init_git_repository(repository_path);
+
+        temp_dir
+    }
+
     #[test]
     fn test_program_run() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let temp_dir_path = root.join("test_program_run");
+        let temp_dir_path = crate::commands::tests::prepare_test_directory("test_program_run");
         let _temp_dir = create_repository(&temp_dir_path);
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
@@ -432,31 +468,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_program_monitor() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let temp_dir_path = root.join("test_program_monitor");
-        let _temp_dir = {
-            let root_directory = &temp_dir_path;
-            if root_directory.exists() && root_directory.is_dir() {
-                std::fs::remove_dir_all(root_directory).unwrap();
-            }
-            let repository_path = root_directory.join("repository");
-            let mut config = Config {
-                debounce_duration: Duration::from_secs(1),
-                ..Default::default()
-            };
-            config.search_directories.clear();
-            config.search_directories.insert(repository_path.clone());
-            let temp_dir = TempDirectoryBuilder::default()
-                .root_folder(root_directory)
-                .add_text_file("config.json", serde_json::to_string(&config).unwrap())
-                .add_text_file("repository/.gitignore", "a\nb\n")
-                .build()
-                .unwrap();
-
-            crate::commands::tests::init_git_repository(repository_path);
-
-            temp_dir
-        };
+        let temp_dir_path = crate::commands::tests::prepare_test_directory("test_program_monitor");
+        let _temp_dir = create_monitored_repository(&temp_dir_path, "repository");
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {
@@ -489,9 +502,17 @@ mod tests {
         std::fs::write(&a_file_path, "").unwrap();
         std::fs::write(&b_file_path, "").unwrap();
         std::fs::write(&c_file_path, "").unwrap();
-        std::thread::sleep(Duration::from_secs(5));
+        let excluded = poll_until(Duration::from_secs(10), || {
+            crate::timemachine::tests::is_excluded_from_time_machine(&a_file_path)
+                && crate::timemachine::tests::is_excluded_from_time_machine(&b_file_path)
+        });
         crate::commands::tests::send_sigint();
         handle.join().unwrap();
+
+        assert!(
+            excluded,
+            "the monitor did not exclude the gitignored files it was notified about"
+        );
 
         assert!(crate::timemachine::tests::is_excluded_from_time_machine(
             &a_file_path
@@ -507,34 +528,9 @@ mod tests {
     #[test]
     #[serial]
     fn test_program_monitor_reload_config() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let temp_dir_path = root.join("test_program_monitor_reload_config");
-        let temp_dir = {
-            let root_directory = &temp_dir_path;
-            if root_directory.exists() && root_directory.is_dir() {
-                std::fs::remove_dir_all(root_directory).unwrap();
-            }
-            let repository_path = root_directory.join("repository");
-            let mut config = Config {
-                debounce_duration: Duration::from_secs(1),
-                ..Default::default()
-            };
-            config.search_directories.clear();
-            config
-                .search_directories
-                .insert(root_directory.join("empty_dir"));
-            let temp_dir = TempDirectoryBuilder::default()
-                .root_folder(root_directory)
-                .add_directory("empty_dir")
-                .add_text_file("config.json", serde_json::to_string(&config).unwrap())
-                .add_text_file("repository/.gitignore", "a\nb\n")
-                .build()
-                .unwrap();
-
-            crate::commands::tests::init_git_repository(repository_path);
-
-            temp_dir
-        };
+        let temp_dir_path =
+            crate::commands::tests::prepare_test_directory("test_program_monitor_reload_config");
+        let temp_dir = create_monitored_repository(&temp_dir_path, "empty_dir");
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {
@@ -596,34 +592,10 @@ mod tests {
     #[test]
     #[serial]
     fn test_program_monitor_reload_config_error() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let temp_dir_path = root.join("test_program_monitor_reload_config_error");
-        let _temp_dir = {
-            let root_directory = &temp_dir_path;
-            if root_directory.exists() && root_directory.is_dir() {
-                std::fs::remove_dir_all(root_directory).unwrap();
-            }
-            let repository_path = root_directory.join("repository");
-            let mut config = Config {
-                debounce_duration: Duration::from_secs(1),
-                ..Default::default()
-            };
-            config.search_directories.clear();
-            config
-                .search_directories
-                .insert(root_directory.join("empty_dir"));
-            let temp_dir = TempDirectoryBuilder::default()
-                .root_folder(root_directory)
-                .add_directory("empty_dir")
-                .add_text_file("config.json", serde_json::to_string(&config).unwrap())
-                .add_text_file("repository/.gitignore", "a\nb\n")
-                .build()
-                .unwrap();
-
-            crate::commands::tests::init_git_repository(repository_path);
-
-            temp_dir
-        };
+        let temp_dir_path = crate::commands::tests::prepare_test_directory(
+            "test_program_monitor_reload_config_error",
+        );
+        let _temp_dir = create_monitored_repository(&temp_dir_path, "empty_dir");
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {

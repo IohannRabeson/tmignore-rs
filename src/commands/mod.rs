@@ -6,7 +6,7 @@ pub mod run;
 pub mod stats;
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -15,6 +15,7 @@ use log::{error, info, warn};
 use regex::RegexSet;
 
 use crate::{
+    diff::Exclusion,
     git,
     timemachine::{self, Error},
 };
@@ -42,8 +43,21 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     diff: &crate::diff::Diff,
     dry_run: bool,
     details: bool,
-) -> Vec<PathBuf> {
-    let mut add_failed_paths = BTreeSet::new();
+) -> HashSet<PathBuf> {
+    let mut add_failed_paths = HashSet::new();
+
+    // On a case insensitive filesystem a directory renamed by case only is removed under its old
+    // spelling and added under the new one, and both spellings are the same item: excluding and
+    // unexcluding the same item in one pass is not applied in the order the calls are made, so the
+    // removal is dropped instead.
+    let removed = removals_to_apply(diff);
+
+    let mut remove_errors = Vec::new();
+    if !dry_run {
+        let mut exclusion_errors = TM::remove_exclusions(removed.iter().copied());
+
+        remove_errors.append(&mut exclusion_errors);
+    }
 
     let mut add_errors = Vec::new();
     if !dry_run {
@@ -54,15 +68,8 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
         add_errors.append(&mut exclusion_errors);
     }
 
-    let mut remove_errors = Vec::new();
-    if !dry_run {
-        let mut exclusion_errors = TM::remove_exclusions(diff.removed.iter());
-
-        remove_errors.append(&mut exclusion_errors);
-    }
-
     let add_count = diff.added.len().saturating_sub(add_errors.len());
-    let remove_count = diff.removed.len();
+    let remove_count = removed.len();
 
     if add_count > 0 {
         info!(
@@ -91,7 +98,7 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     }
 
     if details {
-        for path in &diff.removed {
+        for path in &removed {
             info!("- {}", path.display());
         }
     }
@@ -100,7 +107,28 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
         warn!("Error: {}: {}", error.path.display(), error.message);
     }
 
-    add_errors.into_iter().map(|error| error.path).collect()
+    add_failed_paths
+}
+
+fn removals_to_apply(diff: &crate::diff::Diff) -> Vec<&PathBuf> {
+    if diff.added.is_empty() || diff.removed.is_empty() {
+        return diff.removed.iter().collect();
+    }
+
+    let canonical_added: HashSet<PathBuf> = diff
+        .added
+        .iter()
+        .filter_map(|path| path.canonicalize().ok())
+        .collect();
+
+    diff.removed
+        .iter()
+        .filter(|path| {
+            !path
+                .canonicalize()
+                .is_ok_and(|canonical_path| canonical_added.contains(&canonical_path))
+        })
+        .collect()
 }
 
 fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, regex::Error> {
@@ -117,12 +145,16 @@ fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, r
 
 /// Find the paths in a repository to exclude from Time Machine backup.
 /// If a path matches at least one of the regexes in the `whitelist` `RegexSet` it will not be
-/// added to the `exclusion` set.
+/// added to `exclusions`. Paths may be pushed more than once; callers that need uniqueness
+/// must dedup after collecting.
 fn find_paths_to_exclude_from_backup(
     repository_path: impl AsRef<Path>,
     whitelist: &RegexSet,
-    exclusions: &mut BTreeSet<std::path::PathBuf>,
+    exclusions: &mut Vec<Exclusion>,
 ) -> anyhow::Result<()> {
+    #[cfg(test)]
+    tests::FIND_PATHS_TO_EXCLUDE_CALLS.with(|calls| calls.set(calls.get() + 1));
+
     let repository_path = repository_path.as_ref();
     let ignored_files = git::find_ignored_files(repository_path)?;
 
@@ -138,7 +170,7 @@ fn find_paths_to_exclude_from_backup(
         {
             continue;
         }
-        exclusions.insert(ignored_file);
+        exclusions.push(Exclusion::new(ignored_file, repository_path.to_path_buf()));
     }
 
     Ok(())
@@ -168,6 +200,7 @@ fn join_thread<T>(thread_handle: std::thread::JoinHandle<T>) -> anyhow::Result<T
 #[cfg(test)]
 pub(crate) mod tests {
     use std::{
+        cell::RefCell,
         collections::BTreeSet,
         path::{Path, PathBuf},
         time::Duration,
@@ -182,17 +215,31 @@ pub(crate) mod tests {
         timemachine::Error,
     };
 
+    thread_local! {
+        pub(crate) static FIND_PATHS_TO_EXCLUDE_CALLS: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
+    }
+
+    /// Return the path of a test directory in the crate directory, deleted first if a previous
+    /// run left it behind.
+    ///
+    /// `std::env::temp_dir` is unusable: it is excluded from Time Machine.
+    pub(crate) fn prepare_test_directory(name: &str) -> PathBuf {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name);
+
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path).unwrap();
+        }
+
+        path
+    }
+
     /// Create a Git repository with some files.
     ///
     /// When `root_directory` is None, the temporary directory is created in `/tmp`
     /// which is excluded from Time Machine backup, meaning all children files and directories
     /// will be considered excluded from Time Machine backup anyway (`tmutil isexcluded` will always returns "[Excluded]").
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "test-only helper always called with `&str` literals or `None`, so taking the value by reference instead would force uglier call sites (`Some(&\"literal\")`) for no real benefit"
-    )]
-    pub(crate) fn create_repository(root_directory: Option<impl AsRef<Path>>) -> TempDirectory {
-        let root_directory = root_directory.as_ref().map(std::convert::AsRef::as_ref);
+    pub(crate) fn create_repository(root_directory: Option<&Path>) -> TempDirectory {
         if let Some(root_directory) = root_directory
             && root_directory.exists()
             && root_directory.is_dir()
@@ -311,5 +358,61 @@ pub(crate) mod tests {
             added: BTreeSet::new(),
         };
         let _ = apply_diff_and_print::<MockTimeMachineError>(&diff, false, false);
+    }
+
+    thread_local! {
+        static RECORDED_CALLS: RefCell<Vec<(&'static str, PathBuf)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    struct MockTimeMachineRecorder;
+
+    impl TimeMachineTrait for MockTimeMachineRecorder {
+        fn add_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error> {
+            RECORDED_CALLS.with_borrow_mut(|calls| {
+                calls.extend(paths.map(|path| ("add", path.clone())));
+            });
+
+            Vec::new()
+        }
+
+        fn remove_exclusions<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<Error> {
+            RECORDED_CALLS.with_borrow_mut(|calls| {
+                calls.extend(paths.map(|path| ("remove", path.clone())));
+            });
+
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn test_apply_diff_does_not_remove_an_item_it_adds_under_another_spelling() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_empty_file("foo/a")
+            .build()
+            .unwrap();
+        let lower_case_path = temp_dir.path().join("foo");
+        let upper_case_path = temp_dir.path().join("Foo");
+
+        assert!(
+            upper_case_path.exists(),
+            "this test needs a case insensitive filesystem"
+        );
+
+        let diff = Diff {
+            added: BTreeSet::from([lower_case_path.clone()]),
+            removed: BTreeSet::from([upper_case_path]),
+        };
+
+        RECORDED_CALLS.with_borrow_mut(Vec::clear);
+
+        let error_paths = apply_diff_and_print::<MockTimeMachineRecorder>(&diff, false, false);
+
+        assert!(error_paths.is_empty());
+        assert_eq!(
+            vec![("add", lower_case_path)],
+            RECORDED_CALLS.with_borrow(Clone::clone),
+            "both spellings are the same item, so removing the old one would undo the addition of \
+             the new one"
+        );
     }
 }

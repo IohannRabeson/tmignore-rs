@@ -1,11 +1,15 @@
 use std::{
     collections::BTreeSet,
     ffi::OsStr,
+    io::Write,
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::Arc,
     thread::JoinHandle,
 };
 
+use anyhow::Context;
 use crossbeam_channel::Receiver;
 use log::warn;
 
@@ -91,7 +95,11 @@ pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<Pat
     }
 
     let absolute_repository_directory = std::path::absolute(repository_directory)?;
-    let canonical_repository_directory = repository_directory.canonicalize()?;
+    let canonical_repository_directory = match repository_directory.canonicalize() {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(error) => return Err(error.into()),
+    };
 
     let output = git_command()
         .arg("-C")
@@ -117,6 +125,7 @@ pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<Pat
     Ok(output
         .stdout
         .split(|&b| b == 0)
+        .map(|bytes| bytes.strip_suffix(b"/").unwrap_or(bytes))
         .filter(|s| !s.is_empty())
         .filter_map(|bytes| {
             std::str::from_utf8(bytes)
@@ -124,6 +133,87 @@ pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<Pat
                 .map(|s| absolute_repository_directory.join(s))
         })
         .collect())
+}
+
+/// Tell whether at least one of `paths` is not ignored by `repository_directory`.
+///
+/// A path that is ignored cannot change what `find_ignored_files` reports, but a path that is
+/// not ignored can: `git ls-files --directory` stops collapsing a directory as soon as it
+/// contains something that is not ignored, so the exclusion of that directory must be removed.
+///
+/// A path that cannot be expressed relative to `repository_directory`, which includes the
+/// repository directory itself, is reported as not ignored.
+pub fn contains_not_ignored_path(repository_directory: &Path, paths: &[&Path]) -> bool {
+    match run_check_ignore(repository_directory, paths) {
+        Ok(result) => result,
+        Err(error) => {
+            warn!(
+                "Failed to check the ignored paths of repository '{}': {}",
+                repository_directory.display(),
+                error
+            );
+
+            true
+        }
+    }
+}
+
+fn run_check_ignore(repository_directory: &Path, paths: &[&Path]) -> anyhow::Result<bool> {
+    if paths.is_empty() {
+        return Ok(false);
+    }
+
+    let mut input = Vec::new();
+
+    for path in paths {
+        match path.strip_prefix(repository_directory) {
+            Ok(relative_path) if !relative_path.as_os_str().is_empty() => {
+                input.extend_from_slice(relative_path.as_os_str().as_bytes());
+                input.push(0);
+            }
+            _ => return Ok(true),
+        }
+    }
+
+    let mut child = git_command()
+        .arg("-C")
+        .arg(repository_directory)
+        .arg("check-ignore")
+        .arg("--stdin")
+        .arg("-z")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut child_stdin = child
+        .stdin
+        .take()
+        .context("Failed to open the standard input of git check-ignore")?;
+    // Write from another thread: git flushes the ignored paths as it reads them, so filling the
+    // stdin pipe while nothing drains the stdout pipe deadlocks, both sides blocked in write.
+    // Measured on macOS: 10000 paths (188 KB) completes, 40000 (800 KB) and 200000 (4 MB) hang.
+    let writer_thread = std::thread::spawn(move || child_stdin.write_all(&input));
+    let output = child.wait_with_output()?;
+    let _ = writer_thread.join();
+
+    match output.status.code() {
+        Some(0) => Ok(output
+            .stdout
+            .split(|&byte| byte == 0)
+            .filter(|path| !path.is_empty())
+            .count()
+            < paths.len()),
+        Some(1) => Ok(true),
+        _ => {
+            warn!(
+                "Failed to check the ignored paths of repository '{}': {}",
+                repository_directory.display(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            Ok(true)
+        }
+    }
 }
 
 pub fn find_parent_repository(path: impl AsRef<Path>) -> Option<PathBuf> {
@@ -200,6 +290,48 @@ mod tests {
         results
     }
 
+    #[test]
+    fn test_find_ignored_files_of_a_repository_deleted_while_it_is_scanned() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        use std::time::{Duration, Instant};
+
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let repository_path = temp_dir.path().canonicalize().unwrap().join("repository");
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let deleted_path = repository_path.clone();
+        let deleter_stop = stop.clone();
+        let deleter = std::thread::spawn(move || {
+            while !deleter_stop.load(Ordering::Relaxed) {
+                std::fs::create_dir_all(deleted_path.join(".git")).unwrap();
+                let _ = std::fs::remove_dir_all(&deleted_path);
+            }
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut errors = 0;
+        for _ in 0..3000 {
+            if Instant::now() >= deadline {
+                break;
+            }
+            if super::find_ignored_files(&repository_path).is_err() {
+                errors += 1;
+            }
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        deleter.join().unwrap();
+
+        assert_eq!(
+            0, errors,
+            "a repository deleted between the existence check and the canonicalization failed \
+             the scan, which stops the monitoring instead of skipping the repository"
+        );
+    }
+
     fn run_git(args: &[&str]) {
         let output = std::process::Command::new("/usr/bin/git")
             .args(args)
@@ -236,6 +368,36 @@ mod tests {
             Some(excludes_path),
             result,
             "get_global_git_ignore returned the repository-local core.excludesFile"
+        );
+    }
+
+    #[test]
+    fn test_contains_not_ignored_path_with_a_batch_larger_than_a_pipe_buffer() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file("repository/.gitignore", "*.log\n")
+            .build()
+            .unwrap();
+        let repository_path = temp_dir.path().join("repository");
+        run_git(&["init", "-q", repository_path.to_str().unwrap()]);
+
+        let logs_path = repository_path.join("logs");
+        let ignored_paths: Vec<PathBuf> = (0..50_000)
+            .map(|index| logs_path.join(format!("file_{index}.log")))
+            .collect();
+        let paths: Vec<&Path> = ignored_paths.iter().map(PathBuf::as_path).collect();
+
+        assert!(
+            !super::contains_not_ignored_path(&repository_path, &paths),
+            "every path of the batch is ignored"
+        );
+
+        let mut paths = paths;
+        let kept_path = logs_path.join("keep.txt");
+        paths.push(&kept_path);
+
+        assert!(
+            super::contains_not_ignored_path(&repository_path, &paths),
+            "one path of the batch is not ignored"
         );
     }
 
@@ -358,6 +520,29 @@ mod tests {
             super::find_ignored_files(Path::new("/this/path/does/not/exist"))
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_find_ignored_files_strips_the_trailing_separator_of_a_collapsed_directory() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file("repository/.gitignore", "big_dir\n")
+            .add_empty_file("repository/big_dir/a")
+            .build()
+            .unwrap();
+        let repository_path = temp_dir.path().join("repository");
+        crate::commands::tests::init_git_repository(&repository_path);
+
+        let ignored_files = super::find_ignored_files(&repository_path).unwrap();
+
+        assert_eq!(ignored_files, vec![repository_path.join("big_dir")]);
+        assert!(
+            !ignored_files[0].as_os_str().as_bytes().ends_with(b"/"),
+            "git ls-files --directory emits a collapsed directory with a trailing separator: it \
+             must be stripped so the cache holds a single spelling of each path, otherwise every \
+             byte-level lookup has to probe both"
         );
     }
 
