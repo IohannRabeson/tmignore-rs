@@ -403,7 +403,11 @@ impl Drop for Monitor {
             .send(TimeMachineControl::Shutdown);
         while let Some(handle) = self.thread_handles.pop() {
             while !handle.is_finished() {
-                let _ = self.event_receiver_final.recv_timeout(DRAIN_POLL_INTERVAL);
+                if let Err(crossbeam_channel::RecvTimeoutError::Disconnected) =
+                    self.event_receiver_final.recv_timeout(DRAIN_POLL_INTERVAL)
+                {
+                    break;
+                }
             }
             if let Err(error) = super::join_thread(handle) {
                 error!("Failed to join thread: {error}");
@@ -472,11 +476,59 @@ mod monitor_details {
         Shutdown,
     }
 
+    #[derive(Default)]
+    struct PendingEvents {
+        events: BTreeSet<super::Event>,
+        paths_to_scan: BTreeSet<PathBuf>,
+    }
+
+    impl PendingEvents {
+        fn insert(&mut self, event: super::Event) {
+            match event {
+                super::Event::ScanPaths(paths) => self.extend_paths(paths),
+                event => {
+                    self.events.insert(event);
+                }
+            }
+        }
+
+        fn extend_paths(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
+            self.paths_to_scan.extend(paths);
+        }
+
+        fn take_next(&mut self) -> Option<super::Event> {
+            if let Some(event) = self.events.pop_first() {
+                return Some(event);
+            }
+
+            if self.paths_to_scan.is_empty() {
+                return None;
+            }
+
+            Some(super::Event::ScanPaths(std::mem::take(
+                &mut self.paths_to_scan,
+            )))
+        }
+
+        fn merge_into(&mut self, event: &mut super::Event) {
+            if let super::Event::ScanPaths(paths) = event {
+                paths.append(&mut self.paths_to_scan);
+            }
+        }
+
+        fn send_all(&mut self, sender: &Sender<super::Event>) {
+            while let Some(event) = self.take_next() {
+                let _ = sender.send(event);
+            }
+        }
+    }
+
     struct MonitorState {
         watcher: notify::RecommendedWatcher,
         watched_paths: BTreeSet<PathBuf>,
         configuration_file_path: Option<PathBuf>,
         global_gitignore: Option<PathBuf>,
+        pending_events: PendingEvents,
     }
 
     impl MonitorState {
@@ -519,10 +571,53 @@ mod monitor_details {
             ControlFlow::Continue(())
         }
 
+        fn is_configuration_event(&self, event: &notify::Event) -> bool {
+            [&self.configuration_file_path, &self.global_gitignore]
+                .into_iter()
+                .flatten()
+                .any(|path| event.paths.contains(path))
+        }
+
+        fn collect_event(&mut self, event: notify::Event) {
+            if self.is_configuration_event(&event) {
+                self.pending_events
+                    .insert(super::Event::ReloadConfiguration);
+            }
+
+            if accept_event(&event) {
+                self.pending_events.extend_paths(event.paths);
+            }
+        }
+
+        fn collect_pending_events(
+            &mut self,
+            fs_event_receiver: &Receiver<notify::Result<notify::Event>>,
+        ) {
+            while let Ok(event) = fs_event_receiver.try_recv() {
+                if let Ok(event) = event {
+                    self.collect_event(event);
+                }
+            }
+        }
+
+        fn send_pending_events(
+            &mut self,
+            event_sender: &Sender<super::Event>,
+            control_receiver: &Receiver<MonitorControl>,
+            fs_event_receiver: &Receiver<notify::Result<notify::Event>>,
+        ) -> ControlFlow<()> {
+            while let Some(event) = self.pending_events.take_next() {
+                self.send_event(event_sender, control_receiver, fs_event_receiver, event)?;
+            }
+
+            ControlFlow::Continue(())
+        }
+
         fn send_event(
             &mut self,
             event_sender: &Sender<super::Event>,
             control_receiver: &Receiver<MonitorControl>,
+            fs_event_receiver: &Receiver<notify::Result<notify::Event>>,
             mut event: super::Event,
         ) -> ControlFlow<()> {
             const SEND_TIMEOUT: Duration = Duration::from_millis(50);
@@ -537,6 +632,8 @@ mod monitor_details {
                         while let Ok(control) = control_receiver.try_recv() {
                             self.handle_control(control)?;
                         }
+                        self.collect_pending_events(fs_event_receiver);
+                        self.pending_events.merge_into(&mut event);
                     }
                 }
             }
@@ -559,6 +656,7 @@ mod monitor_details {
                     watched_paths: BTreeSet::new(),
                     configuration_file_path: None,
                     global_gitignore: None,
+                    pending_events: PendingEvents::default(),
                 };
 
                 debug!("Monitor starts");
@@ -567,22 +665,7 @@ mod monitor_details {
                         recv(fs_event_receiver) -> event => {
                             if let Ok(Ok(event)) = event
                             {
-                                if (state.configuration_file_path.as_ref().is_some_and(|configuration_file_path|{
-                                    event.paths.contains(configuration_file_path)
-                                })
-                                    || state.global_gitignore
-                                        .as_ref()
-                                        .is_some_and(|global_gitignore| event.paths.contains(global_gitignore)))
-                                    && state.send_event(&event_sender, &control_receiver, crate::commands::monitor::Event::ReloadConfiguration).is_break()
-                                {
-                                    break;
-                                }
-
-                                if accept_event(&event)
-                                    && state.send_event(&event_sender, &control_receiver, crate::commands::monitor::Event::ScanPaths(event.paths.into_iter().collect())).is_break()
-                                {
-                                    break;
-                                }
+                                state.collect_event(event);
                             }
                         }
                         recv(control_receiver) -> control => {
@@ -592,6 +675,13 @@ mod monitor_details {
                                 break;
                             }
                         }
+                    }
+
+                    if state
+                        .send_pending_events(&event_sender, &control_receiver, &fs_event_receiver)
+                        .is_break()
+                    {
+                        break;
                     }
                 }
                 debug!("Monitor shutdowns");
@@ -627,32 +717,12 @@ mod monitor_details {
         Sender<DebouncerControl>,
         Receiver<super::Event>,
     )> {
-        let (mut output_event_sender, output_event_receiver) =
+        let (output_event_sender, output_event_receiver) =
             crossbeam_channel::bounded(EVENT_QUEUE_SIZE);
         let (debouncer_control_sender, debouncer_control_receiver) = crossbeam_channel::bounded(1);
         let thread_handle = std::thread::Builder::new()
             .name("Debouncer Thread".to_string())
             .spawn(move || {
-                fn send_events(events: &mut BTreeSet<super::Event>, paths_to_scan: &mut BTreeSet<PathBuf>, sender: &mut Sender<super::Event>) {
-                    if !paths_to_scan.is_empty() {
-                        events.insert(super::Event::ScanPaths(std::mem::take(paths_to_scan)));
-                    }
-                    while let Some(event) = events.pop_first() {
-                        let _ = sender.send(event);
-                    }
-                }
-
-                fn collect_event(event: super::Event, events: &mut BTreeSet<super::Event>, paths_to_scan: &mut BTreeSet<PathBuf>) {
-                    match event {
-                        super::Event::ScanPaths(paths) => {
-                            paths_to_scan.extend(paths);
-                        }
-                        event => {
-                            events.insert(event);
-                        }
-                    }
-                }
-
                 fn process_control(control: &Result<DebouncerControl, crossbeam_channel::RecvError>, debounce_duration: &mut Duration) {
                     if let Ok(DebouncerControl::SetDebounceDuration(new_debounce_duration)) = control {
                         *debounce_duration = *new_debounce_duration;
@@ -663,8 +733,7 @@ mod monitor_details {
 
                 let mut debounce_duration = Duration::from_secs(2);
                 let mut debounce_at: Option<Instant> = None;
-                let mut events_to_send = BTreeSet::new();
-                let mut paths_to_scan = BTreeSet::new();
+                let mut pending_events = PendingEvents::default();
 
                 loop {
                     if let Some(timeout) = debounce_at.and_then(|debounce_at| debounce_at.checked_duration_since(Instant::now())) {
@@ -672,22 +741,22 @@ mod monitor_details {
                             recv(input_events) -> event => {
                                 match event {
                                     Ok(super::Event::Shutdown) => {
-                                        send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
+                                        pending_events.send_all(&output_event_sender);
                                         let _ = output_event_sender.send(super::Event::Shutdown);
                                         break;
                                     }
                                     Ok(event) => {
-                                        collect_event(event, &mut events_to_send, &mut paths_to_scan);
+                                        pending_events.insert(event);
                                     }
                                     Err(_) => {
-                                        send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
+                                        pending_events.send_all(&output_event_sender);
                                         break;
                                     }
                                 }
                             }
                             recv(crossbeam_channel::after(timeout)) -> _ => {
                                 debounce_at = None;
-                                send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
+                                pending_events.send_all(&output_event_sender);
                             }
                             recv(debouncer_control_receiver) -> control => {
                                 process_control(&control, &mut debounce_duration);
@@ -696,13 +765,13 @@ mod monitor_details {
                     } else {
                         if debounce_at.is_some() {
                             debounce_at = None;
-                            send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
+                            pending_events.send_all(&output_event_sender);
                         }
                         select! {
                             recv(input_events) -> event => {
                                 match event {
                                     Ok(super::Event::Shutdown) => {
-                                        send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
+                                        pending_events.send_all(&output_event_sender);
                                         let _ = output_event_sender.send(super::Event::Shutdown);
                                         break;
                                     }
@@ -710,10 +779,10 @@ mod monitor_details {
                                         // If debounce_duration is too big, it will debounce immediatly.
                                         // This should never happens in practise because we check this value is not too big when validating the config.
                                         debounce_at = Some(Instant::now().checked_add(debounce_duration).unwrap_or(Instant::now()));
-                                        collect_event(event, &mut events_to_send, &mut paths_to_scan);
+                                        pending_events.insert(event);
                                     }
                                     Err(_) => {
-                                        send_events(&mut events_to_send, &mut paths_to_scan, &mut output_event_sender);
+                                        pending_events.send_all(&output_event_sender);
                                         break;
                                     },
                                 }
@@ -894,6 +963,56 @@ mod monitor_details {
             drop(event_receiver);
             let _ = control_sender.send(MonitorControl::Shutdown);
             thread_handle.join().unwrap();
+        }
+
+        #[test]
+        fn test_spawn_monitor_thread_merges_the_events_it_cannot_send_yet() {
+            const FILE_COUNT: usize = super::EVENT_QUEUE_SIZE * 4;
+
+            let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+            let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+            let (event_sender, event_receiver) = crossbeam_channel::bounded(1);
+            let (thread_handle, control_sender) =
+                super::spawn_monitor_thread(event_sender).unwrap();
+
+            set_watched_paths(
+                &control_sender,
+                BTreeSet::from([temp_dir_path.clone()]),
+                Duration::from_secs(10),
+            )
+            .unwrap();
+
+            let expected_paths: BTreeSet<PathBuf> = (0..FILE_COUNT)
+                .map(|index| temp_dir_path.join(format!("filler{index}")))
+                .collect();
+            for path in &expected_paths {
+                std::fs::write(path, "").unwrap();
+            }
+            std::thread::sleep(Duration::from_secs(2));
+
+            let mut event_count = 0;
+            let mut received_paths = BTreeSet::new();
+            while let Ok(event) = event_receiver.recv_timeout(Duration::from_secs(2)) {
+                event_count += 1;
+                if let Event::ScanPaths(paths) = event {
+                    received_paths.extend(paths);
+                }
+            }
+
+            let _ = control_sender.send(MonitorControl::Shutdown);
+            thread_handle.join().unwrap();
+
+            assert!(
+                expected_paths.is_subset(&received_paths),
+                "merging the pending events lost some of the changed paths"
+            );
+            assert!(
+                event_count <= 4,
+                "the monitor thread queued one event per watcher notification ({event_count} \
+                 events for {FILE_COUNT} changed paths) instead of merging the paths it could \
+                 not send yet, so the backlog grows without bound and is replayed one event at \
+                 a time"
+            );
         }
 
         #[test]
