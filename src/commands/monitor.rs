@@ -516,10 +516,28 @@ mod monitor_details {
             }
         }
 
-        fn send_all(&mut self, sender: &Sender<super::Event>) {
-            while let Some(event) = self.take_next() {
-                let _ = sender.send(event);
+        fn send_all<C>(
+            &mut self,
+            sender: &Sender<super::Event>,
+            control_receiver: &Receiver<C>,
+        ) -> Vec<C> {
+            const SEND_TIMEOUT: Duration = Duration::from_millis(50);
+
+            let mut controls = Vec::new();
+
+            while let Some(mut event) = self.take_next() {
+                loop {
+                    match sender.send_timeout(event, SEND_TIMEOUT) {
+                        Ok(()) | Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => break,
+                        Err(crossbeam_channel::SendTimeoutError::Timeout(not_sent)) => {
+                            event = not_sent;
+                            controls.extend(control_receiver.try_iter());
+                        }
+                    }
+                }
             }
+
+            controls
         }
     }
 
@@ -729,6 +747,12 @@ mod monitor_details {
                     }
                 }
 
+                fn send_events(pending_events: &mut PendingEvents, sender: &Sender<super::Event>, control_receiver: &Receiver<DebouncerControl>, debounce_duration: &mut Duration) {
+                    for control in pending_events.send_all(sender, control_receiver) {
+                        process_control(&Ok(control), debounce_duration);
+                    }
+                }
+
                 debug!("Debouncer starts");
 
                 let mut debounce_duration = Duration::from_secs(2);
@@ -741,7 +765,7 @@ mod monitor_details {
                             recv(input_events) -> event => {
                                 match event {
                                     Ok(super::Event::Shutdown) => {
-                                        pending_events.send_all(&output_event_sender);
+                                        send_events(&mut pending_events, &output_event_sender, &debouncer_control_receiver, &mut debounce_duration);
                                         let _ = output_event_sender.send(super::Event::Shutdown);
                                         break;
                                     }
@@ -749,14 +773,14 @@ mod monitor_details {
                                         pending_events.insert(event);
                                     }
                                     Err(_) => {
-                                        pending_events.send_all(&output_event_sender);
+                                        send_events(&mut pending_events, &output_event_sender, &debouncer_control_receiver, &mut debounce_duration);
                                         break;
                                     }
                                 }
                             }
                             recv(crossbeam_channel::after(timeout)) -> _ => {
                                 debounce_at = None;
-                                pending_events.send_all(&output_event_sender);
+                                send_events(&mut pending_events, &output_event_sender, &debouncer_control_receiver, &mut debounce_duration);
                             }
                             recv(debouncer_control_receiver) -> control => {
                                 process_control(&control, &mut debounce_duration);
@@ -765,13 +789,13 @@ mod monitor_details {
                     } else {
                         if debounce_at.is_some() {
                             debounce_at = None;
-                            pending_events.send_all(&output_event_sender);
+                            send_events(&mut pending_events, &output_event_sender, &debouncer_control_receiver, &mut debounce_duration);
                         }
                         select! {
                             recv(input_events) -> event => {
                                 match event {
                                     Ok(super::Event::Shutdown) => {
-                                        pending_events.send_all(&output_event_sender);
+                                        send_events(&mut pending_events, &output_event_sender, &debouncer_control_receiver, &mut debounce_duration);
                                         let _ = output_event_sender.send(super::Event::Shutdown);
                                         break;
                                     }
@@ -782,7 +806,7 @@ mod monitor_details {
                                         pending_events.insert(event);
                                     }
                                     Err(_) => {
-                                        pending_events.send_all(&output_event_sender);
+                                        send_events(&mut pending_events, &output_event_sender, &debouncer_control_receiver, &mut debounce_duration);
                                         break;
                                     },
                                 }
@@ -1069,6 +1093,64 @@ mod monitor_details {
                 .unwrap();
             input_sender.send(Event::Shutdown).unwrap();
             thread_handle.join().unwrap();
+        }
+
+        #[test]
+        fn test_spawn_debouncer_thread_handles_a_control_while_the_output_queue_is_full() {
+            let (input_sender, input_receiver) =
+                crossbeam_channel::bounded(super::EVENT_QUEUE_SIZE);
+            let (thread_handle, control_sender, output_receiver) =
+                super::spawn_debouncer_thread(input_receiver).unwrap();
+
+            control_sender
+                .send(DebouncerControl::SetDebounceDuration(
+                    Duration::from_millis(1),
+                ))
+                .unwrap();
+
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut index = 0;
+            while !output_receiver.is_full() && Instant::now() < deadline {
+                input_sender
+                    .send(Event::ScanPaths(BTreeSet::from([PathBuf::from(format!(
+                        "/filler{index}"
+                    ))])))
+                    .unwrap();
+                index += 1;
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert!(
+                output_receiver.is_full(),
+                "the debouncer never filled the output queue, so it never blocked sending"
+            );
+
+            input_sender.send(Event::ReloadConfiguration).unwrap();
+            input_sender
+                .send(Event::ScanPaths(BTreeSet::from([PathBuf::from(
+                    "/blocked",
+                )])))
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+
+            let first = control_sender.send_timeout(
+                DebouncerControl::SetDebounceDuration(Duration::from_millis(2)),
+                Duration::from_secs(5),
+            );
+            let second = control_sender.send_timeout(
+                DebouncerControl::SetDebounceDuration(Duration::from_millis(3)),
+                Duration::from_secs(5),
+            );
+
+            drop(output_receiver);
+            let _ = input_sender.send(Event::Shutdown);
+            thread_handle.join().unwrap();
+
+            assert!(first.is_ok(), "the first control was refused: {first:?}");
+            assert!(
+                second.is_ok(),
+                "the debouncer never drained its control channel while blocked sending into the \
+                 full output queue, so a caller setting the debounce duration deadlocks with it"
+            );
         }
 
         #[test]
