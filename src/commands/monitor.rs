@@ -15,10 +15,11 @@ use crate::{
     cache::Cache,
     commands::{
         TimeMachine,
-        monitor::monitor_details::{DebouncerControl, MonitorControl, TimeMachineControl},
+        monitor::monitor_details::{
+            DebouncerControl, MonitorControl, PendingEvents, TimeMachineControl,
+        },
     },
     config::Config,
-    diff::Diff,
 };
 
 const EVENT_QUEUE_SIZE: usize = 128;
@@ -82,13 +83,11 @@ fn handle_event(
                     context.whitelist,
                     &mut exclusions,
                 )?;
-                exclusions.sort_unstable();
-                exclusions.dedup();
+                super::sort_and_dedup(&mut exclusions);
 
-                let mut cached_paths = context.cache.paths_created_by(repository_to_scan)?;
-                cached_paths.sort_unstable();
-
-                let diff = Diff::from_sorted(&exclusions, &cached_paths);
+                let diff = context
+                    .cache
+                    .find_diff_created_by(repository_to_scan, &exclusions)?;
 
                 if diff.added.is_empty() && diff.removed.is_empty() {
                     debug!(
@@ -232,8 +231,7 @@ pub fn execute(
         details,
         is_timemachine_running: false,
     };
-    let mut pending_events = BTreeSet::new();
-    let mut pending_scan_paths = BTreeSet::new();
+    let mut pending_events = PendingEvents::default();
 
     'outer: while let Some(event) = context.monitor.get_event() {
         if !context.is_timemachine_running
@@ -248,10 +246,7 @@ pub fn execute(
         if matches!(event, Event::TimeMachineBackupFinished) {
             info!("Time Machine backup finished");
             context.is_timemachine_running = false;
-            if !pending_scan_paths.is_empty() {
-                pending_events.insert(Event::ScanPaths(std::mem::take(&mut pending_scan_paths)));
-            }
-            for event in std::mem::take(&mut pending_events) {
+            while let Some(event) = pending_events.take_next() {
                 if handle_event(&mut context, event)?.is_break() {
                     break 'outer;
                 }
@@ -261,14 +256,7 @@ pub fn execute(
 
         if context.is_timemachine_running && event.can_be_delayed() {
             debug!("Time Machine is backing up, delaying event");
-            match event {
-                Event::ScanPaths(paths) => {
-                    pending_scan_paths.extend(paths);
-                }
-                event => {
-                    pending_events.insert(event);
-                }
-            }
+            pending_events.insert(event);
         } else if handle_event(&mut context, event)?.is_break() {
             break;
         }
@@ -446,6 +434,26 @@ mod monitor_details {
 
     use super::EVENT_QUEUE_SIZE;
 
+    const SEND_TIMEOUT: Duration = Duration::from_millis(50);
+
+    fn send_event_while_blocked(
+        sender: &Sender<super::Event>,
+        mut event: super::Event,
+        mut while_blocked: impl FnMut(&mut super::Event) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        loop {
+            match sender.send_timeout(event, SEND_TIMEOUT) {
+                Ok(()) | Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                    return ControlFlow::Continue(());
+                }
+                Err(crossbeam_channel::SendTimeoutError::Timeout(not_sent)) => {
+                    event = not_sent;
+                    while_blocked(&mut event)?;
+                }
+            }
+        }
+    }
+
     pub fn spawn_signals_thread(
         event_sender: Sender<super::Event>,
     ) -> anyhow::Result<(JoinHandle<()>, signal_hook::iterator::Handle)> {
@@ -477,13 +485,13 @@ mod monitor_details {
     }
 
     #[derive(Default)]
-    struct PendingEvents {
+    pub struct PendingEvents {
         events: BTreeSet<super::Event>,
         paths_to_scan: BTreeSet<PathBuf>,
     }
 
     impl PendingEvents {
-        fn insert(&mut self, event: super::Event) {
+        pub fn insert(&mut self, event: super::Event) {
             match event {
                 super::Event::ScanPaths(paths) => self.extend_paths(paths),
                 event => {
@@ -496,7 +504,7 @@ mod monitor_details {
             self.paths_to_scan.extend(paths);
         }
 
-        fn take_next(&mut self) -> Option<super::Event> {
+        pub fn take_next(&mut self) -> Option<super::Event> {
             if let Some(event) = self.events.pop_first() {
                 return Some(event);
             }
@@ -521,20 +529,13 @@ mod monitor_details {
             sender: &Sender<super::Event>,
             control_receiver: &Receiver<C>,
         ) -> Vec<C> {
-            const SEND_TIMEOUT: Duration = Duration::from_millis(50);
-
             let mut controls = Vec::new();
 
-            while let Some(mut event) = self.take_next() {
-                loop {
-                    match sender.send_timeout(event, SEND_TIMEOUT) {
-                        Ok(()) | Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => break,
-                        Err(crossbeam_channel::SendTimeoutError::Timeout(not_sent)) => {
-                            event = not_sent;
-                            controls.extend(control_receiver.try_iter());
-                        }
-                    }
-                }
+            while let Some(event) = self.take_next() {
+                let _ = send_event_while_blocked(sender, event, |_| {
+                    controls.extend(control_receiver.try_iter());
+                    ControlFlow::Continue(())
+                });
             }
 
             controls
@@ -636,25 +637,16 @@ mod monitor_details {
             event_sender: &Sender<super::Event>,
             control_receiver: &Receiver<MonitorControl>,
             fs_event_receiver: &Receiver<notify::Result<notify::Event>>,
-            mut event: super::Event,
+            event: super::Event,
         ) -> ControlFlow<()> {
-            const SEND_TIMEOUT: Duration = Duration::from_millis(50);
-
-            loop {
-                match event_sender.send_timeout(event, SEND_TIMEOUT) {
-                    Ok(()) | Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                        return ControlFlow::Continue(());
-                    }
-                    Err(crossbeam_channel::SendTimeoutError::Timeout(not_sent)) => {
-                        event = not_sent;
-                        while let Ok(control) = control_receiver.try_recv() {
-                            self.handle_control(control)?;
-                        }
-                        self.collect_pending_events(fs_event_receiver);
-                        self.pending_events.merge_into(&mut event);
-                    }
+            send_event_while_blocked(event_sender, event, |event| {
+                while let Ok(control) = control_receiver.try_recv() {
+                    self.handle_control(control)?;
                 }
-            }
+                self.collect_pending_events(fs_event_receiver);
+                self.pending_events.merge_into(event);
+                ControlFlow::Continue(())
+            })
         }
     }
 
@@ -872,10 +864,11 @@ mod monitor_details {
         use rstest::rstest;
         use std::{
             collections::BTreeSet,
-            path::PathBuf,
-            time::{Duration, Instant},
+            path::{Path, PathBuf},
+            thread::JoinHandle,
+            time::Duration,
         };
-        use temp_dir_builder::TempDirectoryBuilder;
+        use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
         use crate::commands::monitor::{
             Event,
@@ -910,8 +903,15 @@ mod monitor_details {
             registered_receiver.recv_timeout(timeout)
         }
 
-        #[test]
-        fn test_spawn_monitor_thread_handles_a_control_while_the_event_channel_is_full() {
+        struct WatchedMonitorThread {
+            _temp_dir: TempDirectory,
+            temp_dir_path: PathBuf,
+            event_receiver: crossbeam_channel::Receiver<Event>,
+            thread_handle: JoinHandle<()>,
+            control_sender: crossbeam_channel::Sender<MonitorControl>,
+        }
+
+        fn spawn_monitor_thread_watching_a_temp_dir() -> WatchedMonitorThread {
             let temp_dir = TempDirectoryBuilder::default().build().unwrap();
             let temp_dir_path = temp_dir.path().canonicalize().unwrap();
             let (event_sender, event_receiver) = crossbeam_channel::bounded(1);
@@ -925,22 +925,47 @@ mod monitor_details {
             )
             .unwrap();
 
-            for index in 0..8 {
-                std::fs::write(temp_dir_path.join(format!("filler{index}")), "").unwrap();
+            WatchedMonitorThread {
+                _temp_dir: temp_dir,
+                temp_dir_path,
+                event_receiver,
+                thread_handle,
+                control_sender,
             }
+        }
 
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while !event_receiver.is_full() && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(10));
-            }
+        fn write_files(directory: &Path, prefix: &str, count: usize) -> BTreeSet<PathBuf> {
+            (0..count)
+                .map(|index| {
+                    let path = directory.join(format!("{prefix}{index}"));
+                    std::fs::write(&path, "").unwrap();
+                    path
+                })
+                .collect()
+        }
+
+        #[test]
+        fn test_spawn_monitor_thread_handles_a_control_while_the_event_channel_is_full() {
+            let WatchedMonitorThread {
+                _temp_dir,
+                temp_dir_path,
+                event_receiver,
+                thread_handle,
+                control_sender,
+            } = spawn_monitor_thread_watching_a_temp_dir();
+
+            write_files(&temp_dir_path, "filler", 8);
+
             assert!(
-                event_receiver.is_full(),
+                crate::commands::tests::poll_until(
+                    Duration::from_secs(10),
+                    Duration::from_millis(10),
+                    || event_receiver.is_full()
+                ),
                 "the watcher never filled the event channel, so the monitor thread never blocked"
             );
 
-            for index in 0..8 {
-                std::fs::write(temp_dir_path.join(format!("blocked{index}")), "").unwrap();
-            }
+            write_files(&temp_dir_path, "blocked", 8);
             std::thread::sleep(Duration::from_millis(500));
 
             let registered =
@@ -959,22 +984,15 @@ mod monitor_details {
 
         #[test]
         fn test_spawn_monitor_thread_handles_a_control_while_the_watcher_queue_is_full() {
-            let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-            let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-            let (event_sender, event_receiver) = crossbeam_channel::bounded(1);
-            let (thread_handle, control_sender) =
-                super::spawn_monitor_thread(event_sender).unwrap();
+            let WatchedMonitorThread {
+                _temp_dir,
+                temp_dir_path,
+                event_receiver,
+                thread_handle,
+                control_sender,
+            } = spawn_monitor_thread_watching_a_temp_dir();
 
-            set_watched_paths(
-                &control_sender,
-                BTreeSet::from([temp_dir_path.clone()]),
-                Duration::from_secs(10),
-            )
-            .unwrap();
-
-            for index in 0..(super::EVENT_QUEUE_SIZE * 4) {
-                std::fs::write(temp_dir_path.join(format!("filler{index}")), "").unwrap();
-            }
+            write_files(&temp_dir_path, "filler", super::EVENT_QUEUE_SIZE * 4);
             std::thread::sleep(Duration::from_secs(2));
 
             assert!(
@@ -993,25 +1011,15 @@ mod monitor_details {
         fn test_spawn_monitor_thread_merges_the_events_it_cannot_send_yet() {
             const FILE_COUNT: usize = super::EVENT_QUEUE_SIZE * 4;
 
-            let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-            let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-            let (event_sender, event_receiver) = crossbeam_channel::bounded(1);
-            let (thread_handle, control_sender) =
-                super::spawn_monitor_thread(event_sender).unwrap();
+            let WatchedMonitorThread {
+                _temp_dir,
+                temp_dir_path,
+                event_receiver,
+                thread_handle,
+                control_sender,
+            } = spawn_monitor_thread_watching_a_temp_dir();
 
-            set_watched_paths(
-                &control_sender,
-                BTreeSet::from([temp_dir_path.clone()]),
-                Duration::from_secs(10),
-            )
-            .unwrap();
-
-            let expected_paths: BTreeSet<PathBuf> = (0..FILE_COUNT)
-                .map(|index| temp_dir_path.join(format!("filler{index}")))
-                .collect();
-            for path in &expected_paths {
-                std::fs::write(path, "").unwrap();
-            }
+            let expected_paths = write_files(&temp_dir_path, "filler", FILE_COUNT);
             std::thread::sleep(Duration::from_secs(2));
 
             let mut event_count = 0;
@@ -1108,19 +1116,25 @@ mod monitor_details {
                 ))
                 .unwrap();
 
-            let deadline = Instant::now() + Duration::from_secs(30);
             let mut index = 0;
-            while !output_receiver.is_full() && Instant::now() < deadline {
-                input_sender
-                    .send(Event::ScanPaths(BTreeSet::from([PathBuf::from(format!(
-                        "/filler{index}"
-                    ))])))
-                    .unwrap();
-                index += 1;
-                std::thread::sleep(Duration::from_millis(2));
-            }
+            let filled = crate::commands::tests::poll_until(
+                Duration::from_secs(30),
+                Duration::from_millis(2),
+                || {
+                    if output_receiver.is_full() {
+                        return true;
+                    }
+                    input_sender
+                        .send(Event::ScanPaths(BTreeSet::from([PathBuf::from(format!(
+                            "/filler{index}"
+                        ))])))
+                        .unwrap();
+                    index += 1;
+                    false
+                },
+            );
             assert!(
-                output_receiver.is_full(),
+                filled,
                 "the debouncer never filled the output queue, so it never blocked sending"
             );
 
@@ -1225,24 +1239,24 @@ mod tests {
     use std::{
         collections::BTreeSet,
         path::{Path, PathBuf},
-        time::{Duration, Instant},
+        time::Duration,
     };
 
     use rstest::rstest;
     use serial_test::serial;
-    use temp_dir_builder::TempDirectoryBuilder;
+    use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
-    use crate::{cache::Cache, commands::tests::run_git, config::Config, json::save_json_file};
+    use crate::{cache::Cache, commands::tests::run_git, json::save_json_file};
 
     fn rescan(
         cache: &mut Cache,
-        mut config: Config,
-        temp_dir_path: &Path,
+        main_path: &Path,
         changed_paths: BTreeSet<PathBuf>,
     ) -> BTreeSet<PathBuf> {
+        let mut config = crate::commands::tests::create_config(main_path);
         let mut whitelist = super::super::create_whitelist(&config.whitelist_patterns).unwrap();
         let mut monitor = super::Monitor::new().unwrap();
-        let config_file_path = temp_dir_path.join("config.json");
+        let config_file_path = main_path.with_file_name("config.json");
         let mut context = super::HandleEventContext {
             config: &mut config,
             config_file_path: &config_file_path,
@@ -1256,7 +1270,7 @@ mod tests {
 
         let _ = super::handle_event(&mut context, super::Event::ScanPaths(changed_paths)).unwrap();
 
-        let cached_paths = cache.paths().unwrap().into_iter().collect();
+        let cached_paths = cached_paths(cache);
 
         crate::commands::tests::send_sigint();
         drop(monitor);
@@ -1308,14 +1322,18 @@ mod tests {
         monitor.set_debounce_duration(Duration::from_millis(1));
         monitor.set_watched_paths(&BTreeSet::from([temp_dir_path.clone()]));
 
-        let deadline = Instant::now() + Duration::from_secs(30);
         let mut index = 0;
-        while !monitor.event_receiver_final.is_full() && Instant::now() < deadline {
-            std::fs::write(temp_dir_path.join(format!("file{index}")), "").unwrap();
-            index += 1;
-        }
+        let filled =
+            crate::commands::tests::poll_until(Duration::from_secs(30), Duration::ZERO, || {
+                if monitor.event_receiver_final.is_full() {
+                    return true;
+                }
+                std::fs::write(temp_dir_path.join(format!("file{index}")), "").unwrap();
+                index += 1;
+                false
+            });
         assert!(
-            monitor.event_receiver_final.is_full(),
+            filled,
             "the watcher never filled the event queue, so the debouncer never blocked"
         );
 
@@ -1408,21 +1426,39 @@ mod tests {
         ]);
     }
 
+    fn create_main_repository(gitignore: &str) -> (TempDirectory, PathBuf) {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let main_path = temp_dir.path().canonicalize().unwrap().join("main");
+
+        crate::commands::tests::init_git_repository(&main_path);
+        std::fs::write(main_path.join(".gitignore"), gitignore).unwrap();
+        commit_all(&main_path, "init main repository");
+
+        (temp_dir, main_path)
+    }
+
+    fn cached_paths(cache: &Cache) -> BTreeSet<PathBuf> {
+        cache.paths().unwrap().into_iter().collect()
+    }
+
+    fn full_scan(cache: &mut Cache, main_path: &Path) -> BTreeSet<PathBuf> {
+        let config = crate::commands::tests::create_config(main_path);
+
+        super::super::run::execute(&config, cache, false, false).unwrap();
+
+        cached_paths(cache)
+    }
+
     #[test]
     #[serial]
     fn test_rescan_main_repository_does_not_remove_submodule_exclusions() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let sub_source_path = temp_dir_path.join("sub_source");
-        let main_path = temp_dir_path.join("main");
+        let (_temp_dir, main_path) = create_main_repository("ignored_in_main\n");
+        let sub_source_path = main_path.with_file_name("sub_source");
 
         crate::commands::tests::init_git_repository(&sub_source_path);
         std::fs::write(sub_source_path.join(".gitignore"), "ignored_in_sub\n").unwrap();
         commit_all(&sub_source_path, "init submodule source");
 
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n").unwrap();
-        commit_all(&main_path, "init main repository");
         run_git(&[
             "-c",
             "protocol.file.allow=always",
@@ -1440,14 +1476,11 @@ mod tests {
         std::fs::write(main_path.join("ignored_in_main"), "").unwrap();
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+        let cached_paths = full_scan(&mut cache, &main_path);
 
         let submodule_ignored_path = main_path.join("submodule").join("ignored_in_sub");
         let main_ignored_path = main_path.join("ignored_in_main");
 
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
         assert!(
             cached_paths.contains(&submodule_ignored_path),
             "the initial scan should have excluded the submodule's ignored file"
@@ -1458,8 +1491,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -1472,13 +1504,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_main_repository_does_not_remove_nested_worktree_exclusions() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let main_path = temp_dir_path.join("main");
+        let (_temp_dir, main_path) = create_main_repository("ignored_in_main\n");
 
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n").unwrap();
-        commit_all(&main_path, "init main repository");
         run_git(&["-C", main_path.to_str().unwrap(), "branch", "feature"]);
         run_git(&[
             "-C",
@@ -1498,14 +1525,11 @@ mod tests {
         std::fs::write(main_path.join("ignored_in_main"), "").unwrap();
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+        let cached_paths = full_scan(&mut cache, &main_path);
 
         let worktree_ignored_path = worktree_path.join("ignored_in_worktree");
         let main_ignored_path = main_path.join("ignored_in_main");
 
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
         assert!(
             cached_paths.contains(&worktree_ignored_path),
             "the initial scan should have excluded the worktree's ignored file"
@@ -1516,8 +1540,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -1530,27 +1553,18 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_adds_and_removes_exclusions_in_the_same_scan() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let main_path = temp_dir_path.join("main");
-
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "a\nb\n").unwrap();
-        commit_all(&main_path, "init main repository");
+        let (_temp_dir, main_path) = create_main_repository("a\nb\n");
 
         std::fs::write(main_path.join("a"), "").unwrap();
         std::fs::write(main_path.join("b"), "").unwrap();
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+        let cached_paths = full_scan(&mut cache, &main_path);
 
         let a_path = main_path.join("a");
         let b_path = main_path.join("b");
         let c_path = main_path.join("c");
 
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
         assert!(cached_paths.contains(&a_path));
         assert!(cached_paths.contains(&b_path));
 
@@ -1559,8 +1573,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -1582,18 +1595,13 @@ mod tests {
     #[serial]
     fn test_rescan_main_repository_does_not_remove_submodule_exclusions_when_submodule_directory_is_gitignored()
      {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let sub_source_path = temp_dir_path.join("sub_source");
-        let main_path = temp_dir_path.join("main");
+        let (_temp_dir, main_path) = create_main_repository("ignored_in_main\n");
+        let sub_source_path = main_path.with_file_name("sub_source");
 
         crate::commands::tests::init_git_repository(&sub_source_path);
         std::fs::write(sub_source_path.join(".gitignore"), "ignored_in_sub\n").unwrap();
         commit_all(&sub_source_path, "init submodule source");
 
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n").unwrap();
-        commit_all(&main_path, "init main repository");
         run_git(&[
             "-c",
             "protocol.file.allow=always",
@@ -1611,14 +1619,11 @@ mod tests {
         std::fs::write(main_path.join("ignored_in_main"), "").unwrap();
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+        let cached_paths = full_scan(&mut cache, &main_path);
 
         let submodule_ignored_path = main_path.join("submodule").join("ignored_in_sub");
         let main_ignored_path = main_path.join("ignored_in_main");
 
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
         assert!(
             cached_paths.contains(&submodule_ignored_path),
             "the initial scan should have excluded the submodule's ignored file"
@@ -1633,8 +1638,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -1648,23 +1652,16 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_excludes_a_new_ignored_file_in_a_not_collapsed_directory() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let main_path = temp_dir_path.join("main");
-
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "*.log\n").unwrap();
+        let (_temp_dir, main_path) = create_main_repository("*.log\n");
         let source_path = main_path.join("src");
         std::fs::create_dir_all(&source_path).unwrap();
         std::fs::write(source_path.join("main.rs"), "").unwrap();
-        commit_all(&main_path, "init main repository");
+        commit_all(&main_path, "add tracked file");
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+        let cached_paths = full_scan(&mut cache, &main_path);
         assert!(
-            cache.paths().unwrap().is_empty(),
+            cached_paths.is_empty(),
             "the repository has nothing ignored yet"
         );
 
@@ -1673,8 +1670,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([new_log_path.clone()]),
         );
 
@@ -1689,22 +1685,11 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_excludes_a_new_wholly_ignored_directory() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let main_path = temp_dir_path.join("main");
-
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "node_modules/\n").unwrap();
-        commit_all(&main_path, "init main repository");
+        let (_temp_dir, main_path) = create_main_repository("node_modules/\n");
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
-        assert!(
-            cache.paths().unwrap().is_empty(),
-            "'node_modules' does not exist yet"
-        );
+        let cached_paths = full_scan(&mut cache, &main_path);
+        assert!(cached_paths.is_empty(), "'node_modules' does not exist yet");
 
         let node_modules_path = main_path.join("node_modules");
         std::fs::create_dir_all(&node_modules_path).unwrap();
@@ -1713,8 +1698,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([
                 node_modules_path.clone(),
                 node_modules_path.join("a.js"),
@@ -1733,13 +1717,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_removes_a_directory_exclusion_when_a_non_ignored_file_appears_in_it() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let main_path = temp_dir_path.join("main");
-
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "*.log\n").unwrap();
-        commit_all(&main_path, "init main repository");
+        let (_temp_dir, main_path) = create_main_repository("*.log\n");
 
         let big_dir_path = main_path.join("big_dir");
         std::fs::create_dir_all(&big_dir_path).unwrap();
@@ -1747,11 +1725,7 @@ mod tests {
         std::fs::write(big_dir_path.join("b.log"), "").unwrap();
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
-
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        let cached_paths = full_scan(&mut cache, &main_path);
         assert!(
             cached_paths.contains(&big_dir_path),
             "the initial scan should have excluded the wholly ignored directory"
@@ -1760,12 +1734,7 @@ mod tests {
         let kept_path = big_dir_path.join("keep.txt");
         std::fs::write(&kept_path, "").unwrap();
 
-        let cached_paths = rescan(
-            &mut cache,
-            config,
-            &temp_dir_path,
-            BTreeSet::from([kept_path]),
-        );
+        let cached_paths = rescan(&mut cache, &main_path, BTreeSet::from([kept_path]));
 
         assert_eq!(
             cached_paths,
@@ -1779,13 +1748,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_main_repository_removes_the_exclusion_it_created_for_a_nested_repository() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let main_path = temp_dir_path.join("main");
-
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n").unwrap();
-        commit_all(&main_path, "init main repository");
+        let (_temp_dir, main_path) = create_main_repository("ignored_in_main\n");
 
         let nested_path = main_path.join("nested");
         crate::commands::tests::init_git_repository(&nested_path);
@@ -1799,11 +1762,7 @@ mod tests {
         let nested_ignored_path = nested_path.join("ignored_in_nested");
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
-
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        let cached_paths = full_scan(&mut cache, &main_path);
         assert_eq!(
             cached_paths,
             BTreeSet::from([main_ignored_path.clone(), nested_ignored_path.clone()]),
@@ -1814,8 +1773,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -1834,8 +1792,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            crate::commands::tests::create_config(&main_path),
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -1851,23 +1808,13 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_removes_an_exclusion_after_a_repository_appears_under_it() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let main_path = temp_dir_path.join("main");
-
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "vendor/thing\n").unwrap();
+        let (_temp_dir, main_path) = create_main_repository("vendor/thing\n");
         let thing_path = main_path.join("vendor").join("thing");
         std::fs::create_dir_all(&thing_path).unwrap();
         std::fs::write(thing_path.join("file"), "").unwrap();
-        commit_all(&main_path, "init main repository");
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
-
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        let cached_paths = full_scan(&mut cache, &main_path);
         assert!(
             cached_paths.contains(&thing_path),
             "the initial scan should have excluded the ignored directory"
@@ -1878,8 +1825,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -1894,13 +1840,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_a_cache_written_before_the_repository_was_recorded_is_usable_after_a_full_scan() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let main_path = temp_dir_path.join("main");
-
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "a\nbig_dir\n").unwrap();
-        commit_all(&main_path, "init main repository");
+        let (temp_dir, main_path) = create_main_repository("a\nbig_dir\n");
 
         let a_path = main_path.join("a");
         let big_dir_path = main_path.join("big_dir");
@@ -1908,7 +1848,7 @@ mod tests {
         std::fs::create_dir_all(&big_dir_path).unwrap();
         std::fs::write(big_dir_path.join("b"), "").unwrap();
 
-        let cache_file_path = temp_dir_path.join("cache.db");
+        let cache_file_path = temp_dir.path().join("cache.db");
         crate::cache::tests::write_version_1_cache(
             &cache_file_path,
             &[
@@ -1917,14 +1857,13 @@ mod tests {
             ],
         );
         let mut cache = Cache::open(&cache_file_path).unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
 
         assert!(
             cache.paths_created_by(&main_path).unwrap().is_empty(),
             "the migrated exclusions have no owner yet"
         );
 
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
+        full_scan(&mut cache, &main_path);
 
         let mut owned = cache.paths_created_by(&main_path).unwrap();
         owned.sort_unstable();
@@ -1938,8 +1877,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -1954,13 +1892,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_large_ignored_tree_preserves_exclusions() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let main_path = temp_dir_path.join("main");
-
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "*.ignored\n").unwrap();
-        commit_all(&main_path, "init main repository");
+        let (_temp_dir, main_path) = create_main_repository("*.ignored\n");
 
         let mut ignored_paths = BTreeSet::new();
         for i in 0..1000 {
@@ -1970,11 +1902,7 @@ mod tests {
         }
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
-
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        let cached_paths = full_scan(&mut cache, &main_path);
         for path in &ignored_paths {
             assert!(
                 cached_paths.contains(path),
@@ -1987,8 +1915,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -2005,13 +1932,7 @@ mod tests {
     #[serial]
     #[ignore = "large-scale scenario kept for stress-testing and manual profiling; run explicitly with `cargo test -- --ignored`"]
     fn test_rescan_large_ignored_tree_preserves_exclusions_at_scale() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let main_path = temp_dir_path.join("main");
-
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "*.ignored\n").unwrap();
-        commit_all(&main_path, "init main repository");
+        let (_temp_dir, main_path) = create_main_repository("*.ignored\n");
 
         let deep_path = main_path.join("a").join("b").join("c");
         std::fs::create_dir_all(&deep_path).unwrap();
@@ -2028,11 +1949,7 @@ mod tests {
         }
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
-
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        let cached_paths = full_scan(&mut cache, &main_path);
         for path in &ignored_paths {
             assert!(
                 cached_paths.contains(path),
@@ -2045,8 +1962,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -2063,13 +1979,7 @@ mod tests {
     #[serial]
     #[ignore = "kept for stress-testing and manual profiling; run explicitly with `cargo test -- --ignored`"]
     fn test_rescan_huge_ignored_tree_with_no_nested_repositories() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let main_path = temp_dir_path.join("main");
-
-        crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), "big_dir\n").unwrap();
-        commit_all(&main_path, "init main repository");
+        let (_temp_dir, main_path) = create_main_repository("big_dir\n");
 
         let big_dir = main_path.join("big_dir");
         std::fs::create_dir_all(&big_dir).unwrap();
@@ -2079,11 +1989,7 @@ mod tests {
         }
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(&main_path);
-
-        super::super::run::execute(&config, &mut cache, false, false).unwrap();
-
-        let cached_paths: BTreeSet<_> = cache.paths().unwrap().into_iter().collect();
+        let cached_paths = full_scan(&mut cache, &main_path);
         assert_eq!(
             cached_paths,
             BTreeSet::from([big_dir.clone()]),
@@ -2094,8 +2000,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            config,
-            &temp_dir_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 

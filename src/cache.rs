@@ -206,19 +206,25 @@ impl Cache {
 
     /// `exclusions` must already be sorted by path: this uses `binary_search` against it.
     pub fn find_diff(&self, exclusions: &[Exclusion]) -> anyhow::Result<Diff> {
-        let connection = self.connection.borrow();
-        let mut select_stmt = connection.prepare("SELECT DISTINCT path FROM paths")?;
-        let mut cached_paths: Vec<PathBuf> = select_stmt
-            .query_map(params![], |row| {
-                let bytes: Vec<u8> = row.get(0)?;
+        Ok(Self::diff_against(exclusions, self.paths()?))
+    }
 
-                Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
-            })?
-            .filter_map(Result::ok)
-            .collect();
+    /// `exclusions` must already be sorted by path: this uses `binary_search` against it.
+    pub fn find_diff_created_by(
+        &self,
+        repository: &Path,
+        exclusions: &[Exclusion],
+    ) -> anyhow::Result<Diff> {
+        Ok(Self::diff_against(
+            exclusions,
+            self.paths_created_by(repository)?,
+        ))
+    }
+
+    fn diff_against(exclusions: &[Exclusion], mut cached_paths: Vec<PathBuf>) -> Diff {
         cached_paths.sort_unstable();
 
-        Ok(Diff::from_sorted(exclusions, &cached_paths))
+        Diff::from_sorted(exclusions, &cached_paths)
     }
 
     pub fn contains_ancestor_of(&self, path: impl AsRef<Path>) -> anyhow::Result<bool> {
@@ -408,6 +414,29 @@ pub(crate) mod tests {
         assert!(diff.added.contains(&PathBuf::from("hey")));
         assert_eq!(1, diff.removed.len());
         assert!(diff.removed.contains(&PathBuf::from("hello")));
+    }
+
+    #[test]
+    fn test_find_diff_created_by() {
+        let mut cache = Cache::open_in_memory().unwrap();
+        let mut exclusions = owned("/repo", ["/repo/hello", "/repo/world"]).to_vec();
+        exclusions.extend(owned("/other", ["/other/kept"]));
+        cache.reset(exclusions).unwrap();
+        let mut exclusions = owned("/repo", ["/repo/world", "/repo/hey"]);
+        exclusions.sort_unstable();
+        let diff = cache
+            .find_diff_created_by(Path::new("/repo"), &exclusions)
+            .unwrap();
+        assert_eq!(
+            BTreeSet::from([PathBuf::from("/repo/hey")]),
+            diff.added,
+            "the exclusion '/repo' does not have yet must be added"
+        );
+        assert_eq!(
+            BTreeSet::from([PathBuf::from("/repo/hello")]),
+            diff.removed,
+            "only the exclusions '/repo' created may be removed, not those of '/other'"
+        );
     }
 
     #[test]

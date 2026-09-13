@@ -176,6 +176,11 @@ fn find_paths_to_exclude_from_backup(
     Ok(())
 }
 
+fn sort_and_dedup(exclusions: &mut Vec<Exclusion>) {
+    exclusions.sort_unstable();
+    exclusions.dedup();
+}
+
 fn join_thread<T>(thread_handle: std::thread::JoinHandle<T>) -> anyhow::Result<T> {
     let thread_name = thread_handle
         .thread()
@@ -295,6 +300,23 @@ pub(crate) mod tests {
             .insert(search_directory.as_ref().to_path_buf());
 
         config
+    }
+
+    pub(crate) fn poll_until(
+        timeout: Duration,
+        interval: Duration,
+        mut condition: impl FnMut() -> bool,
+    ) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+
+        while std::time::Instant::now() < deadline {
+            if condition() {
+                return true;
+            }
+            std::thread::sleep(interval);
+        }
+
+        condition()
     }
 
     pub(crate) fn send_sigint() {

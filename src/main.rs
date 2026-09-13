@@ -380,19 +380,6 @@ mod tests {
         temp_dir
     }
 
-    fn poll_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
-        let deadline = std::time::Instant::now() + timeout;
-
-        while std::time::Instant::now() < deadline {
-            if condition() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-
-        condition()
-    }
-
     fn create_monitored_repository(
         root_directory: impl AsRef<Path>,
         search_directory: &str,
@@ -502,10 +489,14 @@ mod tests {
         std::fs::write(&a_file_path, "").unwrap();
         std::fs::write(&b_file_path, "").unwrap();
         std::fs::write(&c_file_path, "").unwrap();
-        let excluded = poll_until(Duration::from_secs(10), || {
-            crate::timemachine::tests::is_excluded_from_time_machine(&a_file_path)
-                && crate::timemachine::tests::is_excluded_from_time_machine(&b_file_path)
-        });
+        let excluded = crate::commands::tests::poll_until(
+            Duration::from_secs(10),
+            Duration::from_millis(50),
+            || {
+                crate::timemachine::tests::is_excluded_from_time_machine(&a_file_path)
+                    && crate::timemachine::tests::is_excluded_from_time_machine(&b_file_path)
+            },
+        );
         crate::commands::tests::send_sigint();
         handle.join().unwrap();
 
