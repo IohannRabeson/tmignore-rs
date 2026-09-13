@@ -296,7 +296,7 @@ mod tests {
             Arc,
             atomic::{AtomicBool, Ordering},
         };
-        use std::time::{Duration, Instant};
+        use std::time::Duration;
 
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let repository_path = temp_dir.path().canonicalize().unwrap().join("repository");
@@ -311,16 +311,15 @@ mod tests {
             }
         });
 
-        let deadline = Instant::now() + Duration::from_secs(3);
         let mut errors = 0;
-        for _ in 0..3000 {
-            if Instant::now() >= deadline {
-                break;
-            }
+        let mut calls = 0;
+        crate::commands::tests::poll_until(Duration::from_secs(3), Duration::ZERO, || {
             if super::find_ignored_files(&repository_path).is_err() {
                 errors += 1;
             }
-        }
+            calls += 1;
+            calls >= 3000
+        });
 
         stop.store(true, Ordering::Relaxed);
         deleter.join().unwrap();

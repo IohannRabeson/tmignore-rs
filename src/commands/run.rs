@@ -37,8 +37,7 @@ pub fn execute(
         }
 
         super::join_thread(thread_handle)?;
-        exclusions.sort_unstable();
-        exclusions.dedup();
+        super::sort_and_dedup(&mut exclusions);
 
         info!(
             "Found {} {}",
