@@ -359,46 +359,31 @@ mod tests {
         assert!(paths.contains(&PathBuf::from("b")));
     }
 
-    fn create_repository(root_directory: impl AsRef<Path>) -> TempDirectory {
-        let root_directory = root_directory.as_ref();
-        let repository_path = root_directory.join("repository");
-        let mut config = Config::default();
-        config.search_directories.clear();
-        config.search_directories.insert(repository_path.clone());
-        let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(root_directory)
-            .add_text_file("config.json", serde_json::to_string(&config).unwrap())
-            .add_text_file("repository/.gitignore", "a\nb\n")
-            .add_empty_file("repository/a")
-            .add_empty_file("repository/b")
-            .add_empty_file("repository/c")
-            .build()
-            .unwrap();
-
-        crate::commands::tests::init_git_repository(repository_path);
-
-        temp_dir
-    }
-
-    fn create_monitored_repository(
-        root_directory: impl AsRef<Path>,
+    fn create_repository(
+        root_directory: &Path,
         search_directory: &str,
+        debounce_duration: Duration,
+        files: &[&str],
     ) -> TempDirectory {
-        let root_directory = root_directory.as_ref();
         let repository_path = root_directory.join("repository");
         let mut config = Config {
-            debounce_duration: Duration::from_millis(100),
+            debounce_duration,
             ..Default::default()
         };
         config.search_directories.clear();
         config
             .search_directories
             .insert(root_directory.join(search_directory));
-        let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(root_directory)
-            .add_directory("empty_dir")
-            .add_text_file("config.json", serde_json::to_string(&config).unwrap())
-            .add_text_file("repository/.gitignore", "a\nb\n")
+        let temp_dir = files
+            .iter()
+            .fold(
+                TempDirectoryBuilder::default()
+                    .root_folder(root_directory)
+                    .add_directory("empty_dir")
+                    .add_text_file("config.json", serde_json::to_string(&config).unwrap())
+                    .add_text_file("repository/.gitignore", "a\nb\n"),
+                TempDirectoryBuilder::add_empty_file,
+            )
             .build()
             .unwrap();
 
@@ -407,10 +392,24 @@ mod tests {
         temp_dir
     }
 
+    fn create_monitored_repository(root_directory: &Path, search_directory: &str) -> TempDirectory {
+        create_repository(
+            root_directory,
+            search_directory,
+            Duration::from_millis(100),
+            &[],
+        )
+    }
+
     #[test]
     fn test_program_run() {
         let temp_dir_path = crate::commands::tests::prepare_test_directory("test_program_run");
-        let _temp_dir = create_repository(&temp_dir_path);
+        let _temp_dir = create_repository(
+            &temp_dir_path,
+            "repository",
+            Config::default().debounce_duration,
+            &["repository/a", "repository/b", "repository/c"],
+        );
         let config_file_path = temp_dir_path.join("config.json");
         let cache_file_path = temp_dir_path.join("cache.db");
         let cli = Cli {
@@ -504,13 +503,6 @@ mod tests {
             excluded,
             "the monitor did not exclude the gitignored files it was notified about"
         );
-
-        assert!(crate::timemachine::tests::is_excluded_from_time_machine(
-            &a_file_path
-        ));
-        assert!(crate::timemachine::tests::is_excluded_from_time_machine(
-            &b_file_path
-        ));
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &c_file_path
         ));

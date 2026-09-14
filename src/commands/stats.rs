@@ -98,7 +98,7 @@ mod tests {
         let a = temp_dir.path().join("a");
         let dir = temp_dir.path().join("dir");
         cache
-            .add_paths([a, dir].into_iter().map(crate::diff::Exclusion::orphan))
+            .add_paths(crate::cache::tests::orphans([a, dir]).into_iter())
             .unwrap();
         let mut buffer = vec![];
         let stat_command = Stats::Size { humanize: false };
@@ -117,11 +117,7 @@ mod tests {
             .unwrap();
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .add_paths(
-                [temp_dir.path().join("a")]
-                    .into_iter()
-                    .map(crate::diff::Exclusion::orphan),
-            )
+            .add_paths(crate::cache::tests::orphans([temp_dir.path().join("a")]).into_iter())
             .unwrap();
         let mut buffer = vec![];
 
@@ -139,11 +135,7 @@ mod tests {
             .unwrap();
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .add_paths(
-                [temp_dir.path().join("top")]
-                    .into_iter()
-                    .map(crate::diff::Exclusion::orphan),
-            )
+            .add_paths(crate::cache::tests::orphans([temp_dir.path().join("top")]).into_iter())
             .unwrap();
         let mut buffer = vec![];
 

@@ -9,7 +9,7 @@ use std::{
     thread::JoinHandle,
 };
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use crossbeam_channel::Receiver;
 use log::warn;
 
@@ -204,15 +204,7 @@ fn run_check_ignore(repository_directory: &Path, paths: &[&Path]) -> anyhow::Res
             .count()
             < paths.len()),
         Some(1) => Ok(true),
-        _ => {
-            warn!(
-                "Failed to check the ignored paths of repository '{}': {}",
-                repository_directory.display(),
-                String::from_utf8_lossy(&output.stderr)
-            );
-
-            Ok(true)
-        }
+        _ => bail!("{}", String::from_utf8_lossy(&output.stderr).trim_end()),
     }
 }
 
@@ -268,7 +260,10 @@ mod tests {
 
     use temp_dir_builder::TempDirectoryBuilder;
 
-    use crate::git::{find_parent_repository, find_repositories};
+    use crate::{
+        commands::tests::run_git,
+        git::{find_parent_repository, find_repositories},
+    };
 
     fn find_repositories_vec(
         directories: &[impl AsRef<Path>],
@@ -331,19 +326,6 @@ mod tests {
         );
     }
 
-    fn run_git(args: &[&str]) {
-        let output = std::process::Command::new("/usr/bin/git")
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
     #[test]
     fn test_get_global_git_ignore_ignores_repository_local_config() {
         let temp_dir = TempDirectoryBuilder::default()
@@ -377,7 +359,7 @@ mod tests {
             .build()
             .unwrap();
         let repository_path = temp_dir.path().join("repository");
-        run_git(&["init", "-q", repository_path.to_str().unwrap()]);
+        crate::commands::tests::init_git_repository(&repository_path);
 
         let logs_path = repository_path.join("logs");
         let ignored_paths: Vec<PathBuf> = (0..50_000)
@@ -397,6 +379,21 @@ mod tests {
         assert!(
             super::contains_not_ignored_path(&repository_path, &paths),
             "one path of the batch is not ignored"
+        );
+    }
+
+    #[test]
+    fn test_contains_not_ignored_path_when_git_fails() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_directory("not_a_repository")
+            .build()
+            .unwrap();
+        let not_a_repository_path = temp_dir.path().join("not_a_repository");
+        let path = not_a_repository_path.join("file");
+
+        assert!(
+            super::contains_not_ignored_path(&not_a_repository_path, &[&path]),
+            "git check-ignore fails outside a repository, so the conservative answer is expected"
         );
     }
 

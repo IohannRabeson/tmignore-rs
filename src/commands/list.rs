@@ -11,15 +11,13 @@ pub fn execute(cache: &Cache, writer: &mut impl Write, separator: char) -> anyho
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use crate::cache::Cache;
 
     #[test]
     fn test_execute() {
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .reset(["a", "b", "c"].map(|path| crate::diff::Exclusion::orphan(PathBuf::from(path))))
+            .reset(crate::cache::tests::orphans(["a", "b", "c"]))
             .unwrap();
         let mut writer = Vec::new();
 
