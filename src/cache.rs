@@ -132,10 +132,20 @@ impl Cache {
     const SQL_SET_LAST_UPDATE: &str = "UPDATE metadata SET last_update=?";
 
     pub fn reset(&mut self, iter: impl IntoIterator<Item = Exclusion>) -> anyhow::Result<()> {
+        self.insert_exclusions(true, iter)
+    }
+
+    fn insert_exclusions(
+        &mut self,
+        delete_first: bool,
+        iter: impl IntoIterator<Item = Exclusion>,
+    ) -> anyhow::Result<()> {
         let mut connection = self.connection.borrow_mut();
         let mut transaction = connection.transaction()?;
         let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH)?;
-        transaction.execute("DELETE FROM paths", params![])?;
+        if delete_first {
+            transaction.execute("DELETE FROM paths", params![])?;
+        }
         for exclusion in iter {
             insert_stmt.execute(params![
                 path_to_bytes(exclusion.path()),
@@ -157,19 +167,7 @@ impl Cache {
     }
 
     pub fn add_paths(&mut self, iter: impl Iterator<Item = Exclusion>) -> anyhow::Result<()> {
-        let mut connection = self.connection.borrow_mut();
-        let mut transaction = connection.transaction()?;
-        let mut insert_stmt = transaction.prepare(Self::SQL_INSERT_PATH)?;
-        for exclusion in iter {
-            insert_stmt.execute(params![
-                path_to_bytes(exclusion.path()),
-                exclusion.repository().map(path_to_bytes)
-            ])?;
-        }
-        drop(insert_stmt);
-        Self::set_last_update_transaction(&mut transaction)?;
-        transaction.commit()?;
-        Ok(())
+        self.insert_exclusions(false, iter)
     }
 
     pub fn remove_paths<'a>(
@@ -314,8 +312,8 @@ pub(crate) mod tests {
         }
     }
 
-    fn orphans<const N: usize>(paths: [&str; N]) -> [Exclusion; N] {
-        paths.map(|path| Exclusion::orphan(PathBuf::from(path)))
+    pub(crate) fn orphans<const N: usize>(paths: [impl Into<PathBuf>; N]) -> [Exclusion; N] {
+        paths.map(|path| Exclusion::orphan(path.into()))
     }
 
     fn owned<const N: usize>(repository: &str, paths: [&str; N]) -> [Exclusion; N] {

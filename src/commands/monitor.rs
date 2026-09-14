@@ -1449,9 +1449,13 @@ mod tests {
         cached_paths(cache)
     }
 
-    #[test]
+    #[rstest]
+    #[case::not_gitignored("ignored_in_main\n\n")]
+    #[case::gitignored("ignored_in_main\nsubmodule/\n")]
     #[serial]
-    fn test_rescan_main_repository_does_not_remove_submodule_exclusions() {
+    fn test_rescan_main_repository_does_not_remove_submodule_exclusions(
+        #[case] main_gitignore_after: &str,
+    ) {
         let (_temp_dir, main_path) = create_main_repository("ignored_in_main\n");
         let sub_source_path = main_path.with_file_name("sub_source");
 
@@ -1487,7 +1491,7 @@ mod tests {
         );
         assert!(cached_paths.contains(&main_ignored_path));
 
-        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n\n").unwrap();
+        std::fs::write(main_path.join(".gitignore"), main_gitignore_after).unwrap();
 
         let cached_paths = rescan(
             &mut cache,
@@ -1497,7 +1501,8 @@ mod tests {
 
         assert!(
             cached_paths.contains(&submodule_ignored_path),
-            "rescanning the main repository must not remove the submodule's exclusions"
+            "rescanning the main repository must not remove the submodule's exclusions, whether \
+             or not the submodule's directory is itself gitignored"
         );
     }
 
@@ -1588,64 +1593,6 @@ mod tests {
         assert!(
             cached_paths.contains(&c_path),
             "'c' became gitignored, it must be added to the cache"
-        );
-    }
-
-    #[test]
-    #[serial]
-    fn test_rescan_main_repository_does_not_remove_submodule_exclusions_when_submodule_directory_is_gitignored()
-     {
-        let (_temp_dir, main_path) = create_main_repository("ignored_in_main\n");
-        let sub_source_path = main_path.with_file_name("sub_source");
-
-        crate::commands::tests::init_git_repository(&sub_source_path);
-        std::fs::write(sub_source_path.join(".gitignore"), "ignored_in_sub\n").unwrap();
-        commit_all(&sub_source_path, "init submodule source");
-
-        run_git(&[
-            "-c",
-            "protocol.file.allow=always",
-            "-C",
-            main_path.to_str().unwrap(),
-            "submodule",
-            "add",
-            "-q",
-            sub_source_path.to_str().unwrap(),
-            "submodule",
-        ]);
-        commit_all(&main_path, "add submodule");
-
-        std::fs::write(main_path.join("submodule").join("ignored_in_sub"), "").unwrap();
-        std::fs::write(main_path.join("ignored_in_main"), "").unwrap();
-
-        let mut cache = Cache::open_in_memory().unwrap();
-        let cached_paths = full_scan(&mut cache, &main_path);
-
-        let submodule_ignored_path = main_path.join("submodule").join("ignored_in_sub");
-        let main_ignored_path = main_path.join("ignored_in_main");
-
-        assert!(
-            cached_paths.contains(&submodule_ignored_path),
-            "the initial scan should have excluded the submodule's ignored file"
-        );
-        assert!(cached_paths.contains(&main_ignored_path));
-
-        std::fs::write(
-            main_path.join(".gitignore"),
-            "ignored_in_main\nsubmodule/\n",
-        )
-        .unwrap();
-
-        let cached_paths = rescan(
-            &mut cache,
-            &main_path,
-            BTreeSet::from([main_path.join(".gitignore")]),
-        );
-
-        assert!(
-            cached_paths.contains(&submodule_ignored_path),
-            "rescanning the main repository must not remove the submodule's exclusions \
-             even though the submodule's directory is itself gitignored"
         );
     }
 
@@ -1889,20 +1836,16 @@ mod tests {
         );
     }
 
-    #[test]
-    #[serial]
-    fn test_rescan_large_ignored_tree_preserves_exclusions() {
-        let (_temp_dir, main_path) = create_main_repository("*.ignored\n");
-
+    fn assert_rescan_preserves_exclusions(main_path: &Path, directory: &Path, count: usize) {
         let mut ignored_paths = BTreeSet::new();
-        for i in 0..1000 {
-            let file_path = main_path.join(format!("file_{i}.ignored"));
+        for i in 0..count {
+            let file_path = directory.join(format!("file_{i}.ignored"));
             std::fs::write(&file_path, "").unwrap();
             ignored_paths.insert(file_path);
         }
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let cached_paths = full_scan(&mut cache, &main_path);
+        let cached_paths = full_scan(&mut cache, main_path);
         for path in &ignored_paths {
             assert!(
                 cached_paths.contains(path),
@@ -1915,7 +1858,7 @@ mod tests {
 
         let cached_paths = rescan(
             &mut cache,
-            &main_path,
+            main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -1930,6 +1873,14 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_rescan_large_ignored_tree_preserves_exclusions() {
+        let (_temp_dir, main_path) = create_main_repository("*.ignored\n");
+
+        assert_rescan_preserves_exclusions(&main_path, &main_path, 1000);
+    }
+
+    #[test]
+    #[serial]
     #[ignore = "large-scale scenario kept for stress-testing and manual profiling; run explicitly with `cargo test -- --ignored`"]
     fn test_rescan_large_ignored_tree_preserves_exclusions_at_scale() {
         let (_temp_dir, main_path) = create_main_repository("*.ignored\n");
@@ -1939,40 +1890,7 @@ mod tests {
         std::fs::write(deep_path.join(".keep"), "").unwrap();
         commit_all(&main_path, "add deep sentinel");
 
-        let iterations = test_iterations(100_000);
-
-        let mut ignored_paths = BTreeSet::new();
-        for i in 0..iterations {
-            let file_path = deep_path.join(format!("file_{i}.ignored"));
-            std::fs::write(&file_path, "").unwrap();
-            ignored_paths.insert(file_path);
-        }
-
-        let mut cache = Cache::open_in_memory().unwrap();
-        let cached_paths = full_scan(&mut cache, &main_path);
-        for path in &ignored_paths {
-            assert!(
-                cached_paths.contains(path),
-                "the initial scan should have excluded every ignored file"
-            );
-        }
-        assert_eq!(cached_paths.len(), ignored_paths.len());
-
-        std::fs::write(main_path.join(".gitignore"), "*.ignored\n\n").unwrap();
-
-        let cached_paths = rescan(
-            &mut cache,
-            &main_path,
-            BTreeSet::from([main_path.join(".gitignore")]),
-        );
-
-        for path in &ignored_paths {
-            assert!(
-                cached_paths.contains(path),
-                "rescanning must not drop cached exclusions under a large ignored directory"
-            );
-        }
-        assert_eq!(cached_paths.len(), ignored_paths.len());
+        assert_rescan_preserves_exclusions(&main_path, &deep_path, test_iterations(100_000));
     }
 
     #[test]
