@@ -115,20 +115,20 @@ fn removals_to_apply(diff: &crate::diff::Diff) -> Vec<&PathBuf> {
         return diff.removed.iter().collect();
     }
 
-    let canonical_added: HashSet<PathBuf> = diff
-        .added
-        .iter()
-        .filter_map(|path| path.canonicalize().ok())
-        .collect();
+    let added_items: HashSet<(u64, u64)> = diff.added.iter().filter_map(item_identity).collect();
 
     diff.removed
         .iter()
-        .filter(|path| {
-            !path
-                .canonicalize()
-                .is_ok_and(|canonical_path| canonical_added.contains(&canonical_path))
-        })
+        .filter(|path| !item_identity(path).is_some_and(|item| added_items.contains(&item)))
         .collect()
+}
+
+fn item_identity(path: &PathBuf) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+
+    Some((metadata.dev(), metadata.ino()))
 }
 
 fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, regex::Error> {
@@ -435,6 +435,37 @@ pub(crate) mod tests {
             RECORDED_CALLS.with_borrow(Clone::clone),
             "both spellings are the same item, so removing the old one would undo the addition of \
              the new one"
+        );
+    }
+
+    #[test]
+    fn test_apply_diff_removes_the_target_of_a_symlink_it_adds() {
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_empty_file("data/a")
+            .build()
+            .unwrap();
+        let target_path = temp_dir.path().join("data");
+        let link_path = temp_dir.path().join("link");
+        std::os::unix::fs::symlink(&target_path, &link_path).unwrap();
+
+        let diff = Diff {
+            added: BTreeSet::from([link_path.clone()]),
+            removed: BTreeSet::from([target_path.clone()]),
+        };
+
+        RECORDED_CALLS.with_borrow_mut(Vec::clear);
+
+        let error_paths = apply_diff_and_print::<MockTimeMachineRecorder>(&diff, false, false);
+
+        let mut recorded_calls = RECORDED_CALLS.with_borrow(Clone::clone);
+        recorded_calls.sort();
+
+        assert!(error_paths.is_empty());
+        assert_eq!(
+            vec![("add", link_path), ("remove", target_path)],
+            recorded_calls,
+            "the exclusion of a symlink applies to the symlink, not to its target, so the target \
+             is a different item and its removal must not be dropped"
         );
     }
 }
