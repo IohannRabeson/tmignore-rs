@@ -382,7 +382,7 @@ mod tests {
                     .add_directory("empty_dir")
                     .add_text_file("config.json", serde_json::to_string(&config).unwrap())
                     .add_text_file("repository/.gitignore", "a\nb\n"),
-                TempDirectoryBuilder::add_empty_file,
+                temp_dir_builder::EntryBuilder::add_empty_file,
             )
             .build()
             .unwrap();

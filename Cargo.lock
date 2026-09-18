@@ -1284,9 +1284,9 @@ dependencies = [
 
 [[package]]
 name = "temp-dir-builder"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1b5611a176d9b81e5361acd2ef1a13f69e95098a2d8023db1954cc96ee99eb2"
+checksum = "30fb5e8c724202ded1ecb1c9ed32911359d5dde86dc6cecda6c39880d02ab27b"
 dependencies = [
  "path-clean",
  "rand",

@@ -581,8 +581,6 @@ mod tests {
 
     #[test]
     fn test_find_ignored_files_does_not_execute_repo_config_hooks() {
-        use std::os::unix::fs::PermissionsExt;
-
         let temp_dir = TempDirectoryBuilder::default()
             .add_text_file(".gitignore", "ignored/\n")
             .add_empty_file("ignored/file")
@@ -597,8 +595,16 @@ mod tests {
         let marker = temp_dir.path().join("executed_marker");
         let hook = temp_dir.path().join("hook.sh");
         // A script that creates the marker file when executed.
-        std::fs::write(&hook, format!("#!/bin/sh\necho executed > {marker:?}\n")).unwrap();
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        TempDirectoryBuilder::default()
+            .root_folder(temp_dir.path())
+            .delete_on_drop(false)
+            .add_text_file(
+                "hook.sh",
+                format!("#!/bin/sh\necho executed > {marker:?}\n"),
+            )
+            .set_mode(0o755)
+            .build()
+            .unwrap();
         run_git(&[
             "-C",
             repository_path.to_str().unwrap(),
@@ -619,8 +625,6 @@ mod tests {
 
     #[test]
     fn test_find_ignored_files_does_not_execute_worktree_config_hooks() {
-        use std::os::unix::fs::PermissionsExt;
-
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let main_repo = temp_dir.path().join("main");
         let worktree = temp_dir.path().join("worktree");
@@ -632,8 +636,16 @@ mod tests {
         // applies when we scan the worktree. It must not be executed either.
         let marker = temp_dir.path().join("executed_marker");
         let hook = temp_dir.path().join("hook.sh");
-        std::fs::write(&hook, format!("#!/bin/sh\necho executed > {marker:?}\n")).unwrap();
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        TempDirectoryBuilder::default()
+            .root_folder(temp_dir.path())
+            .delete_on_drop(false)
+            .add_text_file(
+                "hook.sh",
+                format!("#!/bin/sh\necho executed > {marker:?}\n"),
+            )
+            .set_mode(0o755)
+            .build()
+            .unwrap();
 
         run_git(&["init", "-q", main_str]);
         run_git(&[
