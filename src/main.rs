@@ -315,25 +315,27 @@ mod tests {
 
     #[test]
     fn test_import_legacy_config_file() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let legacy_cache_content = json!({"searchPaths": [
-            temp_dir.path()
-          ],
-          "ignoredPaths": [
-            "a"
-          ],
-          "whitelist": [
-            "*.hey"
-          ]
-        })
-        .to_string();
-        let dir_path = temp_dir.path().to_path_buf();
-        let legacy_config_file_path = dir_path.join("legacy.json");
-        let config_file_path = dir_path.join("config.json");
-        std::fs::write(&legacy_config_file_path, legacy_cache_content).unwrap();
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file_with("legacy.json", |root| {
+                json!({"searchPaths": [
+                    root
+                  ],
+                  "ignoredPaths": [
+                    "a"
+                  ],
+                  "whitelist": [
+                    "*.hey"
+                  ]
+                })
+                .to_string()
+            })
+            .build()
+            .unwrap();
+        let legacy_config_file_path = temp_dir.join("legacy.json");
+        let config_file_path = temp_dir.join("config.json");
         import_legacy_config_file(&legacy_config_file_path, &config_file_path).unwrap();
         let config = Config::load_from_file(&config_file_path).unwrap();
-        assert!(config.search_directories.contains(&dir_path));
+        assert!(config.search_directories.contains(temp_dir.path()));
         assert!(config.ignored_directories.contains(&PathBuf::from("a")));
         assert!(config.whitelist_patterns.contains("*.hey"));
     }
@@ -350,8 +352,9 @@ mod tests {
             .add_text_file("legacy.json", legacy_content)
             .build()
             .unwrap();
-        let cache_file_path = temp_dir.path().join("cache.db");
-        import_legacy_cache_file(temp_dir.path().join("legacy.json"), &cache_file_path).unwrap();
+        let cache_file_path = temp_dir.join("cache.db");
+        let legacy_cache_file_path = temp_dir.join("legacy.json");
+        import_legacy_cache_file(&legacy_cache_file_path, &cache_file_path).unwrap();
         let cache = Cache::open(&cache_file_path).unwrap();
         let paths = cache.paths().unwrap();
         assert_eq!(2, paths.len());
@@ -553,7 +556,7 @@ mod tests {
         config.search_directories.clear();
         config
             .search_directories
-            .insert(temp_dir.path().join("repository"));
+            .insert(temp_dir.join("repository"));
         save_json_file(config_file_path, &config).unwrap();
         std::thread::sleep(Duration::from_secs(5));
         crate::commands::tests::send_sigint();

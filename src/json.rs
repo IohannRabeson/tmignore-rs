@@ -44,7 +44,7 @@ mod tests {
     fn test_json_save_load() {
         let test = Test { value: 123 };
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let file_path = temp_dir.path().join("test.json");
+        let file_path = temp_dir.join("test.json");
         save_json_file(&file_path, &test).unwrap();
         let loaded = load_json_file(&file_path).unwrap();
         assert_eq!(test, loaded);

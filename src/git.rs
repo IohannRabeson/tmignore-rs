@@ -89,7 +89,9 @@ fn create_walk_builder(directories: &BTreeSet<PathBuf>, ignore: bool) -> ignore:
     builder
 }
 
-pub fn find_ignored_files(repository_directory: &Path) -> anyhow::Result<Vec<PathBuf>> {
+pub fn find_ignored_files(repository_directory: impl AsRef<Path>) -> anyhow::Result<Vec<PathBuf>> {
+    let repository_directory = repository_directory.as_ref();
+
     if !repository_directory.exists() {
         return Ok(vec![]);
     }
@@ -294,7 +296,7 @@ mod tests {
         use std::time::Duration;
 
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let repository_path = temp_dir.path().canonicalize().unwrap().join("repository");
+        let repository_path = temp_dir.join("repository");
         let stop = Arc::new(AtomicBool::new(false));
 
         let deleted_path = repository_path.clone();
@@ -332,7 +334,7 @@ mod tests {
             .add_text_file("repository/local_excludes", "secrets\n")
             .build()
             .unwrap();
-        let repository_path = temp_dir.path().join("repository");
+        let repository_path = temp_dir.join("repository");
         let excludes_path = repository_path.join("local_excludes");
         run_git(&["init", "-q", repository_path.to_str().unwrap()]);
         run_git(&[
@@ -358,7 +360,7 @@ mod tests {
             .add_text_file("repository/.gitignore", "*.log\n")
             .build()
             .unwrap();
-        let repository_path = temp_dir.path().join("repository");
+        let repository_path = temp_dir.join("repository");
         crate::commands::tests::init_git_repository(&repository_path);
 
         let logs_path = repository_path.join("logs");
@@ -388,7 +390,7 @@ mod tests {
             .add_directory("not_a_repository")
             .build()
             .unwrap();
-        let not_a_repository_path = temp_dir.path().join("not_a_repository");
+        let not_a_repository_path = temp_dir.join("not_a_repository");
         let path = not_a_repository_path.join("file");
 
         assert!(
@@ -404,7 +406,7 @@ mod tests {
             .build()
             .unwrap();
         let ignored_directories = BTreeSet::new();
-        let repositories = find_repositories_vec(&[temp_dir.path()], &ignored_directories);
+        let repositories = find_repositories_vec(&[&temp_dir], &ignored_directories);
 
         assert_eq!(repositories.len(), 1);
         assert_eq!(repositories[0], temp_dir.path());
@@ -417,10 +419,10 @@ mod tests {
             .build()
             .unwrap();
         let ignored_directories = BTreeSet::new();
-        let repositories = find_repositories_vec(&[temp_dir.path()], &ignored_directories);
+        let repositories = find_repositories_vec(&[&temp_dir], &ignored_directories);
 
         assert_eq!(repositories.len(), 1);
-        assert_eq!(repositories[0], temp_dir.path().join("subdirectory"));
+        assert_eq!(repositories[0], temp_dir.join("subdirectory"));
     }
 
     #[test]
@@ -431,7 +433,7 @@ mod tests {
             .build()
             .unwrap();
         let ignored_directories = BTreeSet::new();
-        let repositories = find_repositories_vec(&[temp_dir.path()], &ignored_directories);
+        let repositories = find_repositories_vec(&[&temp_dir], &ignored_directories);
 
         assert_eq!(repositories.len(), 2);
         assert!(
@@ -442,7 +444,7 @@ mod tests {
                     .join("sub_subdirectory")
             )
         );
-        assert!(repositories.contains(&temp_dir.path().join("subdirectory")));
+        assert!(repositories.contains(&temp_dir.join("subdirectory")));
     }
 
     #[test]
@@ -453,11 +455,11 @@ mod tests {
             .build()
             .unwrap();
         let ignored_directories =
-            BTreeSet::from([temp_dir.path().join("subdirectory").join("ignored").clone()]);
-        let repositories = find_repositories_vec(&[temp_dir.path()], &ignored_directories);
+            BTreeSet::from([temp_dir.join("subdirectory").join("ignored").clone()]);
+        let repositories = find_repositories_vec(&[&temp_dir], &ignored_directories);
 
         assert_eq!(repositories.len(), 1);
-        assert_eq!(repositories[0], temp_dir.path().join("subdirectory"));
+        assert_eq!(repositories[0], temp_dir.join("subdirectory"));
     }
 
     #[test]
@@ -468,10 +470,10 @@ mod tests {
             .add_directory("not_a_repo/sub")
             .build()
             .unwrap();
-        let repository_path = temp_dir.path().join("repository");
+        let repository_path = temp_dir.join("repository");
         let subdir_path = repository_path.join("suddir");
         let subsub_path = subdir_path.join("suddir");
-        let not_a_repo_sub = temp_dir.path().join("not_a_repo").join("sub");
+        let not_a_repo_sub = temp_dir.join("not_a_repo").join("sub");
 
         assert_eq!(
             find_parent_repository(&subdir_path).as_ref(),
@@ -491,7 +493,7 @@ mod tests {
             .add_empty_file("worktree/.git")
             .build()
             .unwrap();
-        let worktree_path = temp_dir.path().join("worktree");
+        let worktree_path = temp_dir.join("worktree");
         let subdir_path = worktree_path.join("subdir");
 
         assert_eq!(
@@ -504,11 +506,7 @@ mod tests {
     fn test_find_ignored_files_not_a_git_repository() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
 
-        assert!(
-            super::find_ignored_files(temp_dir.path())
-                .unwrap()
-                .is_empty()
-        );
+        assert!(super::find_ignored_files(&temp_dir).unwrap().is_empty());
     }
     #[test]
     fn test_find_ignored_files_path_does_not_exist() {
@@ -528,7 +526,7 @@ mod tests {
             .add_empty_file("repository/big_dir/a")
             .build()
             .unwrap();
-        let repository_path = temp_dir.path().join("repository");
+        let repository_path = temp_dir.join("repository");
         crate::commands::tests::init_git_repository(&repository_path);
 
         let ignored_files = super::find_ignored_files(&repository_path).unwrap();
@@ -547,12 +545,12 @@ mod tests {
         let temp_dir = TempDirectoryBuilder::default()
             .add_text_file("repository/.gitignore", "ignored\n")
             .add_empty_file("repository/ignored")
+            .add_symlink("symlink_to_repository", "repository")
             .build()
             .unwrap();
-        let repository_path = temp_dir.path().join("repository");
-        let symlink_path = temp_dir.path().join("symlink_to_repository");
+        let repository_path = temp_dir.join("repository");
+        let symlink_path = temp_dir.join("symlink_to_repository");
         crate::commands::tests::init_git_repository(&repository_path);
-        std::os::unix::fs::symlink(&repository_path, &symlink_path).unwrap();
 
         let ignored_files = super::find_ignored_files(&symlink_path).unwrap();
 
@@ -573,41 +571,37 @@ mod tests {
             .build()
             .unwrap();
         let ignored_directories = BTreeSet::new();
-        let repositories = find_repositories_vec(&[temp_dir.path()], &ignored_directories);
+        let repositories = find_repositories_vec(&[&temp_dir], &ignored_directories);
 
         assert_eq!(repositories.len(), 1);
-        assert_eq!(repositories[0], temp_dir.path().join("worktree"));
+        assert_eq!(repositories[0], temp_dir.join("worktree"));
     }
 
     #[test]
     fn test_find_ignored_files_does_not_execute_repo_config_hooks() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_text_file(".gitignore", "ignored/\n")
-            .add_empty_file("ignored/file")
-            .build()
-            .unwrap();
-        let repository_path = temp_dir.path().to_path_buf();
-        crate::commands::tests::init_git_repository(&repository_path);
-
         // A repository can configure git to run an arbitrary command (here via
         // core.fsmonitor) in its local .git/config. Running git plumbing inside
         // an untrusted repository must not execute it.
-        let marker = temp_dir.path().join("executed_marker");
-        let hook = temp_dir.path().join("hook.sh");
-        // A script that creates the marker file when executed.
-        TempDirectoryBuilder::default()
-            .root_folder(temp_dir.path())
-            .delete_on_drop(false)
-            .add_text_file(
-                "hook.sh",
-                format!("#!/bin/sh\necho executed > {marker:?}\n"),
-            )
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file(".gitignore", "ignored/\n")
+            .add_empty_file("ignored/file")
+            // A script that creates the marker file when executed.
+            .add_text_file_with("hook.sh", |root| {
+                format!(
+                    "#!/bin/sh\necho executed > {:?}\n",
+                    root.join("executed_marker")
+                )
+            })
             .set_mode(0o755)
             .build()
             .unwrap();
+        crate::commands::tests::init_git_repository(&temp_dir);
+
+        let marker = temp_dir.join("executed_marker");
+        let hook = temp_dir.join("hook.sh");
         run_git(&[
             "-C",
-            repository_path.to_str().unwrap(),
+            temp_dir.path().to_str().unwrap(),
             "config",
             "core.fsmonitor",
             hook.to_str().unwrap(),
@@ -615,7 +609,7 @@ mod tests {
 
         assert!(!marker.exists());
 
-        let _ = super::find_ignored_files(&repository_path).unwrap();
+        let _ = super::find_ignored_files(&temp_dir).unwrap();
 
         assert!(
             !marker.exists(),
@@ -625,27 +619,25 @@ mod tests {
 
     #[test]
     fn test_find_ignored_files_does_not_execute_worktree_config_hooks() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let main_repo = temp_dir.path().join("main");
-        let worktree = temp_dir.path().join("worktree");
-        let main_str = main_repo.to_str().unwrap();
-        let worktree_str = worktree.to_str().unwrap();
-
         // A linked worktree's '.git' is a file pointing at the main repository's
         // git directory, so the main repository's config (here core.fsmonitor)
         // applies when we scan the worktree. It must not be executed either.
-        let marker = temp_dir.path().join("executed_marker");
-        let hook = temp_dir.path().join("hook.sh");
-        TempDirectoryBuilder::default()
-            .root_folder(temp_dir.path())
-            .delete_on_drop(false)
-            .add_text_file(
-                "hook.sh",
-                format!("#!/bin/sh\necho executed > {marker:?}\n"),
-            )
+        let temp_dir = TempDirectoryBuilder::default()
+            .add_text_file_with("hook.sh", |root| {
+                format!(
+                    "#!/bin/sh\necho executed > {:?}\n",
+                    root.join("executed_marker")
+                )
+            })
             .set_mode(0o755)
             .build()
             .unwrap();
+        let main_repo = temp_dir.join("main");
+        let worktree = temp_dir.join("worktree");
+        let main_str = main_repo.to_str().unwrap();
+        let worktree_str = worktree.to_str().unwrap();
+        let marker = temp_dir.join("executed_marker");
+        let hook = temp_dir.join("hook.sh");
 
         run_git(&["init", "-q", main_str]);
         run_git(&[

@@ -543,7 +543,7 @@ pub(crate) mod tests {
     #[test]
     fn test_open_migrates_a_cache_written_before_the_repository_was_recorded() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let cache_file_path = temp_dir.path().join("cache.db");
+        let cache_file_path = temp_dir.join("cache.db");
         write_version_1_cache(
             &cache_file_path,
             &[PathBuf::from("/repo/big_dir/"), PathBuf::from("/repo/a")],
@@ -583,7 +583,7 @@ pub(crate) mod tests {
     #[test]
     fn test_open_cache_create_no_legacy() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let cache_file_path = temp_dir.path().join("cache.db");
+        let cache_file_path = temp_dir.join("cache.db");
         let result = Cache::open_or_create(cache_file_path).unwrap();
 
         assert!(result.paths().unwrap().is_empty());
@@ -592,7 +592,7 @@ pub(crate) mod tests {
     #[test]
     fn test_open_cache_existing() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let cache_file_path = temp_dir.path().join("cache.db");
+        let cache_file_path = temp_dir.join("cache.db");
         {
             let mut cache = Cache::open_or_create(&cache_file_path).unwrap();
             cache.add_paths(orphans(["yo"]).into_iter()).unwrap();
@@ -606,7 +606,7 @@ pub(crate) mod tests {
     #[test]
     fn test_open_does_not_change_last_update() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let cache_file_path = temp_dir.path().join("cache.db");
+        let cache_file_path = temp_dir.join("cache.db");
         let last_update_after_create = {
             let mut cache = Cache::open_or_create(&cache_file_path).unwrap();
             cache.add_paths(orphans(["yo"]).into_iter()).unwrap();
