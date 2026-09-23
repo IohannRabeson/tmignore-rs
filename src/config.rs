@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn test_expand_default() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let config_file_path = temp_dir.path().join("does_not_exist.json");
+        let config_file_path = temp_dir.join("does_not_exist.json");
         let config = Config::load_or_create_file(&config_file_path).unwrap();
 
         assert!(!config.search_directories.is_empty());

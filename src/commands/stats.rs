@@ -95,8 +95,8 @@ mod tests {
             .build()
             .unwrap();
         let mut cache = Cache::open_in_memory().unwrap();
-        let a = temp_dir.path().join("a");
-        let dir = temp_dir.path().join("dir");
+        let a = temp_dir.join("a");
+        let dir = temp_dir.join("dir");
         cache
             .add_paths(crate::cache::tests::orphans([a, dir]).into_iter())
             .unwrap();
@@ -117,7 +117,7 @@ mod tests {
             .unwrap();
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .add_paths(crate::cache::tests::orphans([temp_dir.path().join("a")]).into_iter())
+            .add_paths(crate::cache::tests::orphans([temp_dir.join("a")]).into_iter())
             .unwrap();
         let mut buffer = vec![];
 
@@ -135,7 +135,7 @@ mod tests {
             .unwrap();
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .add_paths(crate::cache::tests::orphans([temp_dir.path().join("top")]).into_iter())
+            .add_paths(crate::cache::tests::orphans([temp_dir.join("top")]).into_iter())
             .unwrap();
         let mut buffer = vec![];
 
@@ -171,12 +171,11 @@ mod tests {
         let temp_dir = TempDirectoryBuilder::default()
             .add_text_file("outside/big.txt", "0123456789")
             .add_directory("excluded")
+            // A symlink inside the excluded directory pointing at an unrelated tree.
+            .add_symlink("excluded/link", "outside")
             .build()
             .unwrap();
-        let outside = temp_dir.path().join("outside");
-        let excluded = temp_dir.path().join("excluded");
-        // A symlink inside the excluded directory pointing at an unrelated tree.
-        std::os::unix::fs::symlink(&outside, excluded.join("link")).unwrap();
+        let excluded = temp_dir.join("excluded");
 
         let total = super::fetch_total_size(&[excluded]).unwrap();
 

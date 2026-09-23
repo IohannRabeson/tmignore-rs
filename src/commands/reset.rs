@@ -20,7 +20,7 @@ mod tests {
     fn test_reset() {
         let temp_dir = crate::commands::tests::create_repository(None);
         let mut cache = Cache::open_in_memory().unwrap();
-        let config = crate::commands::tests::create_config(temp_dir.path());
+        let config = crate::commands::tests::create_config(&temp_dir);
         let dry_run = false;
         crate::commands::run::execute(&config, &mut cache, dry_run, false).unwrap();
         super::execute(&mut cache, dry_run, false).unwrap();
