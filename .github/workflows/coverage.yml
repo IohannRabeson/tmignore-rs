@@ -21,7 +21,7 @@ jobs:
     - run: cargo install --locked cargo-tarpaulin
     - run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
     - name: Upload to codecov.io
-      uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
       with:
         token: ${{secrets.CODECOV_TOKEN}}
         fail_ci_if_error: true
