@@ -238,7 +238,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn prepare_temp_dir(directory_name: &str) -> TempDirectoryBuilder {
+    fn prepare_temp_dir(directory_name: &str) -> TempDirectoryBuilder<'_> {
         let path = std::env::current_dir().unwrap().join(directory_name);
 
         if path.is_dir() {
@@ -254,7 +254,7 @@ pub(crate) mod tests {
             .add_empty_file("test.txt")
             .build()
             .unwrap();
-        let test_file = temp_dir.path().join("test.txt");
+        let test_file = temp_dir.join("test.txt");
         assert!(!is_excluded_from_time_machine(&test_file));
         assert!(add_exclusions([test_file.clone()].iter()).is_empty());
         assert!(is_excluded_from_time_machine(&test_file));
@@ -266,7 +266,7 @@ pub(crate) mod tests {
             .add_empty_file("test.txt")
             .build()
             .unwrap();
-        let test_file = temp_dir.path().join("test.txt");
+        let test_file = temp_dir.join("test.txt");
         assert!(add_exclusions([test_file.clone()].iter()).is_empty());
         assert!(is_excluded_from_time_machine(&test_file));
         assert!(remove_exclusions([test_file.clone()].iter()).is_empty());
@@ -279,7 +279,7 @@ pub(crate) mod tests {
             .add_empty_file("dir/test.txt")
             .build()
             .unwrap();
-        let test_dir = temp_dir.path().join("dir");
+        let test_dir = temp_dir.join("dir");
         let test_file = test_dir.join("test.txt");
         assert!(!is_excluded_from_time_machine(&test_dir));
         assert!(!is_excluded_from_time_machine(&test_file));

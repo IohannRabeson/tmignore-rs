@@ -913,7 +913,7 @@ mod monitor_details {
 
         fn spawn_monitor_thread_watching_a_temp_dir() -> WatchedMonitorThread {
             let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-            let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+            let temp_dir_path = temp_dir.to_path_buf();
             let (event_sender, event_receiver) = crossbeam_channel::bounded(1);
             let (thread_handle, control_sender) =
                 super::spawn_monitor_thread(event_sender).unwrap();
@@ -1282,13 +1282,12 @@ mod tests {
     #[serial]
     fn test_set_watched_paths_registers_the_watch_before_returning() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let mut monitor = super::Monitor::new().unwrap();
 
         monitor.set_debounce_duration(Duration::from_millis(100));
-        monitor.set_watched_paths(&BTreeSet::from([temp_dir_path.clone()]));
+        monitor.set_watched_paths(&BTreeSet::from([temp_dir.to_path_buf()]));
 
-        let created_path = temp_dir_path.join("created");
+        let created_path = temp_dir.join("created");
         std::fs::write(&created_path, "").unwrap();
 
         // Read the channel directly instead of calling get_event because it blocks without a timeout, so
@@ -1316,11 +1315,10 @@ mod tests {
     #[serial]
     fn test_dropping_the_monitor_returns_when_the_event_queue_is_full() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let mut monitor = super::Monitor::new().unwrap();
 
         monitor.set_debounce_duration(Duration::from_millis(1));
-        monitor.set_watched_paths(&BTreeSet::from([temp_dir_path.clone()]));
+        monitor.set_watched_paths(&BTreeSet::from([temp_dir.to_path_buf()]));
 
         let mut index = 0;
         let filled =
@@ -1328,7 +1326,7 @@ mod tests {
                 if monitor.event_receiver_final.is_full() {
                     return true;
                 }
-                std::fs::write(temp_dir_path.join(format!("file{index}")), "").unwrap();
+                std::fs::write(temp_dir.join(format!("file{index}")), "").unwrap();
                 index += 1;
                 false
             });
@@ -1360,18 +1358,17 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let repository_path = temp_dir_path.join("repository");
+        let repository_path = temp_dir.join("repository");
 
         crate::commands::tests::init_git_repository(&repository_path);
         std::fs::write(repository_path.join(".gitignore"), "ignored\n").unwrap();
         std::fs::write(repository_path.join("ignored"), "").unwrap();
 
-        let config_file_path = temp_dir_path.join("config.json");
+        let config_file_path = temp_dir.join("config.json");
         let config = crate::commands::tests::create_config(&repository_path);
         save_json_file(&config_file_path, &config).unwrap();
 
-        let cache_directory_path = temp_dir_path.join("cache");
+        let cache_directory_path = temp_dir.join("cache");
         std::fs::create_dir(&cache_directory_path).unwrap();
         let cache_file_path = cache_directory_path.join("cache.db");
         let mut cache = Cache::open_or_create(&cache_file_path).unwrap();
@@ -1428,7 +1425,7 @@ mod tests {
 
     fn create_main_repository(gitignore: &str) -> (TempDirectory, PathBuf) {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let main_path = temp_dir.path().canonicalize().unwrap().join("main");
+        let main_path = temp_dir.join("main");
 
         crate::commands::tests::init_git_repository(&main_path);
         std::fs::write(main_path.join(".gitignore"), gitignore).unwrap();
@@ -1795,7 +1792,7 @@ mod tests {
         std::fs::create_dir_all(&big_dir_path).unwrap();
         std::fs::write(big_dir_path.join("b"), "").unwrap();
 
-        let cache_file_path = temp_dir.path().join("cache.db");
+        let cache_file_path = temp_dir.join("cache.db");
         crate::cache::tests::write_version_1_cache(
             &cache_file_path,
             &[
@@ -1928,9 +1925,8 @@ mod tests {
     #[test]
     fn test_find_repositories_to_scan() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let repository_path = temp_dir_path.join("repository");
-        let outside_path = temp_dir_path.join("outside");
+        let repository_path = temp_dir.join("repository");
+        let outside_path = temp_dir.join("outside");
 
         crate::commands::tests::init_git_repository(&repository_path);
         crate::commands::tests::init_git_repository(&outside_path);
@@ -2052,7 +2048,7 @@ mod tests {
     #[serial]
     fn test_config_file_does_not_exist() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let config_file_path = temp_dir.path().join("non_existent_file.config");
+        let config_file_path = temp_dir.join("non_existent_file.config");
         let thread_handle = std::thread::spawn(move || {
             let mut cache = Cache::open_in_memory().unwrap();
             super::execute(&config_file_path, None, &mut cache, true, false).unwrap();
@@ -2074,7 +2070,7 @@ mod tests {
             .add_empty_file("folder/repository/c")
             .build()
             .unwrap();
-        let folder_path = temp_dir.path().join("folder");
+        let folder_path = temp_dir.join("folder");
         let repository_path = folder_path.join("repository");
         let config_file_path = folder_path.join("config.json");
         let config = crate::commands::tests::create_config(&folder_path);

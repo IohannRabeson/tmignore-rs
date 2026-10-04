@@ -263,7 +263,7 @@ pub(crate) mod tests {
             .build()
             .unwrap();
 
-        init_git_repository(temp_dir.path());
+        init_git_repository(&temp_dir);
 
         temp_dir
     }
@@ -361,7 +361,7 @@ pub(crate) mod tests {
             .build()
             .unwrap();
         let diff = Diff {
-            added: BTreeSet::from([temp_dir.path().join("a")]),
+            added: BTreeSet::from([temp_dir.join("a")]),
             removed: BTreeSet::new(),
         };
         let error_paths = apply_diff_and_print::<MockTimeMachineError>(&diff, false, false);
@@ -376,7 +376,7 @@ pub(crate) mod tests {
             .build()
             .unwrap();
         let diff = Diff {
-            removed: BTreeSet::from([temp_dir.path().join("a")]),
+            removed: BTreeSet::from([temp_dir.join("a")]),
             added: BTreeSet::new(),
         };
         let _ = apply_diff_and_print::<MockTimeMachineError>(&diff, false, false);
@@ -412,8 +412,8 @@ pub(crate) mod tests {
             .add_empty_file("foo/a")
             .build()
             .unwrap();
-        let lower_case_path = temp_dir.path().join("foo");
-        let upper_case_path = temp_dir.path().join("Foo");
+        let lower_case_path = temp_dir.join("foo");
+        let upper_case_path = temp_dir.join("Foo");
 
         assert!(
             upper_case_path.exists(),
@@ -442,11 +442,11 @@ pub(crate) mod tests {
     fn test_apply_diff_removes_the_target_of_a_symlink_it_adds() {
         let temp_dir = TempDirectoryBuilder::default()
             .add_empty_file("data/a")
+            .add_symlink("link", "data")
             .build()
             .unwrap();
-        let target_path = temp_dir.path().join("data");
-        let link_path = temp_dir.path().join("link");
-        std::os::unix::fs::symlink(&target_path, &link_path).unwrap();
+        let target_path = temp_dir.join("data");
+        let link_path = temp_dir.join("link");
 
         let diff = Diff {
             added: BTreeSet::from([link_path.clone()]),
