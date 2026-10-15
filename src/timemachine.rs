@@ -256,7 +256,10 @@ pub(crate) mod tests {
             .unwrap();
         let test_file = temp_dir.path().join("test.txt");
         assert!(!is_excluded_from_time_machine(&test_file));
-        assert!(add_exclusions([test_file.clone()].iter()).is_empty());
+        assert_eq!(
+            add_exclusions([test_file.clone()].iter()),
+            Vec::<crate::timemachine::Error>::new()
+        );
         assert!(is_excluded_from_time_machine(&test_file));
     }
 
@@ -267,9 +270,15 @@ pub(crate) mod tests {
             .build()
             .unwrap();
         let test_file = temp_dir.path().join("test.txt");
-        assert!(add_exclusions([test_file.clone()].iter()).is_empty());
+        assert_eq!(
+            add_exclusions([test_file.clone()].iter()),
+            Vec::<crate::timemachine::Error>::new()
+        );
         assert!(is_excluded_from_time_machine(&test_file));
-        assert!(remove_exclusions([test_file.clone()].iter()).is_empty());
+        assert_eq!(
+            remove_exclusions([test_file.clone()].iter()),
+            Vec::<crate::timemachine::Error>::new()
+        );
         assert!(!is_excluded_from_time_machine(&test_file));
     }
 
@@ -283,7 +292,10 @@ pub(crate) mod tests {
         let test_file = test_dir.join("test.txt");
         assert!(!is_excluded_from_time_machine(&test_dir));
         assert!(!is_excluded_from_time_machine(&test_file));
-        assert!(add_exclusions([test_dir.clone()].iter()).is_empty());
+        assert_eq!(
+            add_exclusions([test_dir.clone()].iter()),
+            Vec::<crate::timemachine::Error>::new()
+        );
         assert!(is_excluded_from_time_machine(&test_dir));
         assert!(is_excluded_from_time_machine(&test_file));
     }

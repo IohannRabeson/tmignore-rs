@@ -504,18 +504,16 @@ mod tests {
     fn test_find_ignored_files_not_a_git_repository() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
 
-        assert!(
-            super::find_ignored_files(temp_dir.path())
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            super::find_ignored_files(temp_dir.path()).unwrap(),
+            Vec::<PathBuf>::new()
         );
     }
     #[test]
     fn test_find_ignored_files_path_does_not_exist() {
-        assert!(
-            super::find_ignored_files(Path::new("/this/path/does/not/exist"))
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            super::find_ignored_files(Path::new("/this/path/does/not/exist")).unwrap(),
+            Vec::<PathBuf>::new()
         );
     }
 

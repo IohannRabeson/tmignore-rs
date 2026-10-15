@@ -396,7 +396,7 @@ pub(crate) mod tests {
     #[test]
     fn test_reset() {
         let mut cache = Cache::open_in_memory().unwrap();
-        assert!(cache.paths().unwrap().is_empty());
+        assert_eq!(cache.paths().unwrap(), Vec::<PathBuf>::new());
         cache.reset(orphans(["hello", "world"])).unwrap();
         assert_eq!(2, cache.paths().unwrap().len());
     }
@@ -586,7 +586,7 @@ pub(crate) mod tests {
         let cache_file_path = temp_dir.path().join("cache.db");
         let result = Cache::open_or_create(cache_file_path).unwrap();
 
-        assert!(result.paths().unwrap().is_empty());
+        assert_eq!(result.paths().unwrap(), Vec::<PathBuf>::new());
     }
 
     #[test]
