@@ -325,7 +325,7 @@ mod tests {
         let error = error
             .downcast_ref::<ValidationError>()
             .expect("downcast failed");
-        assert!(!error.fails.is_empty());
+        assert_ne!(error.fails, Vec::<crate::config::ValidationFail>::new());
         let expected = crate::config::ValidationFail::NotFound(PathBuf::from("/does_not_exist"));
         assert!(error.fails.contains(&expected));
     }
@@ -345,7 +345,7 @@ mod tests {
         let error = error
             .downcast_ref::<ValidationError>()
             .expect("downcast failed");
-        assert!(!error.fails.is_empty());
+        assert_ne!(error.fails, Vec::<crate::config::ValidationFail>::new());
         assert!(
             error
                 .fails

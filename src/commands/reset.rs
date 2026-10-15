@@ -26,6 +26,6 @@ mod tests {
         super::execute(&mut cache, dry_run, false).unwrap();
         let paths = cache.paths().unwrap();
 
-        assert!(paths.is_empty());
+        assert_eq!(paths, Vec::<std::path::PathBuf>::new());
     }
 }
