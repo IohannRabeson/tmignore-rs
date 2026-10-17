@@ -76,15 +76,14 @@ pub(crate) mod tests {
 
     #[test]
     fn test_command() {
-        let temp_dir =
-            crate::commands::tests::create_repository(Some(Path::new("test_run_command")));
+        let (temp_dir, a, b, c) = crate::commands::tests::create_repository(None);
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(&temp_dir);
         let dry_run = false;
         super::execute(&config, &mut cache, dry_run, false).unwrap();
-        let a_file_path = temp_dir.join("a");
-        let b_file_path = temp_dir.join("b");
-        let c_file_path = temp_dir.join("c");
+        let a_file_path = temp_dir.path_of(&a);
+        let b_file_path = temp_dir.path_of(&b);
+        let c_file_path = temp_dir.path_of(&c);
         let paths = cache.paths().unwrap();
         assert_eq!(2, paths.len());
         assert_eq!(a_file_path, paths[0]);
@@ -103,7 +102,8 @@ pub(crate) mod tests {
     #[test]
     fn test_command_with_a_relative_search_directory() {
         let directory_name = "test_run_relative_search_directory";
-        let _temp_dir = crate::commands::tests::create_repository(Some(Path::new(directory_name)));
+        let (_temp_dir, ..) =
+            crate::commands::tests::create_repository(Some(Path::new(directory_name)));
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(Path::new(directory_name));
         assert!(
@@ -127,16 +127,17 @@ pub(crate) mod tests {
 
     #[test]
     fn test_gitignored_symlink_does_not_exclude_target() {
-        let root = crate::commands::tests::prepare_test_directory("test_run_gitignored_symlink");
-        let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(&root)
-            .add_text_file("outside/precious.txt", "precious data")
-            .add_text_file("repository/.gitignore", "link\n")
-            .add_symlink("repository/link", "outside/precious.txt")
-            .build()
-            .unwrap();
-        let repository_path = temp_dir.join("repository");
-        let target_path = temp_dir.join("outside/precious.txt");
+        let mut builder = TempDirectoryBuilder::default();
+        builder.random_root_in(env!("CARGO_MANIFEST_DIR"));
+        let precious = builder.add_text_file("outside/precious.txt", "precious data");
+        let repository = builder.add_directory("repository");
+        builder.in_directory(&repository, |builder| {
+            builder.add_text_file(".gitignore", "link\n");
+            builder.add_symlink_to("link", &precious);
+        });
+        let temp_dir = builder.build().unwrap();
+        let repository_path = temp_dir.path_of(&repository);
+        let target_path = temp_dir.path_of(&precious);
         crate::commands::tests::init_git_repository(&repository_path);
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(&repository_path);
@@ -156,14 +157,20 @@ pub(crate) mod tests {
 
     #[test]
     fn test_case_only_rename_keeps_the_directory_excluded() {
-        let root = crate::commands::tests::prepare_test_directory("test_run_case_only_rename");
-        let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(&root)
-            .add_text_file("repository/.gitignore", "Foo\n")
-            .add_empty_file("repository/Foo/a")
-            .build()
-            .unwrap();
-        let repository_path = temp_dir.join("repository");
+        let mut builder = TempDirectoryBuilder::default();
+        builder.random_root_in(env!("CARGO_MANIFEST_DIR"));
+        let repository = builder.add_directory("repository");
+        let foo_dir = builder.in_directory(&repository, |builder| {
+            builder.add_text_file(".gitignore", "Foo\n");
+            let foo_dir = builder.add_directory("Foo");
+            builder.in_directory(&foo_dir, |builder| {
+                builder.add_empty_file("a");
+            });
+
+            foo_dir
+        });
+        let temp_dir = builder.build().unwrap();
+        let repository_path = temp_dir.path_of(&repository);
         crate::commands::tests::init_git_repository(&repository_path);
 
         let mut cache = Cache::open_in_memory().unwrap();
@@ -171,7 +178,7 @@ pub(crate) mod tests {
 
         super::execute(&config, &mut cache, false, false).unwrap();
 
-        let upper_case_path = repository_path.join("Foo");
+        let upper_case_path = temp_dir.path_of(&foo_dir);
         assert!(
             crate::timemachine::tests::is_excluded_from_time_machine(&upper_case_path),
             "the initial scan should have excluded the ignored directory"
@@ -180,7 +187,9 @@ pub(crate) mod tests {
         let lower_case_path = repository_path.join("foo");
         std::fs::rename(&upper_case_path, repository_path.join("renamed")).unwrap();
         std::fs::rename(repository_path.join("renamed"), &lower_case_path).unwrap();
-        std::fs::write(repository_path.join(".gitignore"), "foo\n").unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("repository/.gitignore", "foo\n");
+        additions.build().unwrap();
 
         super::execute(&config, &mut cache, false, false).unwrap();
 
@@ -194,20 +203,29 @@ pub(crate) mod tests {
 
     #[test]
     fn test_overlapping_search_directories_scan_every_repository_once() {
-        let root = crate::commands::tests::prepare_test_directory("test_run_overlapping_search");
-        let temp_dir = TempDirectoryBuilder::default()
-            .root_folder(&root)
-            .add_text_file("nested/repository/.gitignore", "a\n")
-            .add_empty_file("nested/repository/a")
-            .add_empty_file("nested/repository/kept")
-            .add_text_file("other_repository/.gitignore", "b\n")
-            .add_empty_file("other_repository/b")
-            .add_empty_file("other_repository/kept")
-            .build()
-            .unwrap();
-        let nested_path = temp_dir.join("nested");
-        let repository_path = nested_path.join("repository");
-        let other_repository_path = temp_dir.join("other_repository");
+        let mut builder = TempDirectoryBuilder::default();
+        builder.random_root_in(env!("CARGO_MANIFEST_DIR"));
+        let nested = builder.add_directory("nested");
+        let repository = builder.in_directory(&nested, |builder| {
+            let repository = builder.add_directory("repository");
+            builder.in_directory(&repository, |builder| {
+                builder.add_text_file(".gitignore", "a\n");
+                builder.add_empty_file("a");
+                builder.add_empty_file("kept");
+            });
+
+            repository
+        });
+        let other_repository = builder.add_directory("other_repository");
+        builder.in_directory(&other_repository, |builder| {
+            builder.add_text_file(".gitignore", "b\n");
+            builder.add_empty_file("b");
+            builder.add_empty_file("kept");
+        });
+        let temp_dir = builder.build().unwrap();
+        let nested_path = temp_dir.path_of(&nested);
+        let repository_path = temp_dir.path_of(&repository);
+        let other_repository_path = temp_dir.path_of(&other_repository);
         crate::commands::tests::init_git_repository(&repository_path);
         crate::commands::tests::init_git_repository(&other_repository_path);
 
@@ -239,15 +257,13 @@ pub(crate) mod tests {
 
     #[test]
     fn test_dry_run() {
-        let temp_dir = crate::commands::tests::create_repository(Some(Path::new(
-            "run_command_test_command_dry_run",
-        )));
+        let (temp_dir, a, b, c) = crate::commands::tests::create_repository(None);
         let mut cache = Cache::open_in_memory().unwrap();
         let config = crate::commands::tests::create_config(&temp_dir);
         let dry_run = true;
-        let a_file_path = temp_dir.join("a");
-        let b_file_path = temp_dir.join("b");
-        let c_file_path = temp_dir.join("c");
+        let a_file_path = temp_dir.path_of(&a);
+        let b_file_path = temp_dir.path_of(&b);
+        let c_file_path = temp_dir.path_of(&c);
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &a_file_path
         ));

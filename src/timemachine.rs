@@ -238,23 +238,18 @@ pub(crate) mod tests {
         }
     }
 
-    fn prepare_temp_dir(directory_name: &str) -> TempDirectoryBuilder<'_> {
-        let path = std::env::current_dir().unwrap().join(directory_name);
-
-        if path.is_dir() {
-            std::fs::remove_dir_all(&path).unwrap();
-        }
-
-        TempDirectoryBuilder::default().root_folder(path)
+    fn prepare_temp_dir() -> TempDirectoryBuilder<'static> {
+        let mut builder = TempDirectoryBuilder::default();
+        builder.random_root_in(std::env::current_dir().unwrap());
+        builder
     }
 
     #[test]
     fn test_add_exclusion() {
-        let temp_dir = prepare_temp_dir("temp_dir_for_testing_test_add_exclusion")
-            .add_empty_file("test.txt")
-            .build()
-            .unwrap();
-        let test_file = temp_dir.join("test.txt");
+        let mut builder = prepare_temp_dir();
+        let file = builder.add_empty_file("test.txt");
+        let temp_dir = builder.build().unwrap();
+        let test_file = temp_dir.path_of(&file);
         assert!(!is_excluded_from_time_machine(&test_file));
         assert_eq!(
             add_exclusions([test_file.clone()].iter()),
@@ -265,11 +260,10 @@ pub(crate) mod tests {
 
     #[test]
     fn test_remove_exclusion() {
-        let temp_dir = prepare_temp_dir("temp_dir_for_testing_test_remove_exclusion")
-            .add_empty_file("test.txt")
-            .build()
-            .unwrap();
-        let test_file = temp_dir.join("test.txt");
+        let mut builder = prepare_temp_dir();
+        let file = builder.add_empty_file("test.txt");
+        let temp_dir = builder.build().unwrap();
+        let test_file = temp_dir.path_of(&file);
         assert_eq!(
             add_exclusions([test_file.clone()].iter()),
             Vec::<crate::timemachine::Error>::new()
@@ -284,12 +278,12 @@ pub(crate) mod tests {
 
     #[test]
     fn test_add_exclusion_directory() {
-        let temp_dir = prepare_temp_dir("temp_dir_for_testing_test_add_exclusion_directory")
-            .add_empty_file("dir/test.txt")
-            .build()
-            .unwrap();
-        let test_dir = temp_dir.join("dir");
-        let test_file = test_dir.join("test.txt");
+        let mut builder = prepare_temp_dir();
+        let dir = builder.add_directory("dir");
+        let file = builder.add_empty_file("dir/test.txt");
+        let temp_dir = builder.build().unwrap();
+        let test_dir = temp_dir.path_of(&dir);
+        let test_file = temp_dir.path_of(&file);
         assert!(!is_excluded_from_time_machine(&test_dir));
         assert!(!is_excluded_from_time_machine(&test_file));
         assert_eq!(
