@@ -136,7 +136,6 @@ pub(crate) mod tests {
     use std::{path::Path, process::Command};
 
     use rstest::rstest;
-    use temp_dir_builder::TempDirectoryBuilder;
 
     use crate::timemachine::{TmUtilsTrait, add_exclusions, remove_exclusions};
 
@@ -238,15 +237,9 @@ pub(crate) mod tests {
         }
     }
 
-    fn prepare_temp_dir() -> TempDirectoryBuilder<'static> {
-        let mut builder = TempDirectoryBuilder::default();
-        builder.random_root_in(env!("CARGO_MANIFEST_DIR"));
-        builder
-    }
-
     #[test]
     fn test_add_exclusion() {
-        let mut builder = prepare_temp_dir();
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
         let file = builder.add_empty_file("test.txt");
         let temp_dir = builder.build().unwrap();
         let test_file = temp_dir.path_of(&file);
@@ -260,7 +253,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_remove_exclusion() {
-        let mut builder = prepare_temp_dir();
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
         let file = builder.add_empty_file("test.txt");
         let temp_dir = builder.build().unwrap();
         let test_file = temp_dir.path_of(&file);
@@ -278,7 +271,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_add_exclusion_directory() {
-        let mut builder = prepare_temp_dir();
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
         let dir = builder.add_directory("dir");
         let file = builder.add_empty_file("dir/test.txt");
         let temp_dir = builder.build().unwrap();
