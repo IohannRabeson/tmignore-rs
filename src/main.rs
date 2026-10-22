@@ -362,8 +362,7 @@ mod tests {
         debounce_duration: Duration,
         files: &[&str],
     ) -> (TempDirectory, EntryKey) {
-        let mut builder = TempDirectoryBuilder::default();
-        builder.random_root_in(env!("CARGO_MANIFEST_DIR"));
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
         builder.add_directory("empty_dir");
         let repository = builder.add_directory("repository");
         builder.add_text_file("repository/.gitignore", "a\nb\n");
