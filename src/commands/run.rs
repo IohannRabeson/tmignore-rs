@@ -70,8 +70,6 @@ pub fn execute(
 pub(crate) mod tests {
     use std::path::Path;
 
-    use temp_dir_builder::TempDirectoryBuilder;
-
     use crate::cache::Cache;
 
     #[test]
@@ -127,8 +125,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_gitignored_symlink_does_not_exclude_target() {
-        let mut builder = TempDirectoryBuilder::default();
-        builder.random_root_in(env!("CARGO_MANIFEST_DIR"));
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
         let precious = builder.add_text_file("outside/precious.txt", "precious data");
         let repository = builder.add_directory("repository");
         builder.in_directory(&repository, |builder| {
@@ -157,8 +154,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_case_only_rename_keeps_the_directory_excluded() {
-        let mut builder = TempDirectoryBuilder::default();
-        builder.random_root_in(env!("CARGO_MANIFEST_DIR"));
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
         let repository = builder.add_directory("repository");
         let foo_dir = builder.in_directory(&repository, |builder| {
             builder.add_text_file(".gitignore", "Foo\n");
@@ -203,8 +199,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_overlapping_search_directories_scan_every_repository_once() {
-        let mut builder = TempDirectoryBuilder::default();
-        builder.random_root_in(env!("CARGO_MANIFEST_DIR"));
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
         let nested = builder.add_directory("nested");
         let repository = builder.in_directory(&nested, |builder| {
             let repository = builder.add_directory("repository");

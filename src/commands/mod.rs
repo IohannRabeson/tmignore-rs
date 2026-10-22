@@ -225,6 +225,12 @@ pub(crate) mod tests {
             const { std::cell::Cell::new(0) };
     }
 
+    pub(crate) fn time_machine_visible_builder() -> TempDirectoryBuilder<'static> {
+        let mut builder = TempDirectoryBuilder::default();
+        builder.random_root_in(env!("CARGO_MANIFEST_DIR"));
+        builder
+    }
+
     /// Create a Git repository with some files.
     ///
     /// `root_directory` selects a fixed, caller-named location, needed when a
@@ -243,11 +249,14 @@ pub(crate) mod tests {
         {
             std::fs::remove_dir_all(root_directory).unwrap();
         }
-        let mut temp_dir_builder = TempDirectoryBuilder::default();
-        match root_directory {
-            Some(root_directory) => temp_dir_builder.root_folder(root_directory),
-            None => temp_dir_builder.random_root_in(env!("CARGO_MANIFEST_DIR")),
-        }
+        let mut temp_dir_builder = match root_directory {
+            Some(root_directory) => {
+                let mut temp_dir_builder = TempDirectoryBuilder::default();
+                temp_dir_builder.root_folder(root_directory);
+                temp_dir_builder
+            }
+            None => time_machine_visible_builder(),
+        };
         temp_dir_builder.add_text_file(".gitignore", "a\nb\n");
         let a = temp_dir_builder.add_empty_file("a");
         let b = temp_dir_builder.add_empty_file("b");
