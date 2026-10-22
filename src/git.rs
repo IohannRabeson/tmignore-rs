@@ -478,7 +478,7 @@ mod tests {
         let temp_dir = builder.build().unwrap();
         let repository_path = temp_dir.path_of(&repository);
         let subdir_path = repository_path.join("suddir");
-        let subsub_path = subdir_path.join("suddir");
+        let subsub_path = subdir_path.join("subsub");
         let not_a_repo_sub = temp_dir.path_of(&not_a_repo_sub);
 
         assert_eq!(
