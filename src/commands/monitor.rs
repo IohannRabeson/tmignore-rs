@@ -1234,7 +1234,7 @@ mod tests {
 
     use rstest::rstest;
     use serial_test::serial;
-    use temp_dir_builder::{TempDirectory, TempDirectoryAdditions, TempDirectoryBuilder};
+    use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
     use crate::{cache::Cache, commands::tests::run_git, json::save_json_file};
 
@@ -2041,7 +2041,7 @@ mod tests {
 
         crate::commands::tests::init_git_repository(&repository_path);
         crate::commands::tests::init_git_repository(&outside_path);
-        let mut additions = TempDirectoryAdditions::default();
+        let mut additions = temp_dir.additions();
         let repository = additions.add_directory("repository");
         let (target, logs, kept, source, new_log) =
             additions.in_directory(&repository, |additions| {
@@ -2058,7 +2058,7 @@ mod tests {
                 (target, logs, kept, source, new_log)
             });
         additions.add_empty_file("outside/file");
-        additions.build_into(&temp_dir).unwrap();
+        additions.build().unwrap();
 
         let target_path = temp_dir.path_of(&target);
         let logs_path = temp_dir.path_of(&logs);
