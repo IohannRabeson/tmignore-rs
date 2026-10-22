@@ -1908,27 +1908,23 @@ mod tests {
 
     fn assert_rescan_preserves_exclusions(
         temp_dir: &TempDirectory,
-        main_path: &Path,
-        directory: &Path,
+        main: impl AsRef<Path>,
+        directory: impl AsRef<Path>,
         count: usize,
     ) {
+        let main = main.as_ref();
+        let directory = directory.as_ref();
+        let main_path = temp_dir.join(main);
         let mut additions = temp_dir.additions();
         let ignored: Vec<_> = (0..count)
-            .map(|index| {
-                let relative = directory
-                    .strip_prefix(temp_dir.path())
-                    .unwrap()
-                    .join(format!("file_{index}.ignored"));
-
-                additions.add_empty_file(relative)
-            })
+            .map(|index| additions.add_empty_file(directory.join(format!("file_{index}.ignored"))))
             .collect();
         additions.build().unwrap();
 
         let ignored_paths: BTreeSet<_> = ignored.iter().map(|key| additions.path_of(key)).collect();
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let cached_paths = full_scan(&mut cache, main_path);
+        let cached_paths = full_scan(&mut cache, &main_path);
         for path in &ignored_paths {
             assert!(
                 cached_paths.contains(path),
@@ -1938,18 +1934,12 @@ mod tests {
         assert_eq!(cached_paths.len(), ignored_paths.len());
 
         let mut additions = temp_dir.additions();
-        additions.add_text_file(
-            main_path
-                .strip_prefix(temp_dir.path())
-                .unwrap()
-                .join(".gitignore"),
-            "*.ignored\n\n",
-        );
+        additions.add_text_file(main.join(".gitignore"), "*.ignored\n\n");
         additions.build().unwrap();
 
         let cached_paths = rescan(
             &mut cache,
-            main_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -1965,9 +1955,9 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_large_ignored_tree_preserves_exclusions() {
-        let (temp_dir, main_path) = create_main_repository("*.ignored\n");
+        let (temp_dir, _main_path) = create_main_repository("*.ignored\n");
 
-        assert_rescan_preserves_exclusions(&temp_dir, &main_path, &main_path, 1000);
+        assert_rescan_preserves_exclusions(&temp_dir, "main", "main", 1000);
     }
 
     #[test]
@@ -1983,13 +1973,12 @@ mod tests {
         });
         additions.build().unwrap();
 
-        let deep_path = additions.path_of(&deep);
         commit_all(&main_path, "add deep sentinel");
 
         assert_rescan_preserves_exclusions(
             &temp_dir,
-            &main_path,
-            &deep_path,
+            "main",
+            "main/a/b/c",
             test_iterations(100_000),
         );
     }
