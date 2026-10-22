@@ -268,14 +268,11 @@ fn import_legacy_cache_file(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        path::{Path, PathBuf},
-        time::Duration,
-    };
+    use std::{path::PathBuf, time::Duration};
 
     use serde_json::json;
     use serial_test::serial;
-    use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
+    use temp_dir_builder::{EntryKey, TempDirectory, TempDirectoryBuilder};
 
     use crate::{
         Cli,
@@ -315,25 +312,26 @@ mod tests {
 
     #[test]
     fn test_import_legacy_config_file() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let legacy_cache_content = json!({"searchPaths": [
-            temp_dir.path()
-          ],
-          "ignoredPaths": [
-            "a"
-          ],
-          "whitelist": [
-            "*.hey"
-          ]
-        })
-        .to_string();
-        let dir_path = temp_dir.path().to_path_buf();
-        let legacy_config_file_path = dir_path.join("legacy.json");
-        let config_file_path = dir_path.join("config.json");
-        std::fs::write(&legacy_config_file_path, legacy_cache_content).unwrap();
+        let mut builder = TempDirectoryBuilder::default();
+        let legacy = builder.add_text_file_with("legacy.json", |root| {
+            json!({"searchPaths": [
+                root
+              ],
+              "ignoredPaths": [
+                "a"
+              ],
+              "whitelist": [
+                "*.hey"
+              ]
+            })
+            .to_string()
+        });
+        let temp_dir = builder.build().unwrap();
+        let legacy_config_file_path = temp_dir.path_of(&legacy);
+        let config_file_path = temp_dir.join("config.json");
         import_legacy_config_file(&legacy_config_file_path, &config_file_path).unwrap();
         let config = Config::load_from_file(&config_file_path).unwrap();
-        assert!(config.search_directories.contains(&dir_path));
+        assert!(config.search_directories.contains(temp_dir.path()));
         assert!(config.ignored_directories.contains(&PathBuf::from("a")));
         assert!(config.whitelist_patterns.contains("*.hey"));
     }
@@ -346,12 +344,12 @@ mod tests {
     #[test]
     fn test_import_legacy_cache_file() {
         let legacy_content = r#"{"paths":["a", "b"]}"#;
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_text_file("legacy.json", legacy_content)
-            .build()
-            .unwrap();
-        let cache_file_path = temp_dir.path().join("cache.db");
-        import_legacy_cache_file(temp_dir.path().join("legacy.json"), &cache_file_path).unwrap();
+        let mut builder = TempDirectoryBuilder::default();
+        let legacy = builder.add_text_file("legacy.json", legacy_content);
+        let temp_dir = builder.build().unwrap();
+        let cache_file_path = temp_dir.join("cache.db");
+        let legacy_cache_file_path = temp_dir.path_of(&legacy);
+        import_legacy_cache_file(&legacy_cache_file_path, &cache_file_path).unwrap();
         let cache = Cache::open(&cache_file_path).unwrap();
         let paths = cache.paths().unwrap();
         assert_eq!(2, paths.len());
@@ -360,58 +358,49 @@ mod tests {
     }
 
     fn create_repository(
-        root_directory: &Path,
         search_directory: &str,
         debounce_duration: Duration,
         files: &[&str],
-    ) -> TempDirectory {
-        let repository_path = root_directory.join("repository");
-        let mut config = Config {
-            debounce_duration,
-            ..Default::default()
-        };
-        config.search_directories.clear();
-        config
-            .search_directories
-            .insert(root_directory.join(search_directory));
-        let temp_dir = files
-            .iter()
-            .fold(
-                TempDirectoryBuilder::default()
-                    .root_folder(root_directory)
-                    .add_directory("empty_dir")
-                    .add_text_file("config.json", serde_json::to_string(&config).unwrap())
-                    .add_text_file("repository/.gitignore", "a\nb\n"),
-                temp_dir_builder::EntryBuilder::add_empty_file,
-            )
-            .build()
-            .unwrap();
+    ) -> (TempDirectory, EntryKey) {
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
+        builder.add_directory("empty_dir");
+        let repository = builder.add_directory("repository");
+        builder.add_text_file("repository/.gitignore", "a\nb\n");
+        for file in files {
+            builder.add_empty_file(file);
+        }
+        builder.add_text_file_with("config.json", move |root| {
+            let mut config = Config {
+                debounce_duration,
+                ..Default::default()
+            };
+            config.search_directories.clear();
+            config
+                .search_directories
+                .insert(root.join(search_directory));
 
-        crate::commands::tests::init_git_repository(repository_path);
+            serde_json::to_string(&config).unwrap()
+        });
+        let temp_dir = builder.build().unwrap();
 
-        temp_dir
+        crate::commands::tests::init_git_repository(temp_dir.path_of(&repository));
+
+        (temp_dir, repository)
     }
 
-    fn create_monitored_repository(root_directory: &Path, search_directory: &str) -> TempDirectory {
-        create_repository(
-            root_directory,
-            search_directory,
-            Duration::from_millis(100),
-            &[],
-        )
+    fn create_monitored_repository(search_directory: &str) -> (TempDirectory, EntryKey) {
+        create_repository(search_directory, Duration::from_millis(100), &[])
     }
 
     #[test]
     fn test_program_run() {
-        let temp_dir_path = crate::commands::tests::prepare_test_directory("test_program_run");
-        let _temp_dir = create_repository(
-            &temp_dir_path,
+        let (temp_dir, repository) = create_repository(
             "repository",
             Config::default().debounce_duration,
             &["repository/a", "repository/b", "repository/c"],
         );
-        let config_file_path = temp_dir_path.join("config.json");
-        let cache_file_path = temp_dir_path.join("cache.db");
+        let config_file_path = temp_dir.join("config.json");
+        let cache_file_path = temp_dir.join("cache.db");
         let cli = Cli {
             command: crate::Commands::Run {
                 dry_run: false,
@@ -424,9 +413,10 @@ mod tests {
             legacy_cache: String::new(),
             help: None,
         };
-        let a_file_path = temp_dir_path.join("repository").join("a");
-        let b_file_path = temp_dir_path.join("repository").join("b");
-        let c_file_path = temp_dir_path.join("repository").join("c");
+        let repository_path = temp_dir.path_of(&repository);
+        let a_file_path = repository_path.join("a");
+        let b_file_path = repository_path.join("b");
+        let c_file_path = repository_path.join("c");
 
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &a_file_path
@@ -454,10 +444,9 @@ mod tests {
     #[test]
     #[serial]
     fn test_program_monitor() {
-        let temp_dir_path = crate::commands::tests::prepare_test_directory("test_program_monitor");
-        let _temp_dir = create_monitored_repository(&temp_dir_path, "repository");
-        let config_file_path = temp_dir_path.join("config.json");
-        let cache_file_path = temp_dir_path.join("cache.db");
+        let (temp_dir, repository) = create_monitored_repository("repository");
+        let config_file_path = temp_dir.join("config.json");
+        let cache_file_path = temp_dir.join("cache.db");
         let cli = Cli {
             command: crate::Commands::Monitor {
                 dry_run: false,
@@ -470,9 +459,10 @@ mod tests {
             legacy_cache: String::new(),
             help: None,
         };
-        let a_file_path = temp_dir_path.join("repository").join("a");
-        let b_file_path = temp_dir_path.join("repository").join("b");
-        let c_file_path = temp_dir_path.join("repository").join("c");
+        let repository_path = temp_dir.path_of(&repository);
+        let a_file_path = repository_path.join("a");
+        let b_file_path = repository_path.join("b");
+        let c_file_path = repository_path.join("c");
 
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &a_file_path
@@ -485,9 +475,11 @@ mod tests {
         ));
         let handle = std::thread::spawn(move || program(cli, false).unwrap());
         std::thread::sleep(Duration::from_millis(500));
-        std::fs::write(&a_file_path, "").unwrap();
-        std::fs::write(&b_file_path, "").unwrap();
-        std::fs::write(&c_file_path, "").unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_empty_file("repository/a");
+        additions.add_empty_file("repository/b");
+        additions.add_empty_file("repository/c");
+        additions.build().unwrap();
         let excluded = crate::commands::tests::poll_until(
             Duration::from_secs(10),
             Duration::from_millis(50),
@@ -511,11 +503,9 @@ mod tests {
     #[test]
     #[serial]
     fn test_program_monitor_reload_config() {
-        let temp_dir_path =
-            crate::commands::tests::prepare_test_directory("test_program_monitor_reload_config");
-        let temp_dir = create_monitored_repository(&temp_dir_path, "empty_dir");
-        let config_file_path = temp_dir_path.join("config.json");
-        let cache_file_path = temp_dir_path.join("cache.db");
+        let (temp_dir, repository) = create_monitored_repository("empty_dir");
+        let config_file_path = temp_dir.join("config.json");
+        let cache_file_path = temp_dir.join("cache.db");
         let cli = Cli {
             command: crate::Commands::Monitor {
                 dry_run: false,
@@ -528,10 +518,10 @@ mod tests {
             legacy_cache: String::new(),
             help: None,
         };
-        let a_file_path = temp_dir_path.join("repository").join("a");
-        let b_file_path = temp_dir_path.join("repository").join("b");
-        let c_file_path = temp_dir_path.join("repository").join("c");
-        let config_file_path = temp_dir_path.join("config.json");
+        let repository_path = temp_dir.path_of(&repository);
+        let a_file_path = repository_path.join("a");
+        let b_file_path = repository_path.join("b");
+        let c_file_path = repository_path.join("c");
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             &a_file_path
         ));
@@ -543,17 +533,17 @@ mod tests {
         ));
         let handle = std::thread::spawn(move || program(cli, false).unwrap());
         std::thread::sleep(Duration::from_secs(5));
-        std::fs::write(&a_file_path, "").unwrap();
-        std::fs::write(&b_file_path, "").unwrap();
-        std::fs::write(&c_file_path, "").unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_empty_file("repository/a");
+        additions.add_empty_file("repository/b");
+        additions.add_empty_file("repository/c");
+        additions.build().unwrap();
         let mut config = Config {
             debounce_duration: Duration::from_secs(1),
             ..Default::default()
         };
         config.search_directories.clear();
-        config
-            .search_directories
-            .insert(temp_dir.path().join("repository"));
+        config.search_directories.insert(repository_path);
         save_json_file(config_file_path, &config).unwrap();
         std::thread::sleep(Duration::from_secs(5));
         crate::commands::tests::send_sigint();
@@ -575,12 +565,9 @@ mod tests {
     #[test]
     #[serial]
     fn test_program_monitor_reload_config_error() {
-        let temp_dir_path = crate::commands::tests::prepare_test_directory(
-            "test_program_monitor_reload_config_error",
-        );
-        let _temp_dir = create_monitored_repository(&temp_dir_path, "empty_dir");
-        let config_file_path = temp_dir_path.join("config.json");
-        let cache_file_path = temp_dir_path.join("cache.db");
+        let (temp_dir, _repository) = create_monitored_repository("empty_dir");
+        let config_file_path = temp_dir.join("config.json");
+        let cache_file_path = temp_dir.join("cache.db");
         let cli = Cli {
             command: crate::Commands::Monitor {
                 dry_run: false,
@@ -593,11 +580,12 @@ mod tests {
             legacy_cache: String::new(),
             help: None,
         };
-        let config_file_path = temp_dir_path.join("config.json");
         let handle = std::thread::spawn(move || program(cli, false).unwrap());
         std::thread::sleep(Duration::from_secs(5));
         // Write an invalid config
-        std::fs::write(config_file_path, "").unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("config.json", "");
+        additions.build().unwrap();
         std::thread::sleep(Duration::from_secs(5));
         crate::commands::tests::send_sigint();
         handle.join().unwrap();

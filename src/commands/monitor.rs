@@ -862,12 +862,7 @@ mod monitor_details {
     #[cfg(test)]
     mod tests {
         use rstest::rstest;
-        use std::{
-            collections::BTreeSet,
-            path::{Path, PathBuf},
-            thread::JoinHandle,
-            time::Duration,
-        };
+        use std::{collections::BTreeSet, path::PathBuf, thread::JoinHandle, time::Duration};
         use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
 
         use crate::commands::monitor::{
@@ -904,8 +899,7 @@ mod monitor_details {
         }
 
         struct WatchedMonitorThread {
-            _temp_dir: TempDirectory,
-            temp_dir_path: PathBuf,
+            temp_dir: TempDirectory,
             event_receiver: crossbeam_channel::Receiver<Event>,
             thread_handle: JoinHandle<()>,
             control_sender: crossbeam_channel::Sender<MonitorControl>,
@@ -913,7 +907,7 @@ mod monitor_details {
 
         fn spawn_monitor_thread_watching_a_temp_dir() -> WatchedMonitorThread {
             let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-            let temp_dir_path = temp_dir.path().canonicalize().unwrap();
+            let temp_dir_path = temp_dir.to_path_buf();
             let (event_sender, event_receiver) = crossbeam_channel::bounded(1);
             let (thread_handle, control_sender) =
                 super::spawn_monitor_thread(event_sender).unwrap();
@@ -926,35 +920,33 @@ mod monitor_details {
             .unwrap();
 
             WatchedMonitorThread {
-                _temp_dir: temp_dir,
-                temp_dir_path,
+                temp_dir,
                 event_receiver,
                 thread_handle,
                 control_sender,
             }
         }
 
-        fn write_files(directory: &Path, prefix: &str, count: usize) -> BTreeSet<PathBuf> {
-            (0..count)
-                .map(|index| {
-                    let path = directory.join(format!("{prefix}{index}"));
-                    std::fs::write(&path, "").unwrap();
-                    path
-                })
-                .collect()
+        fn write_files(temp_dir: &TempDirectory, prefix: &str, count: usize) -> BTreeSet<PathBuf> {
+            let mut additions = temp_dir.additions();
+            let keys: Vec<_> = (0..count)
+                .map(|index| additions.add_empty_file(format!("{prefix}{index}")))
+                .collect();
+            additions.build().unwrap();
+
+            keys.iter().map(|key| additions.path_of(key)).collect()
         }
 
         #[test]
         fn test_spawn_monitor_thread_handles_a_control_while_the_event_channel_is_full() {
             let WatchedMonitorThread {
-                _temp_dir,
-                temp_dir_path,
+                temp_dir,
                 event_receiver,
                 thread_handle,
                 control_sender,
             } = spawn_monitor_thread_watching_a_temp_dir();
 
-            write_files(&temp_dir_path, "filler", 8);
+            write_files(&temp_dir, "filler", 8);
 
             assert!(
                 crate::commands::tests::poll_until(
@@ -965,7 +957,7 @@ mod monitor_details {
                 "the watcher never filled the event channel, so the monitor thread never blocked"
             );
 
-            write_files(&temp_dir_path, "blocked", 8);
+            write_files(&temp_dir, "blocked", 8);
             std::thread::sleep(Duration::from_millis(500));
 
             let registered =
@@ -985,14 +977,13 @@ mod monitor_details {
         #[test]
         fn test_spawn_monitor_thread_handles_a_control_while_the_watcher_queue_is_full() {
             let WatchedMonitorThread {
-                _temp_dir,
-                temp_dir_path,
+                temp_dir,
                 event_receiver,
                 thread_handle,
                 control_sender,
             } = spawn_monitor_thread_watching_a_temp_dir();
 
-            write_files(&temp_dir_path, "filler", super::EVENT_QUEUE_SIZE * 4);
+            write_files(&temp_dir, "filler", super::EVENT_QUEUE_SIZE * 4);
             std::thread::sleep(Duration::from_secs(2));
 
             assert!(
@@ -1012,14 +1003,13 @@ mod monitor_details {
             const FILE_COUNT: usize = super::EVENT_QUEUE_SIZE * 4;
 
             let WatchedMonitorThread {
-                _temp_dir,
-                temp_dir_path,
+                temp_dir,
                 event_receiver,
                 thread_handle,
                 control_sender,
             } = spawn_monitor_thread_watching_a_temp_dir();
 
-            let expected_paths = write_files(&temp_dir_path, "filler", FILE_COUNT);
+            let expected_paths = write_files(&temp_dir, "filler", FILE_COUNT);
             std::thread::sleep(Duration::from_secs(2));
 
             let mut event_count = 0;
@@ -1282,14 +1272,16 @@ mod tests {
     #[serial]
     fn test_set_watched_paths_registers_the_watch_before_returning() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let mut monitor = super::Monitor::new().unwrap();
 
         monitor.set_debounce_duration(Duration::from_millis(100));
-        monitor.set_watched_paths(&BTreeSet::from([temp_dir_path.clone()]));
+        monitor.set_watched_paths(&BTreeSet::from([temp_dir.to_path_buf()]));
 
-        let created_path = temp_dir_path.join("created");
-        std::fs::write(&created_path, "").unwrap();
+        let mut additions = temp_dir.additions();
+        let created = additions.add_empty_file("created");
+        additions.build().unwrap();
+
+        let created_path = additions.path_of(&created);
 
         // Read the channel directly instead of calling get_event because it blocks without a timeout, so
         // a regression would hang the suite instead of failing it.
@@ -1316,11 +1308,10 @@ mod tests {
     #[serial]
     fn test_dropping_the_monitor_returns_when_the_event_queue_is_full() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
         let mut monitor = super::Monitor::new().unwrap();
 
         monitor.set_debounce_duration(Duration::from_millis(1));
-        monitor.set_watched_paths(&BTreeSet::from([temp_dir_path.clone()]));
+        monitor.set_watched_paths(&BTreeSet::from([temp_dir.to_path_buf()]));
 
         let mut index = 0;
         let filled =
@@ -1328,7 +1319,9 @@ mod tests {
                 if monitor.event_receiver_final.is_full() {
                     return true;
                 }
-                std::fs::write(temp_dir_path.join(format!("file{index}")), "").unwrap();
+                let mut additions = temp_dir.additions();
+                additions.add_empty_file(format!("file{index}"));
+                additions.build().unwrap();
                 index += 1;
                 false
             });
@@ -1360,19 +1353,27 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let repository_path = temp_dir_path.join("repository");
+        let repository_path = temp_dir.join("repository");
 
         crate::commands::tests::init_git_repository(&repository_path);
-        std::fs::write(repository_path.join(".gitignore"), "ignored\n").unwrap();
-        std::fs::write(repository_path.join("ignored"), "").unwrap();
 
-        let config_file_path = temp_dir_path.join("config.json");
+        let mut additions = temp_dir.additions();
+        let repository = additions.add_directory("repository");
+        additions.in_directory(&repository, |additions| {
+            additions.add_text_file(".gitignore", "ignored\n");
+            additions.add_empty_file("ignored");
+        });
+        additions.build().unwrap();
+
+        let config_file_path = temp_dir.join("config.json");
         let config = crate::commands::tests::create_config(&repository_path);
         save_json_file(&config_file_path, &config).unwrap();
 
-        let cache_directory_path = temp_dir_path.join("cache");
-        std::fs::create_dir(&cache_directory_path).unwrap();
+        let mut additions = temp_dir.additions();
+        let cache_directory = additions.add_directory("cache");
+        additions.build().unwrap();
+
+        let cache_directory_path = additions.path_of(&cache_directory);
         let cache_file_path = cache_directory_path.join("cache.db");
         let mut cache = Cache::open_or_create(&cache_file_path).unwrap();
 
@@ -1428,10 +1429,14 @@ mod tests {
 
     fn create_main_repository(gitignore: &str) -> (TempDirectory, PathBuf) {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let main_path = temp_dir.path().canonicalize().unwrap().join("main");
+        let main_path = temp_dir.join("main");
 
         crate::commands::tests::init_git_repository(&main_path);
-        std::fs::write(main_path.join(".gitignore"), gitignore).unwrap();
+
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/.gitignore", gitignore);
+        additions.build().unwrap();
+
         commit_all(&main_path, "init main repository");
 
         (temp_dir, main_path)
@@ -1456,11 +1461,15 @@ mod tests {
     fn test_rescan_main_repository_does_not_remove_submodule_exclusions(
         #[case] main_gitignore_after: &str,
     ) {
-        let (_temp_dir, main_path) = create_main_repository("ignored_in_main\n");
+        let (temp_dir, main_path) = create_main_repository("ignored_in_main\n");
         let sub_source_path = main_path.with_file_name("sub_source");
 
         crate::commands::tests::init_git_repository(&sub_source_path);
-        std::fs::write(sub_source_path.join(".gitignore"), "ignored_in_sub\n").unwrap();
+
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("sub_source/.gitignore", "ignored_in_sub\n");
+        additions.build().unwrap();
+
         commit_all(&sub_source_path, "init submodule source");
 
         run_git(&[
@@ -1476,14 +1485,16 @@ mod tests {
         ]);
         commit_all(&main_path, "add submodule");
 
-        std::fs::write(main_path.join("submodule").join("ignored_in_sub"), "").unwrap();
-        std::fs::write(main_path.join("ignored_in_main"), "").unwrap();
+        let mut additions = temp_dir.additions();
+        let submodule_ignored = additions.add_empty_file("main/submodule/ignored_in_sub");
+        let main_ignored = additions.add_empty_file("main/ignored_in_main");
+        additions.build().unwrap();
+
+        let submodule_ignored_path = additions.path_of(&submodule_ignored);
+        let main_ignored_path = additions.path_of(&main_ignored);
 
         let mut cache = Cache::open_in_memory().unwrap();
         let cached_paths = full_scan(&mut cache, &main_path);
-
-        let submodule_ignored_path = main_path.join("submodule").join("ignored_in_sub");
-        let main_ignored_path = main_path.join("ignored_in_main");
 
         assert!(
             cached_paths.contains(&submodule_ignored_path),
@@ -1491,7 +1502,9 @@ mod tests {
         );
         assert!(cached_paths.contains(&main_ignored_path));
 
-        std::fs::write(main_path.join(".gitignore"), main_gitignore_after).unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/.gitignore", main_gitignore_after);
+        additions.build().unwrap();
 
         let cached_paths = rescan(
             &mut cache,
@@ -1509,7 +1522,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_main_repository_does_not_remove_nested_worktree_exclusions() {
-        let (_temp_dir, main_path) = create_main_repository("ignored_in_main\n");
+        let (temp_dir, main_path) = create_main_repository("ignored_in_main\n");
 
         run_git(&["-C", main_path.to_str().unwrap(), "branch", "feature"]);
         run_git(&[
@@ -1523,17 +1536,23 @@ mod tests {
         ]);
 
         let worktree_path = main_path.join("nested_worktree");
-        std::fs::write(worktree_path.join(".gitignore"), "ignored_in_worktree\n").unwrap();
+
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/nested_worktree/.gitignore", "ignored_in_worktree\n");
+        additions.build().unwrap();
+
         commit_all(&worktree_path, "add gitignore in worktree");
 
-        std::fs::write(worktree_path.join("ignored_in_worktree"), "").unwrap();
-        std::fs::write(main_path.join("ignored_in_main"), "").unwrap();
+        let mut additions = temp_dir.additions();
+        let worktree_ignored = additions.add_empty_file("main/nested_worktree/ignored_in_worktree");
+        let main_ignored = additions.add_empty_file("main/ignored_in_main");
+        additions.build().unwrap();
+
+        let worktree_ignored_path = additions.path_of(&worktree_ignored);
+        let main_ignored_path = additions.path_of(&main_ignored);
 
         let mut cache = Cache::open_in_memory().unwrap();
         let cached_paths = full_scan(&mut cache, &main_path);
-
-        let worktree_ignored_path = worktree_path.join("ignored_in_worktree");
-        let main_ignored_path = main_path.join("ignored_in_main");
 
         assert!(
             cached_paths.contains(&worktree_ignored_path),
@@ -1541,7 +1560,9 @@ mod tests {
         );
         assert!(cached_paths.contains(&main_ignored_path));
 
-        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n\n").unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/.gitignore", "ignored_in_main\n\n");
+        additions.build().unwrap();
 
         let cached_paths = rescan(
             &mut cache,
@@ -1558,23 +1579,28 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_adds_and_removes_exclusions_in_the_same_scan() {
-        let (_temp_dir, main_path) = create_main_repository("a\nb\n");
+        let (temp_dir, main_path) = create_main_repository("a\nb\n");
 
-        std::fs::write(main_path.join("a"), "").unwrap();
-        std::fs::write(main_path.join("b"), "").unwrap();
+        let mut additions = temp_dir.additions();
+        let a = additions.add_empty_file("main/a");
+        let b = additions.add_empty_file("main/b");
+        additions.build().unwrap();
+
+        let a_path = additions.path_of(&a);
+        let b_path = additions.path_of(&b);
 
         let mut cache = Cache::open_in_memory().unwrap();
         let cached_paths = full_scan(&mut cache, &main_path);
 
-        let a_path = main_path.join("a");
-        let b_path = main_path.join("b");
-        let c_path = main_path.join("c");
-
         assert!(cached_paths.contains(&a_path));
         assert!(cached_paths.contains(&b_path));
 
-        std::fs::write(main_path.join(".gitignore"), "b\nc\n").unwrap();
-        std::fs::write(&c_path, "").unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/.gitignore", "b\nc\n");
+        let c = additions.add_empty_file("main/c");
+        additions.build().unwrap();
+
+        let c_path = additions.path_of(&c);
 
         let cached_paths = rescan(
             &mut cache,
@@ -1599,10 +1625,12 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_excludes_a_new_ignored_file_in_a_not_collapsed_directory() {
-        let (_temp_dir, main_path) = create_main_repository("*.log\n");
-        let source_path = main_path.join("src");
-        std::fs::create_dir_all(&source_path).unwrap();
-        std::fs::write(source_path.join("main.rs"), "").unwrap();
+        let (temp_dir, main_path) = create_main_repository("*.log\n");
+
+        let mut additions = temp_dir.additions();
+        additions.add_empty_file("main/src/main.rs");
+        additions.build().unwrap();
+
         commit_all(&main_path, "add tracked file");
 
         let mut cache = Cache::open_in_memory().unwrap();
@@ -1612,8 +1640,11 @@ mod tests {
             "the repository has nothing ignored yet"
         );
 
-        let new_log_path = source_path.join("new.log");
-        std::fs::write(&new_log_path, "").unwrap();
+        let mut additions = temp_dir.additions();
+        let new_log = additions.add_empty_file("main/src/new.log");
+        additions.build().unwrap();
+
+        let new_log_path = additions.path_of(&new_log);
 
         let cached_paths = rescan(
             &mut cache,
@@ -1632,16 +1663,21 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_excludes_a_new_wholly_ignored_directory() {
-        let (_temp_dir, main_path) = create_main_repository("node_modules/\n");
+        let (temp_dir, main_path) = create_main_repository("node_modules/\n");
 
         let mut cache = Cache::open_in_memory().unwrap();
         let cached_paths = full_scan(&mut cache, &main_path);
         assert!(cached_paths.is_empty(), "'node_modules' does not exist yet");
 
-        let node_modules_path = main_path.join("node_modules");
-        std::fs::create_dir_all(&node_modules_path).unwrap();
-        std::fs::write(node_modules_path.join("a.js"), "").unwrap();
-        std::fs::write(node_modules_path.join("b.js"), "").unwrap();
+        let mut additions = temp_dir.additions();
+        let node_modules = additions.add_directory("main/node_modules");
+        additions.in_directory(&node_modules, |additions| {
+            additions.add_empty_file("a.js");
+            additions.add_empty_file("b.js");
+        });
+        additions.build().unwrap();
+
+        let node_modules_path = additions.path_of(&node_modules);
 
         let cached_paths = rescan(
             &mut cache,
@@ -1664,12 +1700,17 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_removes_a_directory_exclusion_when_a_non_ignored_file_appears_in_it() {
-        let (_temp_dir, main_path) = create_main_repository("*.log\n");
+        let (temp_dir, main_path) = create_main_repository("*.log\n");
 
-        let big_dir_path = main_path.join("big_dir");
-        std::fs::create_dir_all(&big_dir_path).unwrap();
-        std::fs::write(big_dir_path.join("a.log"), "").unwrap();
-        std::fs::write(big_dir_path.join("b.log"), "").unwrap();
+        let mut additions = temp_dir.additions();
+        let big_dir = additions.add_directory("main/big_dir");
+        additions.in_directory(&big_dir, |additions| {
+            additions.add_empty_file("a.log");
+            additions.add_empty_file("b.log");
+        });
+        additions.build().unwrap();
+
+        let big_dir_path = additions.path_of(&big_dir);
 
         let mut cache = Cache::open_in_memory().unwrap();
         let cached_paths = full_scan(&mut cache, &main_path);
@@ -1678,8 +1719,11 @@ mod tests {
             "the initial scan should have excluded the wholly ignored directory"
         );
 
-        let kept_path = big_dir_path.join("keep.txt");
-        std::fs::write(&kept_path, "").unwrap();
+        let mut additions = temp_dir.additions();
+        let kept = additions.add_empty_file("main/big_dir/keep.txt");
+        additions.build().unwrap();
+
+        let kept_path = additions.path_of(&kept);
 
         let cached_paths = rescan(&mut cache, &main_path, BTreeSet::from([kept_path]));
 
@@ -1695,18 +1739,24 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_main_repository_removes_the_exclusion_it_created_for_a_nested_repository() {
-        let (_temp_dir, main_path) = create_main_repository("ignored_in_main\n");
+        let (temp_dir, main_path) = create_main_repository("ignored_in_main\n");
 
         let nested_path = main_path.join("nested");
         crate::commands::tests::init_git_repository(&nested_path);
-        std::fs::write(nested_path.join(".gitignore"), "ignored_in_nested\n").unwrap();
+
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/nested/.gitignore", "ignored_in_nested\n");
+        additions.build().unwrap();
+
         commit_all(&nested_path, "init nested repository");
 
-        std::fs::write(nested_path.join("ignored_in_nested"), "").unwrap();
-        std::fs::write(main_path.join("ignored_in_main"), "").unwrap();
+        let mut additions = temp_dir.additions();
+        let nested_ignored = additions.add_empty_file("main/nested/ignored_in_nested");
+        let main_ignored = additions.add_empty_file("main/ignored_in_main");
+        additions.build().unwrap();
 
-        let main_ignored_path = main_path.join("ignored_in_main");
-        let nested_ignored_path = nested_path.join("ignored_in_nested");
+        let main_ignored_path = additions.path_of(&main_ignored);
+        let nested_ignored_path = additions.path_of(&nested_ignored);
 
         let mut cache = Cache::open_in_memory().unwrap();
         let cached_paths = full_scan(&mut cache, &main_path);
@@ -1716,7 +1766,9 @@ mod tests {
             "the initial scan should have excluded the ignored file of each repository"
         );
 
-        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\nnested/\n").unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/.gitignore", "ignored_in_main\nnested/\n");
+        additions.build().unwrap();
 
         let cached_paths = rescan(
             &mut cache,
@@ -1735,7 +1787,9 @@ mod tests {
              without dropping the exclusion owned by the nested repository"
         );
 
-        std::fs::write(main_path.join(".gitignore"), "ignored_in_main\n").unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/.gitignore", "ignored_in_main\n");
+        additions.build().unwrap();
 
         let cached_paths = rescan(
             &mut cache,
@@ -1755,10 +1809,16 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_removes_an_exclusion_after_a_repository_appears_under_it() {
-        let (_temp_dir, main_path) = create_main_repository("vendor/thing\n");
-        let thing_path = main_path.join("vendor").join("thing");
-        std::fs::create_dir_all(&thing_path).unwrap();
-        std::fs::write(thing_path.join("file"), "").unwrap();
+        let (temp_dir, main_path) = create_main_repository("vendor/thing\n");
+
+        let mut additions = temp_dir.additions();
+        let thing = additions.add_directory("main/vendor/thing");
+        additions.in_directory(&thing, |additions| {
+            additions.add_empty_file("file");
+        });
+        additions.build().unwrap();
+
+        let thing_path = additions.path_of(&thing);
 
         let mut cache = Cache::open_in_memory().unwrap();
         let cached_paths = full_scan(&mut cache, &main_path);
@@ -1768,7 +1828,10 @@ mod tests {
         );
 
         crate::commands::tests::init_git_repository(main_path.join("vendor"));
-        std::fs::write(main_path.join(".gitignore"), "\n").unwrap();
+
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/.gitignore", "\n");
+        additions.build().unwrap();
 
         let cached_paths = rescan(
             &mut cache,
@@ -1789,13 +1852,18 @@ mod tests {
     fn test_a_cache_written_before_the_repository_was_recorded_is_usable_after_a_full_scan() {
         let (temp_dir, main_path) = create_main_repository("a\nbig_dir\n");
 
-        let a_path = main_path.join("a");
-        let big_dir_path = main_path.join("big_dir");
-        std::fs::write(&a_path, "").unwrap();
-        std::fs::create_dir_all(&big_dir_path).unwrap();
-        std::fs::write(big_dir_path.join("b"), "").unwrap();
+        let mut additions = temp_dir.additions();
+        let a = additions.add_empty_file("main/a");
+        let big_dir = additions.add_directory("main/big_dir");
+        additions.in_directory(&big_dir, |additions| {
+            additions.add_empty_file("b");
+        });
+        additions.build().unwrap();
 
-        let cache_file_path = temp_dir.path().join("cache.db");
+        let a_path = additions.path_of(&a);
+        let big_dir_path = additions.path_of(&big_dir);
+
+        let cache_file_path = temp_dir.join("cache.db");
         crate::cache::tests::write_version_1_cache(
             &cache_file_path,
             &[
@@ -1820,7 +1888,9 @@ mod tests {
             "the full scan must re-attribute every exclusion to the repository that produced it"
         );
 
-        std::fs::write(main_path.join(".gitignore"), "big_dir\n").unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/.gitignore", "big_dir\n");
+        additions.build().unwrap();
 
         let cached_paths = rescan(
             &mut cache,
@@ -1836,16 +1906,25 @@ mod tests {
         );
     }
 
-    fn assert_rescan_preserves_exclusions(main_path: &Path, directory: &Path, count: usize) {
-        let mut ignored_paths = BTreeSet::new();
-        for i in 0..count {
-            let file_path = directory.join(format!("file_{i}.ignored"));
-            std::fs::write(&file_path, "").unwrap();
-            ignored_paths.insert(file_path);
-        }
+    fn assert_rescan_preserves_exclusions(
+        temp_dir: &TempDirectory,
+        main: impl AsRef<Path>,
+        directory: impl AsRef<Path>,
+        count: usize,
+    ) {
+        let main = main.as_ref();
+        let directory = directory.as_ref();
+        let main_path = temp_dir.join(main);
+        let mut additions = temp_dir.additions();
+        let ignored: Vec<_> = (0..count)
+            .map(|index| additions.add_empty_file(directory.join(format!("file_{index}.ignored"))))
+            .collect();
+        additions.build().unwrap();
+
+        let ignored_paths: BTreeSet<_> = ignored.iter().map(|key| additions.path_of(key)).collect();
 
         let mut cache = Cache::open_in_memory().unwrap();
-        let cached_paths = full_scan(&mut cache, main_path);
+        let cached_paths = full_scan(&mut cache, &main_path);
         for path in &ignored_paths {
             assert!(
                 cached_paths.contains(path),
@@ -1854,11 +1933,13 @@ mod tests {
         }
         assert_eq!(cached_paths.len(), ignored_paths.len());
 
-        std::fs::write(main_path.join(".gitignore"), "*.ignored\n\n").unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_text_file(main.join(".gitignore"), "*.ignored\n\n");
+        additions.build().unwrap();
 
         let cached_paths = rescan(
             &mut cache,
-            main_path,
+            &main_path,
             BTreeSet::from([main_path.join(".gitignore")]),
         );
 
@@ -1874,37 +1955,51 @@ mod tests {
     #[test]
     #[serial]
     fn test_rescan_large_ignored_tree_preserves_exclusions() {
-        let (_temp_dir, main_path) = create_main_repository("*.ignored\n");
+        let (temp_dir, _main_path) = create_main_repository("*.ignored\n");
 
-        assert_rescan_preserves_exclusions(&main_path, &main_path, 1000);
+        assert_rescan_preserves_exclusions(&temp_dir, "main", "main", 1000);
     }
 
     #[test]
     #[serial]
     #[ignore = "large-scale scenario kept for stress-testing and manual profiling; run explicitly with `cargo test -- --ignored`"]
     fn test_rescan_large_ignored_tree_preserves_exclusions_at_scale() {
-        let (_temp_dir, main_path) = create_main_repository("*.ignored\n");
+        let (temp_dir, main_path) = create_main_repository("*.ignored\n");
 
-        let deep_path = main_path.join("a").join("b").join("c");
-        std::fs::create_dir_all(&deep_path).unwrap();
-        std::fs::write(deep_path.join(".keep"), "").unwrap();
+        let mut additions = temp_dir.additions();
+        let deep = additions.add_directory("main/a/b/c");
+        additions.in_directory(&deep, |additions| {
+            additions.add_empty_file(".keep");
+        });
+        additions.build().unwrap();
+
         commit_all(&main_path, "add deep sentinel");
 
-        assert_rescan_preserves_exclusions(&main_path, &deep_path, test_iterations(100_000));
+        assert_rescan_preserves_exclusions(
+            &temp_dir,
+            "main",
+            "main/a/b/c",
+            test_iterations(100_000),
+        );
     }
 
     #[test]
     #[serial]
     #[ignore = "kept for stress-testing and manual profiling; run explicitly with `cargo test -- --ignored`"]
     fn test_rescan_huge_ignored_tree_with_no_nested_repositories() {
-        let (_temp_dir, main_path) = create_main_repository("big_dir\n");
+        let (temp_dir, main_path) = create_main_repository("big_dir\n");
 
-        let big_dir = main_path.join("big_dir");
-        std::fs::create_dir_all(&big_dir).unwrap();
+        let mut additions = temp_dir.additions();
+        let big_dir_key = additions.add_directory("main/big_dir");
         let iterations = test_iterations(200_000);
-        for i in 0..iterations {
-            std::fs::write(big_dir.join(format!("file_{i}")), "").unwrap();
-        }
+        additions.in_directory(&big_dir_key, |additions| {
+            for index in 0..iterations {
+                additions.add_empty_file(format!("file_{index}"));
+            }
+        });
+        additions.build().unwrap();
+
+        let big_dir = additions.path_of(&big_dir_key);
 
         let mut cache = Cache::open_in_memory().unwrap();
         let cached_paths = full_scan(&mut cache, &main_path);
@@ -1914,7 +2009,9 @@ mod tests {
             "git ls-files --directory collapses a wholly-ignored directory into one entry"
         );
 
-        std::fs::write(main_path.join(".gitignore"), "big_dir\n\n").unwrap();
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/.gitignore", "big_dir\n\n");
+        additions.build().unwrap();
 
         let cached_paths = rescan(
             &mut cache,
@@ -1928,33 +2025,35 @@ mod tests {
     #[test]
     fn test_find_repositories_to_scan() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-        let repository_path = temp_dir_path.join("repository");
-        let outside_path = temp_dir_path.join("outside");
+        let repository_path = temp_dir.join("repository");
+        let outside_path = temp_dir.join("outside");
 
         crate::commands::tests::init_git_repository(&repository_path);
         crate::commands::tests::init_git_repository(&outside_path);
-        std::fs::write(repository_path.join(".gitignore"), "target\n*.log\n").unwrap();
+        let mut additions = temp_dir.additions();
+        let repository = additions.add_directory("repository");
+        let (target, logs, kept, source, new_log) =
+            additions.in_directory(&repository, |additions| {
+                additions.add_text_file(".gitignore", "target\n*.log\n");
+                let target = additions.add_directory("target/debug");
+                additions.add_empty_file("target/debug/binary");
+                let logs = additions.add_directory("logs");
+                additions.add_empty_file("logs/a.log");
+                let kept = additions.add_empty_file("logs/keep.txt");
+                let source = additions.add_directory("src");
+                additions.add_empty_file("src/main.rs");
+                let new_log = additions.add_empty_file("new.log");
 
-        let target_path = repository_path.join("target").join("debug");
-        std::fs::create_dir_all(&target_path).unwrap();
-        std::fs::write(target_path.join("binary"), "").unwrap();
+                (target, logs, kept, source, new_log)
+            });
+        additions.add_empty_file("outside/file");
+        additions.build().unwrap();
 
-        let logs_path = repository_path.join("logs");
-        std::fs::create_dir_all(&logs_path).unwrap();
-        std::fs::write(logs_path.join("a.log"), "").unwrap();
-
-        let kept_path = logs_path.join("keep.txt");
-        std::fs::write(&kept_path, "").unwrap();
-
-        let source_path = repository_path.join("src");
-        std::fs::create_dir_all(&source_path).unwrap();
-        std::fs::write(source_path.join("main.rs"), "").unwrap();
-
-        let new_log_path = repository_path.join("new.log");
-        std::fs::write(&new_log_path, "").unwrap();
-
-        std::fs::write(outside_path.join("file"), "").unwrap();
+        let target_path = temp_dir.path_of(&target);
+        let logs_path = temp_dir.path_of(&logs);
+        let kept_path = temp_dir.path_of(&kept);
+        let source_path = temp_dir.path_of(&source);
+        let new_log_path = temp_dir.path_of(&new_log);
 
         let search_directories = BTreeSet::from([repository_path.clone()]);
         let mut cache = Cache::open_in_memory().unwrap();
@@ -2052,7 +2151,7 @@ mod tests {
     #[serial]
     fn test_config_file_does_not_exist() {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let config_file_path = temp_dir.path().join("non_existent_file.config");
+        let config_file_path = temp_dir.join("non_existent_file.config");
         let thread_handle = std::thread::spawn(move || {
             let mut cache = Cache::open_in_memory().unwrap();
             super::execute(&config_file_path, None, &mut cache, true, false).unwrap();
@@ -2066,16 +2165,22 @@ mod tests {
     #[test]
     #[serial]
     fn test_initial_scan() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_directory("folder/repository")
-            .add_text_file("folder/repository/.gitignore", "a\nb\nc")
-            .add_empty_file("folder/repository/a")
-            .add_empty_file("folder/repository/b")
-            .add_empty_file("folder/repository/c")
-            .build()
-            .unwrap();
-        let folder_path = temp_dir.path().join("folder");
-        let repository_path = folder_path.join("repository");
+        let mut builder = TempDirectoryBuilder::default();
+        let folder = builder.add_directory("folder");
+        let repository = builder.in_directory(&folder, |builder| {
+            let repository = builder.add_directory("repository");
+            builder.in_directory(&repository, |builder| {
+                builder.add_text_file(".gitignore", "a\nb\nc");
+                builder.add_empty_file("a");
+                builder.add_empty_file("b");
+                builder.add_empty_file("c");
+            });
+
+            repository
+        });
+        let temp_dir = builder.build().unwrap();
+        let folder_path = temp_dir.path_of(&folder);
+        let repository_path = temp_dir.path_of(&repository);
         let config_file_path = folder_path.join("config.json");
         let config = crate::commands::tests::create_config(&folder_path);
         save_json_file(&config_file_path, &config).unwrap();
