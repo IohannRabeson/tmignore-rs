@@ -240,7 +240,7 @@ pub(crate) mod tests {
 
     fn prepare_temp_dir() -> TempDirectoryBuilder<'static> {
         let mut builder = TempDirectoryBuilder::default();
-        builder.random_root_in(std::env::current_dir().unwrap());
+        builder.random_root_in(env!("CARGO_MANIFEST_DIR"));
         builder
     }
 
