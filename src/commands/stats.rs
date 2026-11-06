@@ -88,15 +88,15 @@ mod tests {
 
     #[test]
     fn test_execute() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_text_file("a", "a")
-            .add_text_file("dir/b", "bb")
-            .add_text_file("c", "ccc")
-            .build()
-            .unwrap();
+        let mut builder = TempDirectoryBuilder::default();
+        let a = builder.add_text_file("a", "a");
+        let dir = builder.add_directory("dir");
+        builder.add_text_file("dir/b", "bb");
+        builder.add_text_file("c", "ccc");
+        let temp_dir = builder.build().unwrap();
         let mut cache = Cache::open_in_memory().unwrap();
-        let a = temp_dir.path().join("a");
-        let dir = temp_dir.path().join("dir");
+        let a = temp_dir.path_of(&a);
+        let dir = temp_dir.path_of(&dir);
         cache
             .add_paths(crate::cache::tests::orphans([a, dir]).into_iter())
             .unwrap();
@@ -111,13 +111,12 @@ mod tests {
 
     #[test]
     fn test_execute_size_humanize() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_text_file("a", "abc")
-            .build()
-            .unwrap();
+        let mut builder = TempDirectoryBuilder::default();
+        let a = builder.add_text_file("a", "abc");
+        let temp_dir = builder.build().unwrap();
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .add_paths(crate::cache::tests::orphans([temp_dir.path().join("a")]).into_iter())
+            .add_paths(crate::cache::tests::orphans([temp_dir.path_of(&a)]).into_iter())
             .unwrap();
         let mut buffer = vec![];
 
@@ -128,14 +127,16 @@ mod tests {
 
     #[test]
     fn test_execute_size_nested_directory() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_text_file("top/sub/deep", "xyz")
-            .add_text_file("top/shallow", "ab")
-            .build()
-            .unwrap();
+        let mut builder = TempDirectoryBuilder::default();
+        let top = builder.add_directory("top");
+        builder.in_directory(&top, |builder| {
+            builder.add_text_file("sub/deep", "xyz");
+            builder.add_text_file("shallow", "ab");
+        });
+        let temp_dir = builder.build().unwrap();
         let mut cache = Cache::open_in_memory().unwrap();
         cache
-            .add_paths(crate::cache::tests::orphans([temp_dir.path().join("top")]).into_iter())
+            .add_paths(crate::cache::tests::orphans([temp_dir.path_of(&top)]).into_iter())
             .unwrap();
         let mut buffer = vec![];
 
@@ -168,15 +169,14 @@ mod tests {
 
     #[test]
     fn test_fetch_total_size_does_not_follow_symlinks_outside_directory() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_text_file("outside/big.txt", "0123456789")
-            .add_directory("excluded")
-            .build()
-            .unwrap();
-        let outside = temp_dir.path().join("outside");
-        let excluded = temp_dir.path().join("excluded");
+        let mut builder = TempDirectoryBuilder::default();
+        let outside = builder.add_directory("outside");
+        builder.add_text_file("outside/big.txt", "0123456789");
+        let excluded = builder.add_directory("excluded");
         // A symlink inside the excluded directory pointing at an unrelated tree.
-        std::os::unix::fs::symlink(&outside, excluded.join("link")).unwrap();
+        builder.add_symlink_to("excluded/link", &outside);
+        let temp_dir = builder.build().unwrap();
+        let excluded = temp_dir.path_of(&excluded);
 
         let total = super::fetch_total_size(&[excluded]).unwrap();
 
