@@ -211,7 +211,7 @@ pub(crate) mod tests {
         time::Duration,
     };
 
-    use temp_dir_builder::{TempDirectory, TempDirectoryBuilder};
+    use temp_dir_builder::{EntryKey, TempDirectory, TempDirectoryBuilder};
 
     use crate::{
         commands::{TimeMachineTrait, apply_diff_and_print, create_whitelist},
@@ -225,47 +225,47 @@ pub(crate) mod tests {
             const { std::cell::Cell::new(0) };
     }
 
-    /// Return the path of a test directory in the crate directory, deleted first if a previous
-    /// run left it behind.
-    ///
-    /// `std::env::temp_dir` is unusable: it is excluded from Time Machine.
-    pub(crate) fn prepare_test_directory(name: &str) -> PathBuf {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name);
-
-        if path.is_dir() {
-            std::fs::remove_dir_all(&path).unwrap();
-        }
-
-        path
+    pub(crate) fn time_machine_visible_builder() -> TempDirectoryBuilder<'static> {
+        let mut builder = TempDirectoryBuilder::default();
+        builder.random_root_in(env!("CARGO_MANIFEST_DIR"));
+        builder
     }
 
     /// Create a Git repository with some files.
     ///
-    /// When `root_directory` is None, the temporary directory is created in `/tmp`
-    /// which is excluded from Time Machine backup, meaning all children files and directories
-    /// will be considered excluded from Time Machine backup anyway (`tmutil isexcluded` will always returns "[Excluded]").
-    pub(crate) fn create_repository(root_directory: Option<&Path>) -> TempDirectory {
+    /// `root_directory` selects a fixed, caller-named location, needed when a
+    /// test has to know the path before the repository is built (e.g. to pass
+    /// a relative path to it). Otherwise pass `None`: the repository is
+    /// created under a random name in the crate directory rather than
+    /// `std::env::temp_dir()`, which is excluded from Time Machine backup, so
+    /// `tmutil isexcluded` would always answer "[Excluded]" regardless of what
+    /// the code under test does.
+    pub(crate) fn create_repository(
+        root_directory: Option<&Path>,
+    ) -> (TempDirectory, EntryKey, EntryKey, EntryKey) {
         if let Some(root_directory) = root_directory
             && root_directory.exists()
             && root_directory.is_dir()
         {
             std::fs::remove_dir_all(root_directory).unwrap();
         }
-        let mut temp_dir_builder = TempDirectoryBuilder::default();
-        if let Some(root_directory) = root_directory {
-            temp_dir_builder = temp_dir_builder.root_folder(root_directory);
-        }
-        let temp_dir = temp_dir_builder
-            .add_text_file(".gitignore", "a\nb\n")
-            .add_empty_file("a")
-            .add_empty_file("b")
-            .add_empty_file("c")
-            .build()
-            .unwrap();
+        let mut temp_dir_builder = match root_directory {
+            Some(root_directory) => {
+                let mut temp_dir_builder = TempDirectoryBuilder::default();
+                temp_dir_builder.root_folder(root_directory);
+                temp_dir_builder
+            }
+            None => time_machine_visible_builder(),
+        };
+        temp_dir_builder.add_text_file(".gitignore", "a\nb\n");
+        let a = temp_dir_builder.add_empty_file("a");
+        let b = temp_dir_builder.add_empty_file("b");
+        let c = temp_dir_builder.add_empty_file("c");
+        let temp_dir = temp_dir_builder.build().unwrap();
 
-        init_git_repository(temp_dir.path());
+        init_git_repository(&temp_dir);
 
-        temp_dir
+        (temp_dir, a, b, c)
     }
 
     pub(crate) fn init_git_repository(directory_path: impl AsRef<Path>) {
@@ -356,12 +356,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_apply_diff_add_print_error() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_empty_file("a")
-            .build()
-            .unwrap();
+        let mut builder = TempDirectoryBuilder::default();
+        let a = builder.add_empty_file("a");
+        let temp_dir = builder.build().unwrap();
         let diff = Diff {
-            added: BTreeSet::from([temp_dir.path().join("a")]),
+            added: BTreeSet::from([temp_dir.path_of(&a)]),
             removed: BTreeSet::new(),
         };
         let error_paths = apply_diff_and_print::<MockTimeMachineError>(&diff, false, false);
@@ -371,12 +370,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_apply_diff_remove_print_error() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_empty_file("a")
-            .build()
-            .unwrap();
+        let mut builder = TempDirectoryBuilder::default();
+        let a = builder.add_empty_file("a");
+        let temp_dir = builder.build().unwrap();
         let diff = Diff {
-            removed: BTreeSet::from([temp_dir.path().join("a")]),
+            removed: BTreeSet::from([temp_dir.path_of(&a)]),
             added: BTreeSet::new(),
         };
         let _ = apply_diff_and_print::<MockTimeMachineError>(&diff, false, false);
@@ -408,12 +406,12 @@ pub(crate) mod tests {
 
     #[test]
     fn test_apply_diff_does_not_remove_an_item_it_adds_under_another_spelling() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_empty_file("foo/a")
-            .build()
-            .unwrap();
-        let lower_case_path = temp_dir.path().join("foo");
-        let upper_case_path = temp_dir.path().join("Foo");
+        let mut builder = TempDirectoryBuilder::default();
+        let foo = builder.add_directory("foo");
+        builder.add_empty_file("foo/a");
+        let temp_dir = builder.build().unwrap();
+        let lower_case_path = temp_dir.path_of(&foo);
+        let upper_case_path = temp_dir.join("Foo");
 
         assert!(
             upper_case_path.exists(),
@@ -440,13 +438,13 @@ pub(crate) mod tests {
 
     #[test]
     fn test_apply_diff_removes_the_target_of_a_symlink_it_adds() {
-        let temp_dir = TempDirectoryBuilder::default()
-            .add_empty_file("data/a")
-            .build()
-            .unwrap();
-        let target_path = temp_dir.path().join("data");
-        let link_path = temp_dir.path().join("link");
-        std::os::unix::fs::symlink(&target_path, &link_path).unwrap();
+        let mut builder = TempDirectoryBuilder::default();
+        let data = builder.add_directory("data");
+        builder.add_empty_file("data/a");
+        let link = builder.add_symlink_to("link", &data);
+        let temp_dir = builder.build().unwrap();
+        let target_path = temp_dir.path_of(&data);
+        let link_path = temp_dir.path_of(&link);
 
         let diff = Diff {
             added: BTreeSet::from([link_path.clone()]),
