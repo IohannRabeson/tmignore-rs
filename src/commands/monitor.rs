@@ -1002,26 +1002,57 @@ mod monitor_details {
         fn test_spawn_monitor_thread_merges_the_events_it_cannot_send_yet() {
             const FILE_COUNT: usize = super::EVENT_QUEUE_SIZE * 4;
 
-            let WatchedMonitorThread {
-                temp_dir,
-                event_receiver,
-                thread_handle,
-                control_sender,
-            } = spawn_monitor_thread_watching_a_temp_dir();
+            let (unused_fs_event_sender, _unused_fs_event_receiver) =
+                crossbeam_channel::unbounded();
+            let watcher = <notify::RecommendedWatcher as notify::Watcher>::new(
+                unused_fs_event_sender,
+                notify::Config::default(),
+            )
+            .unwrap();
+            let mut state = super::MonitorState {
+                watcher,
+                watched_paths: BTreeSet::new(),
+                configuration_file_path: None,
+                global_gitignore: None,
+                pending_events: super::PendingEvents::default(),
+            };
 
-            let expected_paths = write_files(&temp_dir, "filler", FILE_COUNT);
-            std::thread::sleep(Duration::from_secs(2));
+            let (event_sender, event_receiver) = crossbeam_channel::bounded(1);
+            event_sender.send(Event::ReloadConfiguration).unwrap();
+            let (_control_sender, control_receiver) = crossbeam_channel::bounded(1);
+            let (fs_event_sender, fs_event_receiver) = crossbeam_channel::unbounded();
+
+            let expected_paths: BTreeSet<PathBuf> = (0..FILE_COUNT)
+                .map(|index| PathBuf::from(format!("/filler{index}")))
+                .collect();
+            for path in &expected_paths {
+                fs_event_sender
+                    .send(Ok(notify::Event::new(notify::EventKind::Create(
+                        notify::event::CreateKind::File,
+                    ))
+                    .add_path(path.clone())))
+                    .unwrap();
+            }
+
+            let thread_handle = std::thread::spawn(move || {
+                if let Ok(Ok(event)) = fs_event_receiver.recv() {
+                    state.collect_event(event);
+                }
+                let _ =
+                    state.send_pending_events(&event_sender, &control_receiver, &fs_event_receiver);
+            });
+
+            std::thread::sleep(super::SEND_TIMEOUT * 10);
 
             let mut event_count = 0;
             let mut received_paths = BTreeSet::new();
-            while let Ok(event) = event_receiver.recv_timeout(Duration::from_secs(2)) {
+            while let Ok(event) = event_receiver.recv() {
                 event_count += 1;
                 if let Event::ScanPaths(paths) = event {
                     received_paths.extend(paths);
                 }
             }
 
-            let _ = control_sender.send(MonitorControl::Shutdown);
             thread_handle.join().unwrap();
 
             assert!(
