@@ -1,4 +1,4 @@
-# tmignore-rs [![codecov](https://codecov.io/gh/IohannRabeson/tmignore-rs/graph/badge.svg?token=B5Q69GVFGN)](https://codecov.io/gh/IohannRabeson/tmignore-rs)
+# tmignore-rs
 Makes Time Machine respect .gitignore files.  
 This tool is a drop-in replacement for [tmignore](https://github.com/samuelmeuli/tmignore) but with
 a brand new command 'monitor' that will in (almost) real time update the cache if changes on the filesystem are detected.
@@ -187,5 +187,3 @@ Create a new release with a version as tag (eg: 1.2.3). This will trigger an act
 ## Coverage
 I'm using [Tarpaulin](https://github.com/xd009642/tarpaulin) to measure test coverage.
 When developing run tarpaulin before doing changes, then run it later with your changes and tarpaulin will tell you how the coverage progressed.
-
-![Coverage chart](https://codecov.io/gh/IohannRabeson/tmignore-rs/graphs/tree.svg?token=B5Q69GVFGN)
