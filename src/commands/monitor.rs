@@ -89,6 +89,12 @@ fn handle_event(
                     .cache
                     .find_diff_created_by(repository_to_scan, &exclusions)?;
 
+                super::apply_unchanged_exclusions::<TimeMachine>(
+                    &exclusions,
+                    &diff,
+                    context.dry_run,
+                );
+
                 if diff.added.is_empty() && diff.removed.is_empty() {
                     debug!(
                         "No changes in repository '{}'",
@@ -1764,6 +1770,28 @@ mod tests {
             "the directory is no longer wholly ignored so git stopped collapsing it: its \
              exclusion must be removed, otherwise the new file is left out of the backup, \
              and the exclusions of the ignored files it contains must be kept"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_rescan_excludes_again_a_file_replaced_at_the_same_path() {
+        let (temp_dir, a, ..) = crate::commands::tests::create_repository(None);
+        let mut cache = Cache::open_in_memory().unwrap();
+        let a_path = temp_dir.path_of(&a);
+
+        full_scan(&mut cache, temp_dir.path());
+        crate::commands::tests::replace_excluded_file(&a_path);
+        rescan(
+            &mut cache,
+            temp_dir.path(),
+            BTreeSet::from([a_path.clone()]),
+        );
+
+        assert!(
+            crate::timemachine::tests::is_excluded_from_time_machine(&a_path),
+            "the cache still lists the path of the replaced file, so the rescan finds nothing to \
+             add or remove, but the new file must be excluded"
         );
     }
 
