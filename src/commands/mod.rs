@@ -110,6 +110,27 @@ fn apply_diff_and_print<TM: TimeMachineTrait>(
     add_failed_paths
 }
 
+fn apply_unchanged_exclusions<TM: TimeMachineTrait>(
+    exclusions: &[Exclusion],
+    diff: &crate::diff::Diff,
+    dry_run: bool,
+) {
+    if dry_run {
+        return;
+    }
+
+    let unchanged: BTreeSet<PathBuf> = exclusions
+        .iter()
+        .map(Exclusion::path)
+        .filter(|path| !diff.added.contains(*path))
+        .map(Path::to_path_buf)
+        .collect();
+
+    for error in TM::add_exclusions(unchanged.iter()) {
+        warn!("Error: {}: {}", error.path.display(), error.message);
+    }
+}
+
 fn removals_to_apply(diff: &crate::diff::Diff) -> Vec<&PathBuf> {
     if diff.added.is_empty() || diff.removed.is_empty() {
         return diff.removed.iter().collect();
@@ -323,6 +344,24 @@ pub(crate) mod tests {
         unsafe {
             libc::kill(libc::getpid(), signal_hook::consts::SIGINT);
         }
+    }
+
+    pub(crate) fn replace_excluded_file(path: impl AsRef<Path>) {
+        let path = path.as_ref();
+
+        assert!(
+            crate::timemachine::tests::is_excluded_from_time_machine(path),
+            "the file must be excluded before it is replaced"
+        );
+
+        std::fs::remove_file(path).unwrap();
+        std::fs::write(path, "").unwrap();
+
+        assert!(
+            !crate::timemachine::tests::is_excluded_from_time_machine(path),
+            "the file created at the same path is a new item, so it must not carry the exclusion \
+             of the file it replaces"
+        );
     }
 
     #[test]

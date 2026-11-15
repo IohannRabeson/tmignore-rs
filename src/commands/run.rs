@@ -53,6 +53,8 @@ pub fn execute(
 
         let diff = cache.find_diff(&exclusions)?;
 
+        super::apply_unchanged_exclusions::<TimeMachine>(&exclusions, &diff, dry_run);
+
         let paths_failed_to_add =
             super::apply_diff_and_print::<TimeMachine>(&diff, dry_run, details);
 
@@ -69,6 +71,8 @@ pub fn execute(
 #[cfg(test)]
 pub(crate) mod tests {
     use std::path::Path;
+
+    use rstest::rstest;
 
     use crate::cache::Cache;
 
@@ -279,5 +283,26 @@ pub(crate) mod tests {
         assert!(!crate::timemachine::tests::is_excluded_from_time_machine(
             c_file_path
         ));
+    }
+
+    #[rstest]
+    #[case::excluded_again_by_a_scan(false, true)]
+    #[case::left_untouched_by_a_dry_run(true, false)]
+    fn test_file_replaced_at_the_same_path(#[case] dry_run: bool, #[case] expected_excluded: bool) {
+        let (temp_dir, a, ..) = crate::commands::tests::create_repository(None);
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&temp_dir);
+        let a_file_path = temp_dir.path_of(&a);
+
+        super::execute(&config, &mut cache, false, false).unwrap();
+        crate::commands::tests::replace_excluded_file(&a_file_path);
+        super::execute(&config, &mut cache, dry_run, false).unwrap();
+
+        assert_eq!(
+            expected_excluded,
+            crate::timemachine::tests::is_excluded_from_time_machine(&a_file_path),
+            "the cache still lists the path of the replaced file, so the scan finds nothing to \
+             add, but the new file must be excluded unless it is a dry run"
+        );
     }
 }
