@@ -21,22 +21,38 @@ pub fn execute(
     let mut exclusions: Vec<Exclusion> = Vec::new();
 
     info!("Searching for Git repositories...");
-    if let Some((rx, thread_handle)) = git::find_repositories(
+    if let Some((mut rx, mut thread_handle)) = git::find_repositories(
         &config.search_directories,
         &config.ignored_directories,
         config.threads,
     ) {
-        while let Ok(repository_path) = rx.recv() {
-            if repositories.insert(repository_path.clone()) {
-                super::find_paths_to_exclude_from_backup(
-                    repository_path,
-                    &whitelist,
-                    &mut exclusions,
-                )?;
+        loop {
+            let mut whitelisted_directories = BTreeSet::new();
+
+            while let Ok(repository_path) = rx.recv() {
+                if repositories.insert(repository_path.clone()) {
+                    whitelisted_directories.extend(super::find_paths_to_exclude_from_backup(
+                        repository_path,
+                        &whitelist,
+                        &mut exclusions,
+                    )?);
+                }
+            }
+
+            super::join_thread(thread_handle)?;
+
+            match git::find_repositories(
+                &whitelisted_directories,
+                &config.ignored_directories,
+                config.threads,
+            ) {
+                Some(repositories_in_whitelisted_directories) => {
+                    (rx, thread_handle) = repositories_in_whitelisted_directories;
+                }
+                None => break,
             }
         }
 
-        super::join_thread(thread_handle)?;
         super::sort_and_dedup(&mut exclusions);
 
         info!(
@@ -198,6 +214,40 @@ pub(crate) mod tests {
             "the directory was renamed by case only so it is the same directory, and the \
              filesystem is case insensitive, so removing the old spelling must not undo the \
              exclusion of the new one"
+        );
+    }
+
+    #[rstest]
+    #[case::the_repository_is_ignored("nested/\n", "nested", "nested")]
+    #[case::the_content_of_the_repository_is_ignored("nested/*\n", "nested", "nested")]
+    #[case::the_directory_of_the_repository_is_ignored("vendor/\n", "vendor", "vendor/dependency")]
+    fn test_repository_in_an_ignored_directory_kept_by_the_whitelist(
+        #[case] outer_gitignore: &str,
+        #[case] whitelisted: &str,
+        #[case] inner: &str,
+    ) {
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
+        builder.add_text_file("outer/.gitignore", outer_gitignore);
+        builder.add_text_file(format!("outer/{inner}/.gitignore"), "build/\n");
+        builder.add_empty_file(format!("outer/{inner}/build/artifact"));
+        builder.add_empty_file(format!("outer/{inner}/kept"));
+        let temp_dir = builder.build().unwrap();
+        let outer_path = temp_dir.join("outer");
+        let inner_path = outer_path.join(inner);
+        let mut cache = Cache::open_in_memory().unwrap();
+        let mut config = crate::commands::tests::create_config(&outer_path);
+
+        config.whitelist_patterns.insert(format!("*/{whitelisted}"));
+        crate::commands::tests::init_git_repository(&outer_path);
+        crate::commands::tests::init_git_repository(&inner_path);
+
+        super::execute(&config, &mut cache, false, false).unwrap();
+
+        assert_eq!(
+            vec![inner_path.join("build")],
+            cache.paths().unwrap(),
+            "the whitelist keeps the directory the outer repository ignores in the backup, so the \
+             repository it holds must be scanned like any other"
         );
     }
 
