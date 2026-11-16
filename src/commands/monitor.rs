@@ -70,12 +70,26 @@ fn handle_event(
             )?;
         }
         Event::ScanPaths(dirty_paths) => {
-            let repositories_to_scan = find_repositories_to_scan(
+            let mut repositories_to_scan = find_repositories_to_scan(
                 &dirty_paths,
                 &context.config.search_directories,
                 context.cache,
             )?;
-            for (repository_to_scan, changed_paths) in &repositories_to_scan {
+            while let Some((repository_to_scan, changed_paths)) = repositories_to_scan.pop_first() {
+                let repository_to_scan = &repository_to_scan;
+
+                if context
+                    .cache
+                    .find_covering_path(repository_to_scan)?
+                    .is_some()
+                {
+                    debug!(
+                        "Skipping repository '{}', it is already excluded",
+                        repository_to_scan.display()
+                    );
+                    continue;
+                }
+
                 debug!("Scanning repository '{}'", repository_to_scan.display());
                 let mut exclusions = Vec::new();
                 super::find_paths_to_exclude_from_backup(
@@ -135,6 +149,37 @@ fn handle_event(
                             crate::diff::Exclusion::new(path.clone(), repository_to_scan.clone())
                         });
                     context.cache.add_paths(paths_to_add)?;
+
+                    for added_path in &diff.added {
+                        if paths_failed_to_add.contains(added_path) {
+                            continue;
+                        }
+
+                        let covered_paths = context.cache.remove_paths_under(added_path)?;
+
+                        for error in crate::timemachine::remove_exclusions(covered_paths.iter()) {
+                            warn!("Error: {}: {}", error.path.display(), error.message);
+                        }
+                    }
+
+                    let uncovered_directories: BTreeSet<PathBuf> = diff
+                        .removed
+                        .iter()
+                        .filter(|path| path.is_dir())
+                        .cloned()
+                        .collect();
+
+                    if let Some((rx, thread_handle)) = crate::git::find_repositories(
+                        &uncovered_directories,
+                        &context.config.ignored_directories,
+                        context.config.threads,
+                    ) {
+                        while let Ok(repository_path) = rx.recv() {
+                            repositories_to_scan.entry(repository_path).or_default();
+                        }
+
+                        super::join_thread(thread_handle)?;
+                    }
                 }
             }
         }
@@ -1837,13 +1882,9 @@ mod tests {
 
         assert_eq!(
             cached_paths,
-            BTreeSet::from([
-                main_ignored_path.clone(),
-                nested_path.clone(),
-                nested_ignored_path.clone()
-            ]),
-            "the main repository now gitignores the nested repository, so it must exclude it \
-             without dropping the exclusion owned by the nested repository"
+            BTreeSet::from([main_ignored_path.clone(), nested_path.clone()]),
+            "the main repository now gitignores the nested repository, so it must exclude it and \
+             drop the exclusion of the nested repository it now covers, as a full scan does"
         );
 
         let mut additions = temp_dir.additions();
@@ -1860,8 +1901,40 @@ mod tests {
             cached_paths,
             BTreeSet::from([main_ignored_path, nested_ignored_path]),
             "the main repository created the exclusion of the nested repository and no longer \
-             gitignores it, so rescanning the main repository must remove it and keep the \
-             exclusion owned by the nested repository"
+             gitignores it, so rescanning the main repository must remove it and scan the nested \
+             repository it no longer covers, as a full scan does"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_rescan_skips_a_nested_repository_the_cache_already_excludes() {
+        let (temp_dir, main_path) = create_main_repository("nested/\n");
+        let nested_path = main_path.join("nested");
+
+        crate::commands::tests::init_git_repository(&nested_path);
+
+        let mut additions = temp_dir.additions();
+        additions.add_text_file("main/nested/.gitignore", "build/\n");
+        additions.add_empty_file("main/nested/build/artifact");
+        let kept = additions.add_empty_file("main/nested/kept");
+        additions.build().unwrap();
+
+        let mut cache = Cache::open_in_memory().unwrap();
+        let cached_paths = full_scan(&mut cache, &main_path);
+        assert_eq!(cached_paths, BTreeSet::from([nested_path.clone()]));
+
+        let cached_paths = rescan(
+            &mut cache,
+            &main_path,
+            BTreeSet::from([additions.path_of(&kept)]),
+        );
+
+        assert_eq!(
+            cached_paths,
+            BTreeSet::from([nested_path]),
+            "the main repository already excludes the whole nested repository, so the exclusions \
+             of the nested repository are redundant and a full scan does not create them"
         );
     }
 
