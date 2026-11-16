@@ -84,6 +84,11 @@ enum Commands {
         #[arg(long)]
         details: bool,
     },
+    /// Tell whether paths are excluded from the backup, and why
+    Check {
+        #[arg(required = true)]
+        paths: Vec<std::path::PathBuf>,
+    },
     /// Print the backup exclusion list
     List {
         #[arg(short = '0', long)]
@@ -122,6 +127,12 @@ fn program(cli: Cli, redirect_log_to_console: bool) -> anyhow::Result<()> {
             let config = Config::load_or_create_file(&cli.config)?;
 
             commands::run::execute(&config, &mut cache, dry_run, details)
+        }
+        Commands::Check { paths } => {
+            let cache = Cache::open_or_create(&cli.cache)?;
+            let config = Config::load_or_create_file(&cli.config)?;
+
+            commands::check::execute(&config, &cache, &paths, &mut std::io::stdout())
         }
         Commands::List { zero_separator } => {
             let cache = Cache::open_or_create(&cli.cache)?;

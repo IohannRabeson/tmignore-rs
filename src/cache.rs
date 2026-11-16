@@ -225,19 +225,24 @@ impl Cache {
         Diff::from_sorted(exclusions, &cached_paths)
     }
 
-    pub fn contains_ancestor_of(&self, path: impl AsRef<Path>) -> anyhow::Result<bool> {
+    pub fn find_covering_path(&self, path: impl AsRef<Path>) -> anyhow::Result<Option<PathBuf>> {
         let connection = self.connection.borrow();
         let mut stmt = connection.prepare("SELECT * FROM paths WHERE path = ?")?;
-        let mut current = path.as_ref().parent();
 
-        while let Some(ancestor) = current {
+        for ancestor in path.as_ref().ancestors() {
             if stmt.exists(params![path_to_bytes(ancestor)])? {
-                return Ok(true);
+                return Ok(Some(ancestor.to_path_buf()));
             }
-            current = ancestor.parent();
         }
 
-        Ok(false)
+        Ok(None)
+    }
+
+    pub fn contains_ancestor_of(&self, path: impl AsRef<Path>) -> anyhow::Result<bool> {
+        match path.as_ref().parent() {
+            Some(parent) => Ok(self.find_covering_path(parent)?.is_some()),
+            None => Ok(false),
+        }
     }
 
     pub fn paths(&self) -> anyhow::Result<Vec<PathBuf>> {
@@ -538,6 +543,24 @@ pub(crate) mod tests {
             .unwrap();
 
         assert_eq!(expected, cache.contains_ancestor_of(path).unwrap());
+    }
+
+    #[rstest]
+    #[case("/repo/target/debug/binary", Some("/repo/target"))]
+    #[case("/repo/target", Some("/repo/target"))]
+    #[case("/repo/src/main.rs", None)]
+    #[case("/repo-sibling/file", None)]
+    #[case("/", None)]
+    fn test_find_covering_path(#[case] path: &str, #[case] expected: Option<&str>) {
+        let mut cache = Cache::open_in_memory().unwrap();
+        cache
+            .reset(owned("/repo", ["/repo/target", "/repo/a"]))
+            .unwrap();
+
+        assert_eq!(
+            expected.map(PathBuf::from),
+            cache.find_covering_path(path).unwrap()
+        );
     }
 
     #[test]

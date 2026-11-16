@@ -65,6 +65,24 @@ This command performs a scan of the directories. You can specify the number of t
 Like `monitor`, the `run` command has an option `--dry-run`.
 If you want to run tmignore-rs manually from time to time this is the command to use.
 
+### `check` command
+This command tells, for each path you give it, whether it is excluded from the backup and why.
+
+```
+tmignore-rs check target/debug/tmignore-rs
+```
+```
+/Users/you/Projects/tmignore-rs/target/debug/tmignore-rs
+  Rules: excluded by '/Users/you/Projects/tmignore-rs/target'
+  Exclusion list: listed through '/Users/you/Projects/tmignore-rs/target'
+  Time Machine: excluded
+```
+- `Rules` is what the `.gitignore` files and your configuration say.
+- `Exclusion list` tells if the path is covered by the backup exclusion list, the one printed by the `list` command.
+- `Time Machine` is what Time Machine answers for this path.
+
+They can differ. For example when no scan has run yet the rules say excluded but the path is not listed, and a path excluded by something else than tmignore-rs is excluded for Time Machine without being listed.
+
 ### `reset` command
 This command removes everything from the backup exclusion list.
 
@@ -95,6 +113,7 @@ Usage: tmignore-rs [OPTIONS] <COMMAND>
 Commands:
   monitor  Watch for file changes and keep the exclusion list up to date
   run      Scan for paths to add or remove from the backup exclusion list
+  check    Tell whether paths are excluded from the backup, and why
   list     Print the backup exclusion list
   reset    Reset the backup exclusion list
   path     Print the paths of the files used by the application

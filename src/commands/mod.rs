@@ -1,3 +1,4 @@
+pub mod check;
 pub mod list;
 pub mod monitor;
 pub mod path;
@@ -180,21 +181,29 @@ fn find_paths_to_exclude_from_backup(
     let ignored_files = git::find_ignored_files(repository_path)?;
 
     for ignored_file in ignored_files {
-        if ignored_file
-            .symlink_metadata()
-            .is_ok_and(|metadata| metadata.file_type().is_symlink())
-        {
-            continue;
-        }
-        if let Some(ignored_file) = ignored_file.to_str()
-            && whitelist.is_match(ignored_file)
-        {
+        if skip_reason(&ignored_file, whitelist).is_some() {
             continue;
         }
         exclusions.push(Exclusion::new(ignored_file, repository_path.to_path_buf()));
     }
 
     Ok(())
+}
+
+fn skip_reason(ignored_file: &Path, whitelist: &RegexSet) -> Option<check::NotExcluded> {
+    if ignored_file
+        .symlink_metadata()
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Some(check::NotExcluded::Symlink);
+    }
+    if let Some(ignored_file) = ignored_file.to_str()
+        && whitelist.is_match(ignored_file)
+    {
+        return Some(check::NotExcluded::Whitelisted);
+    }
+
+    None
 }
 
 fn sort_and_dedup(exclusions: &mut Vec<Exclusion>) {
