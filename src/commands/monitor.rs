@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     ops::ControlFlow,
     path::{Path, PathBuf},
     thread::JoinHandle,
@@ -40,27 +40,7 @@ fn handle_event(
     event: Event,
 ) -> Result<ControlFlow<()>, anyhow::Error> {
     match event {
-        Event::ReloadConfiguration => match context.config.reload_file(context.config_file_path) {
-            Ok(()) => {
-                *context.whitelist = super::create_whitelist(&context.config.whitelist_patterns)?;
-                context
-                    .monitor
-                    .set_watched_paths(&context.config.search_directories);
-                context
-                    .monitor
-                    .set_debounce_duration(context.config.debounce_duration);
-                debug!("Configuration reloaded");
-                context.monitor.push_event(Event::InitialScan);
-            }
-            Err(error) => {
-                warn!(
-                    "Failed to reload configuration '{}': {}",
-                    context.config_file_path.display(),
-                    error
-                );
-                warn!("Due to an error the configuration stay unchanged");
-            }
-        },
+        Event::ReloadConfiguration => reload_configuration(context)?,
         Event::InitialScan => {
             super::run::execute(
                 context.config,
@@ -69,126 +49,168 @@ fn handle_event(
                 context.details,
             )?;
         }
-        Event::ScanPaths(dirty_paths) => {
-            let mut repositories_to_scan = find_repositories_to_scan(
-                &dirty_paths,
-                &context.config.search_directories,
-                context.cache,
-            )?;
-            while let Some((repository_to_scan, changed_paths)) = repositories_to_scan.pop_first() {
-                let repository_to_scan = &repository_to_scan;
-
-                if context
-                    .cache
-                    .find_covering_path(repository_to_scan)?
-                    .is_some()
-                {
-                    debug!(
-                        "Skipping repository '{}', it is already excluded",
-                        repository_to_scan.display()
-                    );
-                    continue;
-                }
-
-                debug!("Scanning repository '{}'", repository_to_scan.display());
-                let mut exclusions = Vec::new();
-                super::find_paths_to_exclude_from_backup(
-                    repository_to_scan,
-                    context.whitelist,
-                    &mut exclusions,
-                )?;
-                super::sort_and_dedup(&mut exclusions);
-
-                let diff = context
-                    .cache
-                    .find_diff_created_by(repository_to_scan, &exclusions)?;
-
-                super::apply_unchanged_exclusions::<TimeMachine>(
-                    &exclusions,
-                    &diff,
-                    context.dry_run,
-                );
-
-                if diff.added.is_empty() && diff.removed.is_empty() {
-                    debug!(
-                        "No changes in repository '{}'",
-                        repository_to_scan.display()
-                    );
-                    continue;
-                }
-
-                if context.details {
-                    info!(
-                        "Detected {} changed {} in '{}'",
-                        changed_paths.len(),
-                        crate::text::plural("path", changed_paths.len()),
-                        repository_to_scan.display()
-                    );
-                    for changed_path in changed_paths {
-                        info!("~ {}", changed_path.display());
-                    }
-                }
-
-                let paths_failed_to_add = super::apply_diff_and_print::<TimeMachine>(
-                    &diff,
-                    context.dry_run,
-                    context.details,
-                );
-
-                if !context.dry_run {
-                    if !diff.removed.is_empty() {
-                        context
-                            .cache
-                            .remove_paths(diff.removed.iter(), repository_to_scan)?;
-                    }
-                    let paths_to_add = diff
-                        .added
-                        .iter()
-                        .filter(|path| !paths_failed_to_add.contains(*path))
-                        .map(|path| {
-                            crate::diff::Exclusion::new(path.clone(), repository_to_scan.clone())
-                        });
-                    context.cache.add_paths(paths_to_add)?;
-
-                    for added_path in &diff.added {
-                        if paths_failed_to_add.contains(added_path) {
-                            continue;
-                        }
-
-                        let covered_paths = context.cache.remove_paths_under(added_path)?;
-
-                        for error in crate::timemachine::remove_exclusions(covered_paths.iter()) {
-                            warn!("Error: {}: {}", error.path.display(), error.message);
-                        }
-                    }
-
-                    let uncovered_directories: BTreeSet<PathBuf> = diff
-                        .removed
-                        .iter()
-                        .filter(|path| path.is_dir())
-                        .cloned()
-                        .collect();
-
-                    if let Some((rx, thread_handle)) = crate::git::find_repositories(
-                        &uncovered_directories,
-                        &context.config.ignored_directories,
-                        context.config.threads,
-                    ) {
-                        while let Ok(repository_path) = rx.recv() {
-                            repositories_to_scan.entry(repository_path).or_default();
-                        }
-
-                        super::join_thread(thread_handle)?;
-                    }
-                }
-            }
-        }
+        Event::ScanPaths(dirty_paths) => scan_paths(context, &dirty_paths)?,
         Event::TimeMachineBackupFinished => {
             context.is_timemachine_running = false;
         }
         Event::Shutdown => return Ok(ControlFlow::Break(())),
     }
     Ok(ControlFlow::Continue(()))
+}
+
+fn reload_configuration(context: &mut HandleEventContext<'_>) -> anyhow::Result<()> {
+    match context.config.reload_file(context.config_file_path) {
+        Ok(()) => {
+            *context.whitelist = super::create_whitelist(&context.config.whitelist_patterns)?;
+            context
+                .monitor
+                .set_watched_paths(&context.config.search_directories);
+            context
+                .monitor
+                .set_debounce_duration(context.config.debounce_duration);
+            debug!("Configuration reloaded");
+            context.monitor.push_event(Event::InitialScan);
+        }
+        Err(error) => {
+            warn!(
+                "Failed to reload configuration '{}': {}",
+                context.config_file_path.display(),
+                error
+            );
+            warn!("Due to an error the configuration stay unchanged");
+        }
+    }
+
+    Ok(())
+}
+
+fn scan_paths(
+    context: &mut HandleEventContext<'_>,
+    dirty_paths: &BTreeSet<PathBuf>,
+) -> anyhow::Result<()> {
+    let mut repositories_to_scan = find_repositories_to_scan(
+        dirty_paths,
+        &context.config.search_directories,
+        context.cache,
+    )?;
+
+    while let Some((repository_to_scan, changed_paths)) = repositories_to_scan.pop_first() {
+        for repository_path in scan_repository(context, &repository_to_scan, &changed_paths)? {
+            repositories_to_scan.entry(repository_path).or_default();
+        }
+    }
+
+    Ok(())
+}
+
+fn scan_repository(
+    context: &mut HandleEventContext<'_>,
+    repository_to_scan: &Path,
+    changed_paths: &[&Path],
+) -> anyhow::Result<Vec<PathBuf>> {
+    if context
+        .cache
+        .find_covering_path(repository_to_scan)?
+        .is_some()
+    {
+        debug!(
+            "Skipping repository '{}', it is already excluded",
+            repository_to_scan.display()
+        );
+        return Ok(Vec::new());
+    }
+
+    debug!("Scanning repository '{}'", repository_to_scan.display());
+    let mut exclusions = Vec::new();
+    super::find_paths_to_exclude_from_backup(
+        repository_to_scan,
+        context.whitelist,
+        &mut exclusions,
+    )?;
+    super::sort_and_dedup(&mut exclusions);
+
+    let diff = context
+        .cache
+        .find_diff_created_by(repository_to_scan, &exclusions)?;
+
+    super::apply_unchanged_exclusions::<TimeMachine>(&exclusions, &diff, context.dry_run);
+
+    if diff.added.is_empty() && diff.removed.is_empty() {
+        debug!(
+            "No changes in repository '{}'",
+            repository_to_scan.display()
+        );
+        return Ok(Vec::new());
+    }
+
+    if context.details {
+        info!(
+            "Detected {} changed {} in '{}'",
+            changed_paths.len(),
+            crate::text::plural("path", changed_paths.len()),
+            repository_to_scan.display()
+        );
+        for changed_path in changed_paths {
+            info!("~ {}", changed_path.display());
+        }
+    }
+
+    let paths_failed_to_add =
+        super::apply_diff_and_print::<TimeMachine>(&diff, context.dry_run, context.details);
+
+    if context.dry_run {
+        return Ok(Vec::new());
+    }
+
+    update_cache(context, repository_to_scan, &diff, &paths_failed_to_add)
+}
+
+fn update_cache(
+    context: &mut HandleEventContext<'_>,
+    repository_to_scan: &Path,
+    diff: &crate::diff::Diff,
+    paths_failed_to_add: &HashSet<PathBuf>,
+) -> anyhow::Result<Vec<PathBuf>> {
+    if !diff.removed.is_empty() {
+        context
+            .cache
+            .remove_paths(diff.removed.iter(), repository_to_scan)?;
+    }
+    let added_paths: Vec<&PathBuf> = diff
+        .added
+        .iter()
+        .filter(|path| !paths_failed_to_add.contains(*path))
+        .collect();
+    context.cache.add_paths(added_paths.iter().map(|path| {
+        crate::diff::Exclusion::new((*path).clone(), repository_to_scan.to_path_buf())
+    }))?;
+
+    for added_path in added_paths {
+        let covered_paths = context.cache.remove_paths_under(added_path)?;
+
+        for error in crate::timemachine::remove_exclusions(covered_paths.iter()) {
+            warn!("Error: {}: {}", error.path.display(), error.message);
+        }
+    }
+
+    let uncovered_directories: BTreeSet<PathBuf> = diff
+        .removed
+        .iter()
+        .filter(|path| path.is_dir())
+        .cloned()
+        .collect();
+    let mut repositories = Vec::new();
+
+    if let Some((rx, thread_handle)) = crate::git::find_repositories(
+        &uncovered_directories,
+        &context.config.ignored_directories,
+        context.config.threads,
+    ) {
+        repositories.extend(rx.iter());
+        super::join_thread(thread_handle)?;
+    }
+
+    Ok(repositories)
 }
 
 /// Search the repositories related to some paths.
