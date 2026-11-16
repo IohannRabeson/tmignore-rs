@@ -111,6 +111,28 @@ fn status(
     Ok(Status::NotExcluded(not_excluded))
 }
 
+fn resolve(path: &Path, search_directories: &BTreeSet<PathBuf>) -> std::io::Result<PathBuf> {
+    let canonical_path = match (path.parent(), path.file_name()) {
+        (Some(parent), Some(file_name)) if path.symlink_metadata()?.file_type().is_symlink() => {
+            parent.canonicalize()?.join(file_name)
+        }
+        _ => path.canonicalize()?,
+    };
+
+    for search_directory in search_directories {
+        if let Ok(canonical_search_directory) = search_directory.canonicalize()
+            && let Ok(relative_path) = canonical_path.strip_prefix(canonical_search_directory)
+        {
+            return Ok(search_directory
+                .iter()
+                .chain(relative_path.iter())
+                .collect());
+        }
+    }
+
+    Ok(canonical_path)
+}
+
 pub fn execute(
     config: &Config,
     cache: &Cache,
@@ -122,8 +144,7 @@ pub fn execute(
 
     for path in paths {
         let path = std::path::absolute(path)?;
-
-        std::fs::symlink_metadata(&path)
+        let path = resolve(&path, &config.search_directories)
             .with_context(|| format!("Failed to read '{}'", path.display()))?;
 
         let status = status(
@@ -303,6 +324,49 @@ mod tests {
                 a_file_path.display()
             ),
             String::from_utf8(after_scan).unwrap()
+        );
+    }
+
+    #[rstest]
+    #[case::other_case("A")]
+    #[case::through_a_symlink("link_to_root/a")]
+    fn test_execute_with_another_spelling_of_the_path(#[case] spelling: &str) {
+        let (temp_dir, a, ..) = crate::commands::tests::create_repository(None);
+        let mut cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&temp_dir);
+        let mut output = Vec::new();
+
+        std::os::unix::fs::symlink(temp_dir.path(), temp_dir.join("link_to_root")).unwrap();
+        crate::commands::run::execute(&config, &mut cache, false, false).unwrap();
+        super::execute(&config, &cache, &[temp_dir.join(spelling)], &mut output).unwrap();
+
+        assert_eq!(
+            format!(
+                "{}\n  Rules: excluded\n  Exclusion list: listed\n  Time Machine: excluded\n",
+                temp_dir.path_of(&a).display()
+            ),
+            String::from_utf8(output).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_execute_with_a_search_directory_given_through_a_symlink() {
+        let (temp_dir, ..) = crate::commands::tests::create_repository(None);
+        let mut cache = Cache::open_in_memory().unwrap();
+        let link_path = temp_dir.join("link_to_root");
+        let config = crate::commands::tests::create_config(&link_path);
+        let mut output = Vec::new();
+
+        std::os::unix::fs::symlink(temp_dir.path(), &link_path).unwrap();
+        crate::commands::run::execute(&config, &mut cache, false, false).unwrap();
+        super::execute(&config, &cache, &[temp_dir.join("a")], &mut output).unwrap();
+
+        assert_eq!(
+            format!(
+                "{}\n  Rules: excluded\n  Exclusion list: listed\n  Time Machine: excluded\n",
+                link_path.join("a").display()
+            ),
+            String::from_utf8(output).unwrap()
         );
     }
 }
