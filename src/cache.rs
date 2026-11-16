@@ -190,6 +190,35 @@ impl Cache {
         Ok(())
     }
 
+    pub fn remove_paths_under(&mut self, directory: &Path) -> anyhow::Result<Vec<PathBuf>> {
+        let directory = path_to_bytes(directory);
+        let lower_bound = [directory, b"/"].concat();
+        let upper_bound = [directory, b"0"].concat();
+        let mut connection = self.connection.borrow_mut();
+        let mut transaction = connection.transaction()?;
+        let paths = {
+            let mut select_stmt = transaction
+                .prepare("SELECT DISTINCT path FROM paths WHERE path >= ? AND path < ?")?;
+            let paths = select_stmt
+                .query_map(params![lower_bound, upper_bound], |row| {
+                    let bytes: Vec<u8> = row.get(0)?;
+
+                    Ok(PathBuf::from(OsStr::from_bytes(&bytes)))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            transaction.execute(
+                "DELETE FROM paths WHERE path >= ? AND path < ?",
+                params![lower_bound, upper_bound],
+            )?;
+
+            paths
+        };
+        Self::set_last_update_transaction(&mut transaction)?;
+        transaction.commit()?;
+        Ok(paths)
+    }
+
     pub fn paths_created_by(&self, repository: impl AsRef<Path>) -> anyhow::Result<Vec<PathBuf>> {
         let connection = self.connection.borrow();
         let mut select_stmt = connection.prepare("SELECT path FROM paths WHERE repository = ?")?;
