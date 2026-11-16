@@ -184,21 +184,25 @@ fn find_paths_to_exclude_from_backup(
     repository_path: impl AsRef<Path>,
     whitelist: &RegexSet,
     exclusions: &mut Vec<Exclusion>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<PathBuf>> {
     #[cfg(test)]
     tests::FIND_PATHS_TO_EXCLUDE_CALLS.with(|calls| calls.set(calls.get() + 1));
 
     let repository_path = repository_path.as_ref();
     let ignored_files = git::find_ignored_files(repository_path)?;
+    let mut whitelisted_directories = Vec::new();
 
     for ignored_file in ignored_files {
-        if skip_reason(&ignored_file, whitelist).is_some() {
-            continue;
+        match skip_reason(&ignored_file, whitelist) {
+            Some(SkipReason::Whitelisted(_)) if ignored_file.is_dir() => {
+                whitelisted_directories.push(ignored_file);
+            }
+            Some(_) => {}
+            None => exclusions.push(Exclusion::new(ignored_file, repository_path.to_path_buf())),
         }
-        exclusions.push(Exclusion::new(ignored_file, repository_path.to_path_buf()));
     }
 
-    Ok(())
+    Ok(whitelisted_directories)
 }
 
 enum SkipReason {

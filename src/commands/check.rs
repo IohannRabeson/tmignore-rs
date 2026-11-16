@@ -85,34 +85,36 @@ fn status(
         }
     }
 
+    let mut not_excluded = if repository_paths.is_empty() {
+        NotExcluded::NoRepository
+    } else {
+        NotExcluded::NotIgnored
+    };
+
     for repository_path in repository_paths.iter().rev() {
         for ignored_file in git::find_ignored_files(repository_path)? {
             if !path.starts_with(&ignored_file) {
                 continue;
             }
 
-            return Ok(match super::skip_reason(&ignored_file, whitelist) {
-                Some(SkipReason::Symlink) => Status::NotExcluded(NotExcluded::Symlink),
+            match super::skip_reason(&ignored_file, whitelist) {
+                Some(SkipReason::Symlink) => not_excluded = NotExcluded::Symlink,
                 Some(SkipReason::Whitelisted(pattern_index)) => {
-                    Status::NotExcluded(NotExcluded::Whitelisted {
+                    not_excluded = NotExcluded::Whitelisted {
                         pattern: whitelist_globs
                             .get(pattern_index)
                             .copied()
                             .cloned()
                             .unwrap_or_default(),
                         path: ignored_file,
-                    })
+                    };
                 }
-                None => Status::Excluded(Excluded::by(ignored_file, path)),
-            });
+                None => return Ok(Status::Excluded(Excluded::by(ignored_file, path))),
+            }
         }
     }
 
-    Ok(Status::NotExcluded(if repository_paths.is_empty() {
-        NotExcluded::NoRepository
-    } else {
-        NotExcluded::NotIgnored
-    }))
+    Ok(Status::NotExcluded(not_excluded))
 }
 
 fn resolve(path: &Path, search_directories: &BTreeSet<PathBuf>) -> std::io::Result<PathBuf> {
@@ -374,14 +376,14 @@ mod tests {
 
         assert_eq!(
             format!(
-                "{}\n  Rules: not excluded, the whitelist pattern '*/nested' matches '{}'\n  \
-                 Exclusion list: not listed\n  Time Machine: not excluded\n",
+                "{}\n  Rules: excluded by '{build}'\n  Exclusion list: listed through '{build}'\n  \
+                 Time Machine: excluded\n",
                 temp_dir.path_of(&artifact).display(),
-                nested_path.display()
+                build = nested_path.join("build").display()
             ),
             String::from_utf8(output).unwrap(),
-            "the scan does not enter a directory the outer repository ignores, so it never finds \
-             the nested repository and the whitelisted directory is left in the backup"
+            "the whitelist keeps the nested repository the outer one ignores in the backup, so \
+             the nested repository decides for what it holds"
         );
     }
 
