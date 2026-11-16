@@ -71,44 +71,48 @@ fn status(
     whitelist_globs: &[&String],
     whitelist: &RegexSet,
 ) -> anyhow::Result<Status> {
-    let mut not_excluded = NotExcluded::NoRepository;
+    let mut repository_paths = Vec::new();
     let mut current = Some(path.to_path_buf());
 
     while let Some(repository_path) = current.and_then(git::find_parent_repository) {
+        current = repository_path.parent().map(Path::to_path_buf);
+
         if search_directories
             .iter()
             .any(|search_directory| repository_path.starts_with(search_directory))
         {
-            if not_excluded == NotExcluded::NoRepository {
-                not_excluded = NotExcluded::NotIgnored;
-            }
-
-            for ignored_file in git::find_ignored_files(&repository_path)? {
-                if !path.starts_with(&ignored_file) {
-                    continue;
-                }
-
-                match super::skip_reason(&ignored_file, whitelist) {
-                    Some(SkipReason::Symlink) => not_excluded = NotExcluded::Symlink,
-                    Some(SkipReason::Whitelisted(pattern_index)) => {
-                        not_excluded = NotExcluded::Whitelisted {
-                            pattern: whitelist_globs
-                                .get(pattern_index)
-                                .copied()
-                                .cloned()
-                                .unwrap_or_default(),
-                            path: ignored_file,
-                        };
-                    }
-                    None => return Ok(Status::Excluded(Excluded::by(ignored_file, path))),
-                }
-            }
+            repository_paths.push(repository_path);
         }
-
-        current = repository_path.parent().map(Path::to_path_buf);
     }
 
-    Ok(Status::NotExcluded(not_excluded))
+    for repository_path in repository_paths.iter().rev() {
+        for ignored_file in git::find_ignored_files(repository_path)? {
+            if !path.starts_with(&ignored_file) {
+                continue;
+            }
+
+            return Ok(match super::skip_reason(&ignored_file, whitelist) {
+                Some(SkipReason::Symlink) => Status::NotExcluded(NotExcluded::Symlink),
+                Some(SkipReason::Whitelisted(pattern_index)) => {
+                    Status::NotExcluded(NotExcluded::Whitelisted {
+                        pattern: whitelist_globs
+                            .get(pattern_index)
+                            .copied()
+                            .cloned()
+                            .unwrap_or_default(),
+                        path: ignored_file,
+                    })
+                }
+                None => Status::Excluded(Excluded::by(ignored_file, path)),
+            });
+        }
+    }
+
+    Ok(Status::NotExcluded(if repository_paths.is_empty() {
+        NotExcluded::NoRepository
+    } else {
+        NotExcluded::NotIgnored
+    }))
 }
 
 fn resolve(path: &Path, search_directories: &BTreeSet<PathBuf>) -> std::io::Result<PathBuf> {
@@ -346,6 +350,38 @@ mod tests {
                 temp_dir.path_of(&a).display()
             ),
             String::from_utf8(output).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_execute_in_a_nested_repository_ignored_by_the_outer_one_and_whitelisted() {
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
+        builder.add_text_file("outer/.gitignore", "nested/\n");
+        builder.add_text_file("outer/nested/.gitignore", "build/\n");
+        let artifact = builder.add_empty_file("outer/nested/build/artifact");
+        let temp_dir = builder.build().unwrap();
+        let outer_path = temp_dir.join("outer");
+        let nested_path = outer_path.join("nested");
+        let mut cache = Cache::open_in_memory().unwrap();
+        let mut config = crate::commands::tests::create_config(&outer_path);
+        let mut output = Vec::new();
+
+        config.whitelist_patterns.insert(String::from("*/nested"));
+        crate::commands::tests::init_git_repository(&outer_path);
+        crate::commands::tests::init_git_repository(&nested_path);
+        crate::commands::run::execute(&config, &mut cache, false, false).unwrap();
+        super::execute(&config, &cache, &[temp_dir.path_of(&artifact)], &mut output).unwrap();
+
+        assert_eq!(
+            format!(
+                "{}\n  Rules: not excluded, the whitelist pattern '*/nested' matches '{}'\n  \
+                 Exclusion list: not listed\n  Time Machine: not excluded\n",
+                temp_dir.path_of(&artifact).display(),
+                nested_path.display()
+            ),
+            String::from_utf8(output).unwrap(),
+            "the scan does not enter a directory the outer repository ignores, so it never finds \
+             the nested repository and the whitelisted directory is left in the backup"
         );
     }
 
