@@ -7,7 +7,7 @@ use std::{
 use anyhow::Context;
 use regex::RegexSet;
 
-use crate::{cache::Cache, config::Config, git, timemachine};
+use crate::{cache::Cache, commands::SkipReason, config::Config, git, timemachine};
 
 #[derive(Debug, PartialEq)]
 pub enum Excluded {
@@ -28,7 +28,7 @@ impl Excluded {
 #[derive(Debug, PartialEq)]
 pub enum NotExcluded {
     NotIgnored,
-    Whitelisted,
+    Whitelisted { pattern: String, path: PathBuf },
     Symlink,
     NoRepository,
 }
@@ -49,9 +49,11 @@ impl std::fmt::Display for Status {
             Status::NotExcluded(NotExcluded::NotIgnored) => {
                 write!(f, "not excluded, Git does not ignore it")
             }
-            Status::NotExcluded(NotExcluded::Whitelisted) => {
-                write!(f, "not excluded, a whitelist pattern matches it")
-            }
+            Status::NotExcluded(NotExcluded::Whitelisted { pattern, path }) => write!(
+                f,
+                "not excluded, the whitelist pattern '{pattern}' matches '{}'",
+                path.display()
+            ),
             Status::NotExcluded(NotExcluded::Symlink) => {
                 write!(f, "not excluded, symbolic links are never excluded")
             }
@@ -66,6 +68,7 @@ impl std::fmt::Display for Status {
 fn status(
     path: &Path,
     search_directories: &BTreeSet<PathBuf>,
+    whitelist_globs: &[&String],
     whitelist: &RegexSet,
 ) -> anyhow::Result<Status> {
     let mut not_excluded = NotExcluded::NoRepository;
@@ -86,7 +89,17 @@ fn status(
                 }
 
                 match super::skip_reason(&ignored_file, whitelist) {
-                    Some(reason) => not_excluded = reason,
+                    Some(SkipReason::Symlink) => not_excluded = NotExcluded::Symlink,
+                    Some(SkipReason::Whitelisted(pattern_index)) => {
+                        not_excluded = NotExcluded::Whitelisted {
+                            pattern: whitelist_globs
+                                .get(pattern_index)
+                                .copied()
+                                .cloned()
+                                .unwrap_or_default(),
+                            path: ignored_file,
+                        };
+                    }
                     None => return Ok(Status::Excluded(Excluded::by(ignored_file, path))),
                 }
             }
@@ -104,7 +117,8 @@ pub fn execute(
     paths: &[PathBuf],
     writer: &mut impl Write,
 ) -> anyhow::Result<()> {
-    let whitelist = super::create_whitelist(&config.whitelist_patterns)?;
+    let (whitelist, whitelist_globs) =
+        super::create_whitelist_with_globs(&config.whitelist_patterns)?;
 
     for path in paths {
         let path = std::path::absolute(path)?;
@@ -112,7 +126,12 @@ pub fn execute(
         std::fs::symlink_metadata(&path)
             .with_context(|| format!("Failed to read '{}'", path.display()))?;
 
-        let status = status(&path, &config.search_directories, &whitelist)?;
+        let status = status(
+            &path,
+            &config.search_directories,
+            &whitelist_globs,
+            &whitelist,
+        )?;
         let covering_path = cache.find_covering_path(&path)?;
         let listed = match covering_path.map(|covering_path| Excluded::by(covering_path, &path)) {
             Some(Excluded::Directly) => String::from("listed"),
@@ -155,7 +174,17 @@ mod tests {
     #[case::not_ignored("repository/kept", |_: &Path| Status::NotExcluded(NotExcluded::NotIgnored))]
     #[case::whitelisted(
         "repository/whitelisted",
-        |_: &Path| Status::NotExcluded(NotExcluded::Whitelisted)
+        |repository: &Path| Status::NotExcluded(NotExcluded::Whitelisted {
+            pattern: String::from("*/whitelisted"),
+            path: repository.join("whitelisted"),
+        })
+    )]
+    #[case::in_a_whitelisted_directory(
+        "repository/kept_directory/file",
+        |repository: &Path| Status::NotExcluded(NotExcluded::Whitelisted {
+            pattern: String::from("*/kept_directory"),
+            path: repository.join("kept_directory"),
+        })
     )]
     #[case::symlink("repository/link", |_: &Path| Status::NotExcluded(NotExcluded::Symlink))]
     #[case::outside_any_repository("outside", |_: &Path| Status::NotExcluded(NotExcluded::NoRepository))]
@@ -164,8 +193,12 @@ mod tests {
         let outside = builder.add_empty_file("outside");
         let repository = builder.add_directory("repository");
         builder.in_directory(&repository, |builder| {
-            builder.add_text_file(".gitignore", "ignored\nbuild/\nwhitelisted\nlink\n");
+            builder.add_text_file(
+                ".gitignore",
+                "ignored\nbuild/\nwhitelisted\nkept_directory/\nlink\n",
+            );
             builder.add_empty_file("ignored");
+            builder.add_empty_file("kept_directory/file");
             builder.add_empty_file("build/artifact");
             builder.add_empty_file("kept");
             builder.add_empty_file("whitelisted");
@@ -174,17 +207,28 @@ mod tests {
         let temp_dir = builder.build().unwrap();
         let repository_path = temp_dir.path_of(&repository);
         let search_directories = BTreeSet::from([repository_path.clone()]);
-        let whitelist =
-            crate::commands::create_whitelist(&BTreeSet::from([String::from("*/whitelisted")]))
-                .unwrap();
+        let whitelist_patterns = BTreeSet::from([
+            String::from("![z-a]"),
+            String::from("*/kept_directory"),
+            String::from("*/whitelisted"),
+        ]);
+        let (whitelist, whitelist_globs) =
+            crate::commands::create_whitelist_with_globs(&whitelist_patterns).unwrap();
 
         crate::commands::tests::init_git_repository(&repository_path);
 
+        assert_eq!(
+            2,
+            whitelist.len(),
+            "the first pattern must be invalid, so the position of a pattern in the configuration \
+             differs from its position in the compiled whitelist"
+        );
         assert_eq!(
             expected(&repository_path),
             super::status(
                 &temp_dir.join(relative_path),
                 &search_directories,
+                &whitelist_globs,
                 &whitelist
             )
             .unwrap()
@@ -200,14 +244,22 @@ mod tests {
         let outer_path = temp_dir.join("outer");
         let nested_path = outer_path.join("nested");
         let search_directories = BTreeSet::from([outer_path.clone()]);
-        let whitelist = crate::commands::create_whitelist(&BTreeSet::new()).unwrap();
+        let whitelist_patterns = BTreeSet::new();
+        let (whitelist, whitelist_globs) =
+            crate::commands::create_whitelist_with_globs(&whitelist_patterns).unwrap();
 
         crate::commands::tests::init_git_repository(&outer_path);
         crate::commands::tests::init_git_repository(&nested_path);
 
         assert_eq!(
             Status::Excluded(Excluded::ByAncestor(nested_path)),
-            super::status(&temp_dir.path_of(&kept), &search_directories, &whitelist).unwrap(),
+            super::status(
+                &temp_dir.path_of(&kept),
+                &search_directories,
+                &whitelist_globs,
+                &whitelist
+            )
+            .unwrap(),
             "the nested repository does not ignore the file, but the outer one ignores the whole \
              nested repository"
         );
