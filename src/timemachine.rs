@@ -21,6 +21,9 @@ unsafe extern "C" {
         exclude: u8,
         exclude_by_path: u8,
     ) -> OSStatus;
+
+    fn CSBackupIsItemExcluded(item: core_foundation::url::CFURLRef, exclude_by_path: *mut u8)
+    -> u8;
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -31,16 +34,27 @@ enum ExcludePathError {
     InvalidUtf8,
 }
 
-fn exclude_path(path: impl AsRef<Path>, exclude: bool) -> anyhow::Result<()> {
+fn file_url(path: &Path) -> Result<core_foundation::url::CFURL, ExcludePathError> {
     use core_foundation::string::CFString;
     use core_foundation::url::CFURL;
-    let path = path.as_ref();
 
-    let url = CFURL::from_file_system_path(
+    Ok(CFURL::from_file_system_path(
         CFString::new(path.to_str().ok_or(ExcludePathError::InvalidUtf8)?),
         core_foundation::url::kCFURLPOSIXPathStyle,
         path.is_dir(),
-    );
+    ))
+}
+
+pub fn is_excluded(path: impl AsRef<Path>) -> anyhow::Result<bool> {
+    let url = file_url(path.as_ref())?;
+    let excluded =
+        unsafe { CSBackupIsItemExcluded(url.as_concrete_TypeRef(), std::ptr::null_mut()) };
+
+    Ok(excluded != 0)
+}
+
+fn exclude_path(path: impl AsRef<Path>, exclude: bool) -> anyhow::Result<()> {
+    let url = file_url(path.as_ref())?;
 
     let status =
         unsafe { CSBackupSetItemExcluded(url.as_concrete_TypeRef(), u8::from(exclude), 0) };
