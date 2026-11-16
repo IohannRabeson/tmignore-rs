@@ -154,15 +154,26 @@ fn item_identity(path: &PathBuf) -> Option<(u64, u64)> {
 }
 
 fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, regex::Error> {
-    RegexSet::new(whitelist_patterns.iter().filter_map(|pattern| {
-        match fnmatch_regex::glob_to_regex_pattern(pattern) {
-            Ok(pattern) => Some(pattern),
-            Err(error) => {
-                error!("Error: invalid whitelist pattern '{pattern}': {error}");
-                None
-            }
-        }
-    }))
+    create_whitelist_with_globs(whitelist_patterns).map(|(whitelist, _)| whitelist)
+}
+
+fn create_whitelist_with_globs(
+    whitelist_patterns: &BTreeSet<String>,
+) -> Result<(RegexSet, Vec<&String>), regex::Error> {
+    let (globs, patterns): (Vec<&String>, Vec<String>) = whitelist_patterns
+        .iter()
+        .filter_map(
+            |pattern| match fnmatch_regex::glob_to_regex_pattern(pattern) {
+                Ok(compiled_pattern) => Some((pattern, compiled_pattern)),
+                Err(error) => {
+                    error!("Error: invalid whitelist pattern '{pattern}': {error}");
+                    None
+                }
+            },
+        )
+        .unzip();
+
+    Ok((RegexSet::new(patterns)?, globs))
 }
 
 /// Find the paths in a repository to exclude from Time Machine backup.
@@ -190,17 +201,23 @@ fn find_paths_to_exclude_from_backup(
     Ok(())
 }
 
-fn skip_reason(ignored_file: &Path, whitelist: &RegexSet) -> Option<check::NotExcluded> {
+enum SkipReason {
+    Symlink,
+    Whitelisted(usize),
+}
+
+fn skip_reason(ignored_file: &Path, whitelist: &RegexSet) -> Option<SkipReason> {
     if ignored_file
         .symlink_metadata()
         .is_ok_and(|metadata| metadata.file_type().is_symlink())
     {
-        return Some(check::NotExcluded::Symlink);
+        return Some(SkipReason::Symlink);
     }
     if let Some(ignored_file) = ignored_file.to_str()
         && whitelist.is_match(ignored_file)
+        && let Some(pattern_index) = whitelist.matches(ignored_file).iter().next()
     {
-        return Some(check::NotExcluded::Whitelisted);
+        return Some(SkipReason::Whitelisted(pattern_index));
     }
 
     None
