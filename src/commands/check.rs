@@ -4,7 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::Context;
+use anyhow::{Context, bail};
+use log::error;
 use regex::RegexSet;
 
 use crate::{cache::Cache, commands::SkipReason, config::Config, git, timemachine};
@@ -147,37 +148,61 @@ pub fn execute(
 ) -> anyhow::Result<()> {
     let (whitelist, whitelist_globs) =
         super::create_whitelist_with_globs(&config.whitelist_patterns)?;
+    let mut failure_count: usize = 0;
 
     for path in paths {
-        let path = std::path::absolute(path)?;
-        let path = resolve(&path, &config.search_directories)
-            .with_context(|| format!("Failed to read '{}'", path.display()))?;
-
-        let status = status(
-            &path,
-            &config.search_directories,
-            &whitelist_globs,
-            &whitelist,
-        )?;
-        let covering_path = cache.find_covering_path(&path)?;
-        let listed = match covering_path.map(|covering_path| Excluded::by(covering_path, &path)) {
-            Some(Excluded::Directly) => String::from("listed"),
-            Some(Excluded::ByAncestor(ancestor)) => {
-                format!("listed through '{}'", ancestor.display())
-            }
-            None => String::from("not listed"),
-        };
-        let time_machine = if timemachine::is_excluded(&path)? {
-            "excluded"
-        } else {
-            "not excluded"
-        };
-
-        writeln!(writer, "{}", path.display())?;
-        writeln!(writer, "  Rules: {status}")?;
-        writeln!(writer, "  Exclusion list: {listed}")?;
-        writeln!(writer, "  Time Machine: {time_machine}")?;
+        if let Err(error) = check_path(config, cache, &whitelist_globs, &whitelist, path, writer) {
+            error!("Error: {error:#}");
+            failure_count = failure_count.saturating_add(1);
+        }
     }
+
+    if failure_count > 0 {
+        bail!(
+            "Failed to check {failure_count} {}",
+            crate::text::plural("path", failure_count)
+        );
+    }
+
+    Ok(())
+}
+
+fn check_path(
+    config: &Config,
+    cache: &Cache,
+    whitelist_globs: &[&String],
+    whitelist: &RegexSet,
+    path: &Path,
+    writer: &mut impl Write,
+) -> anyhow::Result<()> {
+    let path = std::path::absolute(path)?;
+    let path = resolve(&path, &config.search_directories)
+        .with_context(|| format!("Failed to read '{}'", path.display()))?;
+
+    let status = status(
+        &path,
+        &config.search_directories,
+        whitelist_globs,
+        whitelist,
+    )?;
+    let covering_path = cache.find_covering_path(&path)?;
+    let listed = match covering_path.map(|covering_path| Excluded::by(covering_path, &path)) {
+        Some(Excluded::Directly) => String::from("listed"),
+        Some(Excluded::ByAncestor(ancestor)) => {
+            format!("listed through '{}'", ancestor.display())
+        }
+        None => String::from("not listed"),
+    };
+    let time_machine = if timemachine::is_excluded(&path)? {
+        "excluded"
+    } else {
+        "not excluded"
+    };
+
+    writeln!(writer, "{}", path.display())?;
+    writeln!(writer, "  Rules: {status}")?;
+    writeln!(writer, "  Exclusion list: {listed}")?;
+    writeln!(writer, "  Time Machine: {time_machine}")?;
 
     Ok(())
 }
@@ -352,6 +377,39 @@ mod tests {
                 temp_dir.path_of(&a).display()
             ),
             String::from_utf8(output).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_execute_reports_the_paths_after_a_path_that_cannot_be_read() {
+        let (temp_dir, a, _, c) = crate::commands::tests::create_repository(None);
+        let cache = Cache::open_in_memory().unwrap();
+        let config = crate::commands::tests::create_config(&temp_dir);
+        let a_path = temp_dir.path_of(&a);
+        let c_path = temp_dir.path_of(&c);
+        let mut output = Vec::new();
+
+        let result = super::execute(
+            &config,
+            &cache,
+            &[a_path.clone(), temp_dir.join("missing"), c_path.clone()],
+            &mut output,
+        );
+
+        assert!(
+            result.is_err(),
+            "a path could not be read, so the command must fail"
+        );
+        assert_eq!(
+            format!(
+                "{}\n  Rules: excluded\n  Exclusion list: not listed\n  Time Machine: not excluded\n\
+                 {}\n  Rules: not excluded, Git does not ignore it\n  Exclusion list: not listed\n  \
+                 Time Machine: not excluded\n",
+                a_path.display(),
+                c_path.display()
+            ),
+            String::from_utf8(output).unwrap(),
+            "a path that cannot be read must not prevent the paths after it from being checked"
         );
     }
 
