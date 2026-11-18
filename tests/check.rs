@@ -25,16 +25,16 @@ fn test_check_prints_only_its_result_on_the_standard_output()
             .output()
     };
 
-    check()?;
+    for run in ["creates", "loads"] {
+        let standard_output = String::from_utf8(check()?.stdout)?;
 
-    let standard_output = String::from_utf8(check()?.stdout)?;
-
-    assert_eq!(
-        Some(file_path.to_string_lossy().as_ref()),
-        standard_output.lines().next(),
-        "the standard output must start with the checked path when the configuration file \
-         already exists"
-    );
+        assert_eq!(
+            Some(file_path.to_string_lossy().as_ref()),
+            standard_output.lines().next(),
+            "the standard output must start with the checked path when the run {run} the \
+             configuration file"
+        );
+    }
 
     Ok(())
 }

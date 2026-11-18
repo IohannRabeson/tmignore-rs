@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use log::{debug, info};
+use log::debug;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::legacy_config::LegacyConfig;
@@ -126,7 +126,7 @@ impl Config {
 
             serde_json::to_writer_pretty(file, &default_config)?;
 
-            info!("Created configuration file '{}'", file_path.display());
+            debug!("Created configuration file '{}'", file_path.display());
 
             Self::expand(&mut default_config);
 
