@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use log::info;
+use log::{debug, info};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::legacy_config::LegacyConfig;
@@ -136,7 +136,7 @@ impl Config {
 
     pub fn load_from_file(file_path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let file_path = file_path.as_ref();
-        info!("Load configuration '{}'", file_path.display());
+        debug!("Load configuration '{}'", file_path.display());
         Self::load(File::open(file_path)?)
     }
 
