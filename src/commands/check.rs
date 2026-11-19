@@ -133,7 +133,10 @@ fn status(
     Ok(Status::NotExcluded(not_excluded))
 }
 
-fn resolve(path: &Path, search_directories: &BTreeSet<PathBuf>) -> std::io::Result<PathBuf> {
+fn resolve(
+    path: &Path,
+    search_directories: &BTreeSet<PathBuf>,
+) -> std::io::Result<BTreeSet<PathBuf>> {
     let canonical_path = match (path.parent(), path.file_name()) {
         (Some(parent), Some(file_name)) if path.symlink_metadata()?.file_type().is_symlink() => {
             parent.canonicalize()?.join(file_name)
@@ -141,25 +144,25 @@ fn resolve(path: &Path, search_directories: &BTreeSet<PathBuf>) -> std::io::Resu
         _ => path.canonicalize()?,
     };
 
-    let innermost = search_directories
+    let spellings: BTreeSet<PathBuf> = search_directories
         .iter()
         .filter_map(|search_directory| {
             let canonical_search_directory = search_directory.canonicalize().ok()?;
-            let relative_path = canonical_path
-                .strip_prefix(canonical_search_directory)
-                .ok()?
-                .to_path_buf();
+            let relative_path = canonical_path.strip_prefix(canonical_search_directory).ok()?;
 
-            Some((search_directory, relative_path))
+            Some(
+                search_directory
+                    .iter()
+                    .chain(relative_path.iter())
+                    .collect(),
+            )
         })
-        .min_by_key(|(_, relative_path)| relative_path.components().count());
+        .collect();
 
-    Ok(match innermost {
-        Some((search_directory, relative_path)) => search_directory
-            .iter()
-            .chain(relative_path.iter())
-            .collect(),
-        None => canonical_path,
+    Ok(if spellings.is_empty() {
+        BTreeSet::from([canonical_path])
+    } else {
+        spellings
     })
 }
 
@@ -199,17 +202,32 @@ fn check_path(
     writer: &mut impl Write,
 ) -> anyhow::Result<()> {
     let path = std::path::absolute(path)?;
-    let path = resolve(&path, &config.search_directories)
+    let spellings = resolve(&path, &config.search_directories)
         .with_context(|| format!("Failed to read '{}'", path.display()))?;
+    let mut checked = None;
 
-    let status = status(
-        &path,
-        &config.search_directories,
-        &config.ignored_directories,
-        whitelist_globs,
-        whitelist,
-    )?;
-    let covering_path = cache.find_covering_path(&path)?;
+    for spelling in spellings {
+        let status = status(
+            &spelling,
+            &config.search_directories,
+            &config.ignored_directories,
+            whitelist_globs,
+            whitelist,
+        )?;
+        let covering_path = cache.find_covering_path(&spelling)?;
+        let found = matches!(status, Status::Excluded(_)) || covering_path.is_some();
+
+        if found || checked.is_none() {
+            checked = Some((spelling, status, covering_path));
+        }
+        if found {
+            break;
+        }
+    }
+
+    let Some((path, status, covering_path)) = checked else {
+        bail!("Failed to resolve '{}'", path.display());
+    };
     let listed = match covering_path.map(|covering_path| Excluded::by(covering_path, &path)) {
         Some(Excluded::Directly) => String::from("listed"),
         Some(Excluded::ByAncestor(ancestor)) => {
@@ -573,6 +591,39 @@ mod tests {
             String::from_utf8(output).unwrap(),
             "the full scan reaches the path only through the innermost search directory, so the \
              path must be spelled through it"
+        );
+    }
+
+    #[test]
+    fn test_execute_with_a_search_directory_inside_an_ignored_directory_of_another() {
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
+        builder.add_text_file("real/.gitignore", "build/\n");
+        let file = builder.add_empty_file("real/build/file");
+        let temp_dir = builder.build().unwrap();
+        let repository_path = temp_dir.join("real");
+        let link_path = temp_dir.join("link");
+        let mut cache = Cache::open_in_memory().unwrap();
+        let mut config = crate::commands::tests::create_config(&link_path);
+        let mut output = Vec::new();
+
+        std::os::unix::fs::symlink(&repository_path, &link_path).unwrap();
+        crate::commands::tests::init_git_repository(&repository_path);
+        config
+            .search_directories
+            .insert(repository_path.join("build"));
+        crate::commands::run::execute(&config, &mut cache, false, false).unwrap();
+        super::execute(&config, &cache, &[temp_dir.path_of(&file)], &mut output).unwrap();
+
+        assert_eq!(
+            format!(
+                "{}\n  Rules: excluded by '{build}'\n  Exclusion list: listed through '{build}'\n  \
+                 Time Machine: excluded\n",
+                link_path.join("build/file").display(),
+                build = link_path.join("build").display()
+            ),
+            String::from_utf8(output).unwrap(),
+            "the full scan reaches the path only through the outer search directory, so the path \
+             must be spelled through it"
         );
     }
 
