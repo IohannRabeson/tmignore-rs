@@ -141,18 +141,26 @@ fn resolve(path: &Path, search_directories: &BTreeSet<PathBuf>) -> std::io::Resu
         _ => path.canonicalize()?,
     };
 
-    for search_directory in search_directories {
-        if let Ok(canonical_search_directory) = search_directory.canonicalize()
-            && let Ok(relative_path) = canonical_path.strip_prefix(canonical_search_directory)
-        {
-            return Ok(search_directory
-                .iter()
-                .chain(relative_path.iter())
-                .collect());
-        }
-    }
+    let innermost = search_directories
+        .iter()
+        .filter_map(|search_directory| {
+            let canonical_search_directory = search_directory.canonicalize().ok()?;
+            let relative_path = canonical_path
+                .strip_prefix(canonical_search_directory)
+                .ok()?
+                .to_path_buf();
 
-    Ok(canonical_path)
+            Some((search_directory, relative_path))
+        })
+        .min_by_key(|(_, relative_path)| relative_path.components().count());
+
+    Ok(match innermost {
+        Some((search_directory, relative_path)) => search_directory
+            .iter()
+            .chain(relative_path.iter())
+            .collect(),
+        None => canonical_path,
+    })
 }
 
 pub fn execute(
@@ -533,6 +541,38 @@ mod tests {
             String::from_utf8(output).unwrap(),
             "the whitelist keeps the nested repository the outer one ignores in the backup, so \
              the nested repository decides for what it holds"
+        );
+    }
+
+    #[test]
+    fn test_execute_with_a_search_directory_inside_another_given_through_a_symlink() {
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
+        builder.add_text_file("real/repository/.gitignore", "ignored\n");
+        let ignored = builder.add_empty_file("real/repository/ignored");
+        let temp_dir = builder.build().unwrap();
+        let repository_path = temp_dir.join("real/repository");
+        let link_path = temp_dir.join("a_link");
+        let mut cache = Cache::open_in_memory().unwrap();
+        let mut config = crate::commands::tests::create_config(&repository_path);
+        let mut output = Vec::new();
+
+        std::os::unix::fs::symlink(temp_dir.join("real"), &link_path).unwrap();
+        crate::commands::tests::init_git_repository(&repository_path);
+        config.search_directories.insert(link_path.clone());
+        config
+            .ignored_directories
+            .insert(link_path.join("repository"));
+        crate::commands::run::execute(&config, &mut cache, false, false).unwrap();
+        super::execute(&config, &cache, &[temp_dir.path_of(&ignored)], &mut output).unwrap();
+
+        assert_eq!(
+            format!(
+                "{}\n  Rules: excluded\n  Exclusion list: listed\n  Time Machine: excluded\n",
+                temp_dir.path_of(&ignored).display()
+            ),
+            String::from_utf8(output).unwrap(),
+            "the full scan reaches the path only through the innermost search directory, so the \
+             path must be spelled through it"
         );
     }
 
