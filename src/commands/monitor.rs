@@ -91,6 +91,7 @@ fn scan_paths(
     let mut repositories_to_scan = find_repositories_to_scan(
         dirty_paths,
         &context.config.search_directories,
+        &context.config.ignored_directories,
         context.cache,
     )?;
 
@@ -229,6 +230,7 @@ fn update_cache(
 fn find_repositories_to_scan<'a>(
     paths: &'a BTreeSet<PathBuf>,
     search_directories: &BTreeSet<PathBuf>,
+    ignored_directories: &BTreeSet<PathBuf>,
     cache: &Cache,
 ) -> Result<BTreeMap<PathBuf, Vec<&'a Path>>, anyhow::Error> {
     let mut paths_by_repository: BTreeMap<PathBuf, Vec<&Path>> = BTreeMap::new();
@@ -238,6 +240,7 @@ fn find_repositories_to_scan<'a>(
             && search_directories
                 .iter()
                 .any(|search_directory| repository_path.starts_with(search_directory))
+            && super::find_ignored_directory(&repository_path, ignored_directories).is_none()
         {
             paths_by_repository
                 .entry(repository_path)
@@ -2210,6 +2213,7 @@ mod tests {
         let new_log_path = temp_dir.path_of(&new_log);
 
         let search_directories = BTreeSet::from([repository_path.clone()]);
+        let ignored_directories = BTreeSet::new();
         let mut cache = Cache::open_in_memory().unwrap();
         cache
             .reset(
@@ -2219,10 +2223,15 @@ mod tests {
             .unwrap();
 
         let scan = |paths: [PathBuf; 1]| {
-            super::find_repositories_to_scan(&BTreeSet::from(paths), &search_directories, &cache)
-                .unwrap()
-                .into_keys()
-                .collect::<BTreeSet<_>>()
+            super::find_repositories_to_scan(
+                &BTreeSet::from(paths),
+                &search_directories,
+                &ignored_directories,
+                &cache,
+            )
+            .unwrap()
+            .into_keys()
+            .collect::<BTreeSet<_>>()
         };
         let scanned = BTreeSet::from([repository_path.clone()]);
 
@@ -2273,8 +2282,13 @@ mod tests {
 
         let changed_paths = [logs_path.join("a.log"), kept_path];
         let paths = BTreeSet::from(changed_paths.clone());
-        let repositories =
-            super::find_repositories_to_scan(&paths, &search_directories, &cache).unwrap();
+        let repositories = super::find_repositories_to_scan(
+            &paths,
+            &search_directories,
+            &ignored_directories,
+            &cache,
+        )
+        .unwrap();
         assert_eq!(
             scanned,
             repositories.keys().cloned().collect::<BTreeSet<_>>(),
@@ -2288,6 +2302,37 @@ mod tests {
             repositories[&repository_path],
             "the repository keeps every changed path that belongs to it, so the caller can report \
              what triggered the scan"
+        );
+    }
+
+    #[rstest]
+    #[case::in_the_ignored_directory("ignored/repository")]
+    #[case::is_the_ignored_directory("ignored")]
+    fn test_find_repositories_to_scan_skips_a_repository_the_full_scan_skips(
+        #[case] relative_repository_path: &str,
+    ) {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let repository_path = temp_dir.join(relative_repository_path);
+        let file_path = repository_path.join("file");
+
+        crate::commands::tests::init_git_repository(&repository_path);
+        std::fs::write(&file_path, "").unwrap();
+
+        let search_directories = BTreeSet::from([temp_dir.path().to_path_buf()]);
+        let ignored_directories = BTreeSet::from([temp_dir.join("ignored")]);
+        let cache = Cache::open_in_memory().unwrap();
+
+        assert!(
+            super::find_repositories_to_scan(
+                &BTreeSet::from([file_path]),
+                &search_directories,
+                &ignored_directories,
+                &cache,
+            )
+            .unwrap()
+            .is_empty(),
+            "the full scan does not look for repositories in the ignored directories, so the \
+             monitor must not scan them either"
         );
     }
 
