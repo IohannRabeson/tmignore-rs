@@ -102,10 +102,8 @@ fn status(
     }
 
     let mut not_excluded = match (repository_paths.is_empty(), skipping_ignored_directory) {
-        (false, _) => NotExcluded::NotIgnored,
-        (true, Some(ignored_directory)) => {
-            NotExcluded::InIgnoredDirectory(ignored_directory.clone())
-        }
+        (_, Some(ignored_directory)) => NotExcluded::InIgnoredDirectory(ignored_directory.clone()),
+        (false, None) => NotExcluded::NotIgnored,
         (true, None) => NotExcluded::NoRepository,
     };
 
@@ -338,14 +336,21 @@ mod tests {
     }
 
     #[rstest]
-    #[case::in_the_ignored_directory("ignored/repository")]
-    #[case::is_the_ignored_directory("ignored")]
-    fn test_status_in_a_repository_the_full_scan_skips(#[case] relative_repository_path: &str) {
+    #[case::in_the_ignored_directory("ignored/repository", false)]
+    #[case::is_the_ignored_directory("ignored", false)]
+    #[case::in_an_outer_repository_holding_the_ignored_directory("ignored/repository", true)]
+    fn test_status_in_a_repository_the_full_scan_skips(
+        #[case] relative_repository_path: &str,
+        #[case] in_an_outer_repository: bool,
+    ) {
         let temp_dir = TempDirectoryBuilder::default().build().unwrap();
         let repository_path = temp_dir.join(relative_repository_path);
         let ignored_directory = temp_dir.join("ignored");
         let file_path = repository_path.join("file");
 
+        if in_an_outer_repository {
+            crate::commands::tests::init_git_repository(temp_dir.path());
+        }
         crate::commands::tests::init_git_repository(&repository_path);
         std::fs::write(repository_path.join(".gitignore"), "file\n").unwrap();
         std::fs::write(&file_path, "").unwrap();
