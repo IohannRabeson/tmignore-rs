@@ -9,7 +9,6 @@ use std::{
 use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
 use log::{debug, error, info, warn};
-use regex::RegexSet;
 
 use crate::{
     cache::Cache,
@@ -18,6 +17,7 @@ use crate::{
         monitor::monitor_details::{
             DebouncerControl, MonitorControl, PendingEvents, TimeMachineControl,
         },
+        rules::Whitelist,
     },
     config::Config,
 };
@@ -27,7 +27,7 @@ const EVENT_QUEUE_SIZE: usize = 128;
 struct HandleEventContext<'a> {
     config: &'a mut Config,
     config_file_path: &'a Path,
-    whitelist: &'a mut RegexSet,
+    whitelist: &'a mut Whitelist,
     monitor: &'a mut Monitor,
     cache: &'a mut Cache,
     dry_run: bool,
@@ -61,7 +61,7 @@ fn handle_event(
 fn reload_configuration(context: &mut HandleEventContext<'_>) -> anyhow::Result<()> {
     match context.config.reload_file(context.config_file_path) {
         Ok(()) => {
-            *context.whitelist = super::create_whitelist(&context.config.whitelist_patterns)?;
+            *context.whitelist = Whitelist::new(&context.config.whitelist_patterns)?;
             context
                 .monitor
                 .set_watched_paths(&context.config.search_directories);
@@ -119,7 +119,7 @@ fn scan_repository(
 
     debug!("Scanning repository '{}'", repository_to_scan.display());
     let mut exclusions = Vec::new();
-    super::find_paths_to_exclude_from_backup(
+    super::rules::find_paths_to_exclude_from_backup(
         repository_to_scan,
         context.whitelist,
         &mut exclusions,
@@ -232,16 +232,7 @@ fn find_repositories_to_scan<'a>(
 
     for path in paths {
         if let Some(repository_path) = crate::git::find_parent_repository(path)
-            && config
-                .search_directories
-                .iter()
-                .any(|search_directory| repository_path.starts_with(search_directory))
-            && super::find_ignored_directory(
-                &repository_path,
-                &config.search_directories,
-                &config.ignored_directories,
-            )
-            .is_none()
+            && super::rules::scan_skip_reason(&repository_path, config).is_none()
         {
             paths_by_repository
                 .entry(repository_path)
@@ -286,7 +277,7 @@ pub fn execute(
         )
     })?;
     let mut config = Config::load_or_create_file(&config_file_path)?;
-    let mut whitelist = super::create_whitelist(&config.whitelist_patterns)?;
+    let mut whitelist = Whitelist::new(&config.whitelist_patterns)?;
     // Start the monitor before calling `super::run` to ensure the signals handlers are setup as soon as possible.
     let mut monitor = Monitor::new()?;
 
@@ -1352,7 +1343,7 @@ mod tests {
         changed_paths: BTreeSet<PathBuf>,
     ) -> BTreeSet<PathBuf> {
         let mut config = crate::commands::tests::create_config(main_path);
-        let mut whitelist = super::super::create_whitelist(&config.whitelist_patterns).unwrap();
+        let mut whitelist = super::Whitelist::new(&config.whitelist_patterns).unwrap();
         let mut monitor = super::Monitor::new().unwrap();
         let config_file_path = main_path.with_file_name("config.json");
         let mut context = super::HandleEventContext {

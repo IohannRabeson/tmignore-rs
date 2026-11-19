@@ -3,6 +3,7 @@ pub mod list;
 pub mod monitor;
 pub mod path;
 pub mod reset;
+mod rules;
 pub mod run;
 pub mod stats;
 
@@ -12,12 +13,10 @@ use std::{
 };
 
 use anyhow::anyhow;
-use log::{error, info, warn};
-use regex::RegexSet;
+use log::{info, warn};
 
 use crate::{
     diff::Exclusion,
-    git,
     timemachine::{self, Error},
 };
 
@@ -153,134 +152,6 @@ fn item_identity(path: &PathBuf) -> Option<(u64, u64)> {
     Some((metadata.dev(), metadata.ino()))
 }
 
-fn create_whitelist(whitelist_patterns: &BTreeSet<String>) -> Result<RegexSet, regex::Error> {
-    create_whitelist_with_globs(whitelist_patterns).map(|(whitelist, _)| whitelist)
-}
-
-fn create_whitelist_with_globs(
-    whitelist_patterns: &BTreeSet<String>,
-) -> Result<(RegexSet, Vec<&String>), regex::Error> {
-    let (globs, patterns): (Vec<&String>, Vec<String>) = whitelist_patterns
-        .iter()
-        .filter_map(
-            |pattern| match fnmatch_regex::glob_to_regex_pattern(pattern) {
-                Ok(compiled_pattern) => Some((pattern, compiled_pattern)),
-                Err(error) => {
-                    error!("Error: invalid whitelist pattern '{pattern}': {error}");
-                    None
-                }
-            },
-        )
-        .unzip();
-
-    Ok((RegexSet::new(patterns)?, globs))
-}
-
-/// Find the paths in a repository to exclude from Time Machine backup.
-/// If a path matches at least one of the regexes in the `whitelist` `RegexSet` it will not be
-/// added to `exclusions`. Paths may be pushed more than once; callers that need uniqueness
-/// must dedup after collecting.
-fn find_paths_to_exclude_from_backup(
-    repository_path: impl AsRef<Path>,
-    whitelist: &RegexSet,
-    exclusions: &mut Vec<Exclusion>,
-) -> anyhow::Result<Vec<PathBuf>> {
-    #[cfg(test)]
-    tests::FIND_PATHS_TO_EXCLUDE_CALLS.with(|calls| calls.set(calls.get() + 1));
-
-    let repository_path = repository_path.as_ref();
-    let mut whitelisted_directories = Vec::new();
-
-    for (ignored_file, skip_reason) in
-        find_ignored_files_with_skip_reasons(repository_path, whitelist)?
-    {
-        match skip_reason {
-            Some(SkipReason::Whitelisted(_)) if ignored_file.is_dir() => {
-                whitelisted_directories.push(ignored_file);
-            }
-            Some(_) => {}
-            None => exclusions.push(Exclusion::new(ignored_file, repository_path.to_path_buf())),
-        }
-    }
-
-    Ok(whitelisted_directories)
-}
-
-enum SkipReason {
-    Symlink,
-    Whitelisted(usize),
-    HoldsWhitelisted(PathBuf),
-}
-
-fn find_ignored_files_with_skip_reasons(
-    repository_path: &Path,
-    whitelist: &RegexSet,
-) -> anyhow::Result<Vec<(PathBuf, Option<SkipReason>)>> {
-    let mut ignored_files: Vec<(PathBuf, Option<SkipReason>)> =
-        git::find_ignored_files(repository_path)?
-            .into_iter()
-            .map(|ignored_file| {
-                let skip_reason = skip_reason(&ignored_file, whitelist);
-
-                (ignored_file, skip_reason)
-            })
-            .collect();
-    let whitelisted_files: Vec<PathBuf> = ignored_files
-        .iter()
-        .filter(|(_, skip_reason)| matches!(skip_reason, Some(SkipReason::Whitelisted(_))))
-        .map(|(ignored_file, _)| ignored_file.clone())
-        .collect();
-
-    for (ignored_file, skip_reason) in &mut ignored_files {
-        if skip_reason.is_none()
-            && let Some(whitelisted_file) = whitelisted_files.iter().find(|whitelisted_file| {
-                whitelisted_file.starts_with(&*ignored_file) && *whitelisted_file != ignored_file
-            })
-        {
-            *skip_reason = Some(SkipReason::HoldsWhitelisted(whitelisted_file.clone()));
-        }
-    }
-
-    Ok(ignored_files)
-}
-
-fn skip_reason(ignored_file: &Path, whitelist: &RegexSet) -> Option<SkipReason> {
-    if ignored_file
-        .symlink_metadata()
-        .is_ok_and(|metadata| metadata.file_type().is_symlink())
-    {
-        return Some(SkipReason::Symlink);
-    }
-    if let Some(ignored_file) = ignored_file.to_str()
-        && whitelist.is_match(ignored_file)
-        && let Some(pattern_index) = whitelist.matches(ignored_file).iter().next()
-    {
-        return Some(SkipReason::Whitelisted(pattern_index));
-    }
-
-    None
-}
-
-fn find_ignored_directory<'a>(
-    repository_path: &Path,
-    search_directories: &BTreeSet<PathBuf>,
-    ignored_directories: &'a BTreeSet<PathBuf>,
-) -> Option<&'a PathBuf> {
-    let mut found_ignored_directory = None;
-
-    for search_directory in search_directories
-        .iter()
-        .filter(|search_directory| repository_path.starts_with(search_directory))
-    {
-        found_ignored_directory = Some(ignored_directories.iter().find(|ignored_directory| {
-            repository_path.starts_with(ignored_directory)
-                && ignored_directory.starts_with(search_directory)
-        })?);
-    }
-
-    found_ignored_directory
-}
-
 fn sort_and_dedup(exclusions: &mut Vec<Exclusion>) {
     exclusions.sort_unstable();
     exclusions.dedup();
@@ -319,7 +190,7 @@ pub(crate) mod tests {
     use temp_dir_builder::{EntryKey, TempDirectory, TempDirectoryBuilder};
 
     use crate::{
-        commands::{TimeMachineTrait, apply_diff_and_print, create_whitelist},
+        commands::{TimeMachineTrait, apply_diff_and_print},
         config::Config,
         diff::Diff,
         timemachine::Error,
@@ -446,13 +317,6 @@ pub(crate) mod tests {
             "the file created at the same path is a new item, so it must not carry the exclusion \
              of the file it replaces"
         );
-    }
-
-    #[test]
-    fn test_create_whitelist_invalid() {
-        let patterns = BTreeSet::from([String::from("[z-a].txt")]);
-        let result = create_whitelist(&patterns).unwrap();
-        assert!(result.is_empty());
     }
 
     struct MockTimeMachineError;

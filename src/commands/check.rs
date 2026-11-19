@@ -6,143 +6,13 @@ use std::{
 
 use anyhow::{Context, bail};
 use log::error;
-use regex::RegexSet;
 
-use crate::{cache::Cache, commands::SkipReason, config::Config, git, timemachine};
-
-#[derive(Debug, PartialEq)]
-pub enum Excluded {
-    Directly,
-    ByAncestor(PathBuf),
-}
-
-impl Excluded {
-    fn by(covering_path: PathBuf, path: &Path) -> Self {
-        if covering_path == path {
-            Excluded::Directly
-        } else {
-            Excluded::ByAncestor(covering_path)
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum NotExcluded {
-    NotIgnored,
-    Whitelisted { pattern: String, path: PathBuf },
-    Symlink,
-    NoRepository,
-    InIgnoredDirectory(PathBuf),
-    HoldsWhitelisted(PathBuf),
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Status {
-    Excluded(Excluded),
-    NotExcluded(NotExcluded),
-}
-
-impl std::fmt::Display for Status {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Status::Excluded(Excluded::Directly) => write!(f, "excluded"),
-            Status::Excluded(Excluded::ByAncestor(ancestor)) => {
-                write!(f, "excluded by '{}'", ancestor.display())
-            }
-            Status::NotExcluded(NotExcluded::NotIgnored) => {
-                write!(f, "not excluded, Git does not ignore it")
-            }
-            Status::NotExcluded(NotExcluded::Whitelisted { pattern, path }) => write!(
-                f,
-                "not excluded, the whitelist pattern '{pattern}' matches '{}'",
-                path.display()
-            ),
-            Status::NotExcluded(NotExcluded::Symlink) => {
-                write!(f, "not excluded, symbolic links are never excluded")
-            }
-            Status::NotExcluded(NotExcluded::NoRepository) => write!(
-                f,
-                "not excluded, it is not in a Git repository of the search directories"
-            ),
-            Status::NotExcluded(NotExcluded::InIgnoredDirectory(ignored_directory)) => write!(
-                f,
-                "not excluded, it is in the ignored directory '{}'",
-                ignored_directory.display()
-            ),
-            Status::NotExcluded(NotExcluded::HoldsWhitelisted(whitelisted_file)) => write!(
-                f,
-                "not excluded, it holds '{}' the whitelist keeps",
-                whitelisted_file.display()
-            ),
-        }
-    }
-}
-
-fn status(
-    path: &Path,
-    search_directories: &BTreeSet<PathBuf>,
-    ignored_directories: &BTreeSet<PathBuf>,
-    whitelist_globs: &[&String],
-    whitelist: &RegexSet,
-) -> anyhow::Result<Status> {
-    let mut repository_paths = Vec::new();
-    let mut skipping_ignored_directory = None;
-    let mut current = Some(path.to_path_buf());
-
-    while let Some(repository_path) = current.and_then(git::find_parent_repository) {
-        current = repository_path.parent().map(Path::to_path_buf);
-
-        if search_directories
-            .iter()
-            .any(|search_directory| repository_path.starts_with(search_directory))
-        {
-            match super::find_ignored_directory(
-                &repository_path,
-                search_directories,
-                ignored_directories,
-            ) {
-                Some(ignored_directory) => skipping_ignored_directory = Some(ignored_directory),
-                None => repository_paths.push(repository_path),
-            }
-        }
-    }
-
-    let mut not_excluded = match (repository_paths.is_empty(), skipping_ignored_directory) {
-        (_, Some(ignored_directory)) => NotExcluded::InIgnoredDirectory(ignored_directory.clone()),
-        (false, None) => NotExcluded::NotIgnored,
-        (true, None) => NotExcluded::NoRepository,
-    };
-
-    for repository_path in repository_paths.iter().rev() {
-        for (ignored_file, skip_reason) in
-            super::find_ignored_files_with_skip_reasons(repository_path, whitelist)?
-        {
-            if !path.starts_with(&ignored_file) {
-                continue;
-            }
-
-            match skip_reason {
-                Some(SkipReason::Symlink) => not_excluded = NotExcluded::Symlink,
-                Some(SkipReason::HoldsWhitelisted(whitelisted_file)) => {
-                    not_excluded = NotExcluded::HoldsWhitelisted(whitelisted_file);
-                }
-                Some(SkipReason::Whitelisted(pattern_index)) => {
-                    not_excluded = NotExcluded::Whitelisted {
-                        pattern: whitelist_globs
-                            .get(pattern_index)
-                            .copied()
-                            .cloned()
-                            .unwrap_or_default(),
-                        path: ignored_file,
-                    };
-                }
-                None => return Ok(Status::Excluded(Excluded::by(ignored_file, path))),
-            }
-        }
-    }
-
-    Ok(Status::NotExcluded(not_excluded))
-}
+use crate::{
+    cache::Cache,
+    commands::rules::{Excluded, Status, Whitelist},
+    config::Config,
+    timemachine,
+};
 
 fn resolve(
     path: &Path,
@@ -185,12 +55,11 @@ pub fn execute(
     paths: &[PathBuf],
     writer: &mut impl Write,
 ) -> anyhow::Result<()> {
-    let (whitelist, whitelist_globs) =
-        super::create_whitelist_with_globs(&config.whitelist_patterns)?;
+    let whitelist = Whitelist::new(&config.whitelist_patterns)?;
     let mut failure_count: usize = 0;
 
     for path in paths {
-        if let Err(error) = check_path(config, cache, &whitelist_globs, &whitelist, path, writer) {
+        if let Err(error) = check_path(config, cache, &whitelist, path, writer) {
             error!("Error: {error:#}");
             failure_count = failure_count.saturating_add(1);
         }
@@ -209,8 +78,7 @@ pub fn execute(
 fn check_path(
     config: &Config,
     cache: &Cache,
-    whitelist_globs: &[&String],
-    whitelist: &RegexSet,
+    whitelist: &Whitelist,
     path: &Path,
     writer: &mut impl Write,
 ) -> anyhow::Result<()> {
@@ -220,13 +88,7 @@ fn check_path(
     let mut checked = None;
 
     for spelling in spellings {
-        let status = status(
-            &spelling,
-            &config.search_directories,
-            &config.ignored_directories,
-            whitelist_globs,
-            whitelist,
-        )?;
+        let status = super::rules::status(&spelling, config, whitelist)?;
         let covering_path = cache.find_covering_path(&spelling)?;
         let found = matches!(status, Status::Excluded(_)) || covering_path.is_some();
 
@@ -264,188 +126,9 @@ fn check_path(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, path::Path};
-
     use rstest::rstest;
-    use temp_dir_builder::TempDirectoryBuilder;
 
-    use super::{Excluded, NotExcluded, Status};
     use crate::cache::Cache;
-
-    #[rstest]
-    #[case::ignored_file("repository/ignored", |_: &Path| Status::Excluded(Excluded::Directly))]
-    #[case::in_an_ignored_directory(
-        "repository/build/artifact",
-        |repository: &Path| Status::Excluded(Excluded::ByAncestor(repository.join("build")))
-    )]
-    #[case::not_ignored("repository/kept", |_: &Path| Status::NotExcluded(NotExcluded::NotIgnored))]
-    #[case::whitelisted(
-        "repository/whitelisted",
-        |repository: &Path| Status::NotExcluded(NotExcluded::Whitelisted {
-            pattern: String::from("*/whitelisted"),
-            path: repository.join("whitelisted"),
-        })
-    )]
-    #[case::in_a_whitelisted_directory(
-        "repository/kept_directory/file",
-        |repository: &Path| Status::NotExcluded(NotExcluded::Whitelisted {
-            pattern: String::from("*/kept_directory"),
-            path: repository.join("kept_directory"),
-        })
-    )]
-    #[case::symlink("repository/link", |_: &Path| Status::NotExcluded(NotExcluded::Symlink))]
-    #[case::outside_any_repository("outside", |_: &Path| Status::NotExcluded(NotExcluded::NoRepository))]
-    fn test_status(#[case] relative_path: &str, #[case] expected: fn(&Path) -> Status) {
-        let mut builder = TempDirectoryBuilder::default();
-        let outside = builder.add_empty_file("outside");
-        let repository = builder.add_directory("repository");
-        builder.in_directory(&repository, |builder| {
-            builder.add_text_file(
-                ".gitignore",
-                "ignored\nbuild/\nwhitelisted\nkept_directory/\nlink\n",
-            );
-            builder.add_empty_file("ignored");
-            builder.add_empty_file("kept_directory/file");
-            builder.add_empty_file("build/artifact");
-            builder.add_empty_file("kept");
-            builder.add_empty_file("whitelisted");
-            builder.add_symlink_to("link", &outside);
-        });
-        let temp_dir = builder.build().unwrap();
-        let repository_path = temp_dir.path_of(&repository);
-        let search_directories = BTreeSet::from([repository_path.clone()]);
-        let whitelist_patterns = BTreeSet::from([
-            String::from("![z-a]"),
-            String::from("*/kept_directory"),
-            String::from("*/whitelisted"),
-        ]);
-        let (whitelist, whitelist_globs) =
-            crate::commands::create_whitelist_with_globs(&whitelist_patterns).unwrap();
-
-        crate::commands::tests::init_git_repository(&repository_path);
-
-        assert_eq!(
-            2,
-            whitelist.len(),
-            "the first pattern must be invalid, so the position of a pattern in the configuration \
-             differs from its position in the compiled whitelist"
-        );
-        assert_eq!(
-            expected(&repository_path),
-            super::status(
-                &temp_dir.join(relative_path),
-                &search_directories,
-                &BTreeSet::new(),
-                &whitelist_globs,
-                &whitelist
-            )
-            .unwrap()
-        );
-    }
-
-    #[test]
-    fn test_status_in_a_nested_repository_ignored_by_the_outer_one() {
-        let mut builder = TempDirectoryBuilder::default();
-        builder.add_text_file("outer/.gitignore", "nested/\n");
-        let kept = builder.add_empty_file("outer/nested/kept");
-        let temp_dir = builder.build().unwrap();
-        let outer_path = temp_dir.join("outer");
-        let nested_path = outer_path.join("nested");
-        let search_directories = BTreeSet::from([outer_path.clone()]);
-        let whitelist_patterns = BTreeSet::new();
-        let (whitelist, whitelist_globs) =
-            crate::commands::create_whitelist_with_globs(&whitelist_patterns).unwrap();
-
-        crate::commands::tests::init_git_repository(&outer_path);
-        crate::commands::tests::init_git_repository(&nested_path);
-
-        assert_eq!(
-            Status::Excluded(Excluded::ByAncestor(nested_path)),
-            super::status(
-                &temp_dir.path_of(&kept),
-                &search_directories,
-                &BTreeSet::new(),
-                &whitelist_globs,
-                &whitelist
-            )
-            .unwrap(),
-            "the nested repository does not ignore the file, but the outer one ignores the whole \
-             nested repository"
-        );
-    }
-
-    #[rstest]
-    #[case::in_the_ignored_directory("ignored/repository", false)]
-    #[case::is_the_ignored_directory("ignored", false)]
-    #[case::in_an_outer_repository_holding_the_ignored_directory("ignored/repository", true)]
-    fn test_status_in_a_repository_the_full_scan_skips(
-        #[case] relative_repository_path: &str,
-        #[case] in_an_outer_repository: bool,
-    ) {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let repository_path = temp_dir.join(relative_repository_path);
-        let ignored_directory = temp_dir.join("ignored");
-        let file_path = repository_path.join("file");
-
-        if in_an_outer_repository {
-            crate::commands::tests::init_git_repository(temp_dir.path());
-        }
-        crate::commands::tests::init_git_repository(&repository_path);
-        std::fs::write(repository_path.join(".gitignore"), "file\n").unwrap();
-        std::fs::write(&file_path, "").unwrap();
-
-        let search_directories = BTreeSet::from([temp_dir.path().to_path_buf()]);
-        let ignored_directories = BTreeSet::from([ignored_directory.clone()]);
-        let whitelist_patterns = BTreeSet::new();
-        let (whitelist, whitelist_globs) =
-            crate::commands::create_whitelist_with_globs(&whitelist_patterns).unwrap();
-
-        assert_eq!(
-            Status::NotExcluded(NotExcluded::InIgnoredDirectory(ignored_directory)),
-            super::status(
-                &file_path,
-                &search_directories,
-                &ignored_directories,
-                &whitelist_globs,
-                &whitelist
-            )
-            .unwrap(),
-            "the full scan does not look for repositories in the ignored directories, so what \
-             their .gitignore files say does not apply"
-        );
-    }
-
-    #[test]
-    fn test_status_in_a_search_directory_inside_an_ignored_directory() {
-        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
-        let search_directory = temp_dir.join("search");
-        let repository_path = search_directory.join("repository");
-        let file_path = repository_path.join("file");
-
-        crate::commands::tests::init_git_repository(&repository_path);
-        std::fs::write(repository_path.join(".gitignore"), "file\n").unwrap();
-        std::fs::write(&file_path, "").unwrap();
-
-        let search_directories = BTreeSet::from([search_directory]);
-        let ignored_directories = BTreeSet::from([temp_dir.path().to_path_buf()]);
-        let whitelist_patterns = BTreeSet::new();
-        let (whitelist, whitelist_globs) =
-            crate::commands::create_whitelist_with_globs(&whitelist_patterns).unwrap();
-
-        assert_eq!(
-            Status::Excluded(Excluded::Directly),
-            super::status(
-                &file_path,
-                &search_directories,
-                &ignored_directories,
-                &whitelist_globs,
-                &whitelist
-            )
-            .unwrap(),
-            "the full scan only skips the ignored directories it walks through, so it scans the \
-             repositories of a search directory inside an ignored directory"
-        );
-    }
 
     #[test]
     fn test_execute() {

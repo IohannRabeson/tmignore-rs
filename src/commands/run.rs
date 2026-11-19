@@ -16,7 +16,7 @@ pub fn execute(
     dry_run: bool,
     details: bool,
 ) -> anyhow::Result<()> {
-    let whitelist = super::create_whitelist(&config.whitelist_patterns)?;
+    let whitelist = super::rules::Whitelist::new(&config.whitelist_patterns)?;
     let mut repositories = BTreeSet::new();
     let mut exclusions: Vec<Exclusion> = Vec::new();
 
@@ -32,19 +32,14 @@ pub fn execute(
             while let Ok(repository_path) = rx.recv() {
                 if repositories.insert(repository_path.clone()) {
                     whitelisted_directories.extend(
-                        super::find_paths_to_exclude_from_backup(
+                        super::rules::find_paths_to_exclude_from_backup(
                             repository_path,
                             &whitelist,
                             &mut exclusions,
                         )?
                         .into_iter()
                         .filter(|whitelisted_directory| {
-                            super::find_ignored_directory(
-                                whitelisted_directory,
-                                &config.search_directories,
-                                &config.ignored_directories,
-                            )
-                            .is_none()
+                            super::rules::scan_skip_reason(whitelisted_directory, config).is_none()
                         }),
                     );
                 }
