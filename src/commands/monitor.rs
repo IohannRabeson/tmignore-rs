@@ -88,12 +88,8 @@ fn scan_paths(
     context: &mut HandleEventContext<'_>,
     dirty_paths: &BTreeSet<PathBuf>,
 ) -> anyhow::Result<()> {
-    let mut repositories_to_scan = find_repositories_to_scan(
-        dirty_paths,
-        &context.config.search_directories,
-        &context.config.ignored_directories,
-        context.cache,
-    )?;
+    let mut repositories_to_scan =
+        find_repositories_to_scan(dirty_paths, context.config, context.cache)?;
 
     while let Some((repository_to_scan, changed_paths)) = repositories_to_scan.pop_first() {
         for repository_path in scan_repository(context, &repository_to_scan, &changed_paths)? {
@@ -229,18 +225,19 @@ fn update_cache(
 /// The repository is scanned as soon as one of its paths is not skipped.
 fn find_repositories_to_scan<'a>(
     paths: &'a BTreeSet<PathBuf>,
-    search_directories: &BTreeSet<PathBuf>,
-    ignored_directories: &BTreeSet<PathBuf>,
+    config: &Config,
     cache: &Cache,
 ) -> Result<BTreeMap<PathBuf, Vec<&'a Path>>, anyhow::Error> {
     let mut paths_by_repository: BTreeMap<PathBuf, Vec<&Path>> = BTreeMap::new();
 
     for path in paths {
         if let Some(repository_path) = crate::git::find_parent_repository(path)
-            && search_directories
+            && config
+                .search_directories
                 .iter()
                 .any(|search_directory| repository_path.starts_with(search_directory))
-            && super::find_ignored_directory(&repository_path, ignored_directories).is_none()
+            && super::find_ignored_directory(&repository_path, &config.ignored_directories)
+                .is_none()
         {
             paths_by_repository
                 .entry(repository_path)
@@ -2212,8 +2209,7 @@ mod tests {
         let source_path = temp_dir.path_of(&source);
         let new_log_path = temp_dir.path_of(&new_log);
 
-        let search_directories = BTreeSet::from([repository_path.clone()]);
-        let ignored_directories = BTreeSet::new();
+        let config = crate::commands::tests::create_config(&repository_path);
         let mut cache = Cache::open_in_memory().unwrap();
         cache
             .reset(
@@ -2223,15 +2219,10 @@ mod tests {
             .unwrap();
 
         let scan = |paths: [PathBuf; 1]| {
-            super::find_repositories_to_scan(
-                &BTreeSet::from(paths),
-                &search_directories,
-                &ignored_directories,
-                &cache,
-            )
-            .unwrap()
-            .into_keys()
-            .collect::<BTreeSet<_>>()
+            super::find_repositories_to_scan(&BTreeSet::from(paths), &config, &cache)
+                .unwrap()
+                .into_keys()
+                .collect::<BTreeSet<_>>()
         };
         let scanned = BTreeSet::from([repository_path.clone()]);
 
@@ -2282,13 +2273,7 @@ mod tests {
 
         let changed_paths = [logs_path.join("a.log"), kept_path];
         let paths = BTreeSet::from(changed_paths.clone());
-        let repositories = super::find_repositories_to_scan(
-            &paths,
-            &search_directories,
-            &ignored_directories,
-            &cache,
-        )
-        .unwrap();
+        let repositories = super::find_repositories_to_scan(&paths, &config, &cache).unwrap();
         assert_eq!(
             scanned,
             repositories.keys().cloned().collect::<BTreeSet<_>>(),
@@ -2318,19 +2303,15 @@ mod tests {
         crate::commands::tests::init_git_repository(&repository_path);
         std::fs::write(&file_path, "").unwrap();
 
-        let search_directories = BTreeSet::from([temp_dir.path().to_path_buf()]);
-        let ignored_directories = BTreeSet::from([temp_dir.join("ignored")]);
+        let mut config = crate::commands::tests::create_config(&temp_dir);
         let cache = Cache::open_in_memory().unwrap();
 
+        config.ignored_directories.insert(temp_dir.join("ignored"));
+
         assert!(
-            super::find_repositories_to_scan(
-                &BTreeSet::from([file_path]),
-                &search_directories,
-                &ignored_directories,
-                &cache,
-            )
-            .unwrap()
-            .is_empty(),
+            super::find_repositories_to_scan(&BTreeSet::from([file_path]), &config, &cache)
+                .unwrap()
+                .is_empty(),
             "the full scan does not look for repositories in the ignored directories, so the \
              monitor must not scan them either"
         );
