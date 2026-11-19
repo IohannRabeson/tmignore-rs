@@ -236,8 +236,12 @@ fn find_repositories_to_scan<'a>(
                 .search_directories
                 .iter()
                 .any(|search_directory| repository_path.starts_with(search_directory))
-            && super::find_ignored_directory(&repository_path, &config.ignored_directories)
-                .is_none()
+            && super::find_ignored_directory(
+                &repository_path,
+                &config.search_directories,
+                &config.ignored_directories,
+            )
+            .is_none()
         {
             paths_by_repository
                 .entry(repository_path)
@@ -2314,6 +2318,36 @@ mod tests {
                 .is_empty(),
             "the full scan does not look for repositories in the ignored directories, so the \
              monitor must not scan them either"
+        );
+    }
+
+    #[test]
+    fn test_find_repositories_to_scan_keeps_a_repository_below_an_ignored_search_directory_parent()
+    {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let search_directory = temp_dir.join("search");
+        let repository_path = search_directory.join("repository");
+        let file_path = repository_path.join("file");
+
+        crate::commands::tests::init_git_repository(&repository_path);
+        std::fs::write(&file_path, "").unwrap();
+
+        let mut config = crate::commands::tests::create_config(&search_directory);
+        let cache = Cache::open_in_memory().unwrap();
+
+        config
+            .ignored_directories
+            .insert(temp_dir.path().to_path_buf());
+
+        assert_eq!(
+            vec![repository_path],
+            super::find_repositories_to_scan(&BTreeSet::from([file_path]), &config, &cache)
+                .unwrap()
+                .into_keys()
+                .collect::<Vec<_>>(),
+            "the full scan only skips the ignored directories it walks through, so it scans the \
+             repositories of a search directory inside an ignored directory, and the monitor must \
+             scan them too"
         );
     }
 

@@ -90,7 +90,11 @@ fn status(
             .iter()
             .any(|search_directory| repository_path.starts_with(search_directory))
         {
-            match super::find_ignored_directory(&repository_path, ignored_directories) {
+            match super::find_ignored_directory(
+                &repository_path,
+                search_directories,
+                ignored_directories,
+            ) {
                 Some(ignored_directory) => skipping_ignored_directory = Some(ignored_directory),
                 None => repository_paths.push(repository_path),
             }
@@ -364,6 +368,38 @@ mod tests {
             .unwrap(),
             "the full scan does not look for repositories in the ignored directories, so what \
              their .gitignore files say does not apply"
+        );
+    }
+
+    #[test]
+    fn test_status_in_a_search_directory_inside_an_ignored_directory() {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let search_directory = temp_dir.join("search");
+        let repository_path = search_directory.join("repository");
+        let file_path = repository_path.join("file");
+
+        crate::commands::tests::init_git_repository(&repository_path);
+        std::fs::write(repository_path.join(".gitignore"), "file\n").unwrap();
+        std::fs::write(&file_path, "").unwrap();
+
+        let search_directories = BTreeSet::from([search_directory]);
+        let ignored_directories = BTreeSet::from([temp_dir.path().to_path_buf()]);
+        let whitelist_patterns = BTreeSet::new();
+        let (whitelist, whitelist_globs) =
+            crate::commands::create_whitelist_with_globs(&whitelist_patterns).unwrap();
+
+        assert_eq!(
+            Status::Excluded(Excluded::Directly),
+            super::status(
+                &file_path,
+                &search_directories,
+                &ignored_directories,
+                &whitelist_globs,
+                &whitelist
+            )
+            .unwrap(),
+            "the full scan only skips the ignored directories it walks through, so it scans the \
+             repositories of a search directory inside an ignored directory"
         );
     }
 
