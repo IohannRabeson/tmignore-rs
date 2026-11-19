@@ -31,11 +31,22 @@ pub fn execute(
 
             while let Ok(repository_path) = rx.recv() {
                 if repositories.insert(repository_path.clone()) {
-                    whitelisted_directories.extend(super::find_paths_to_exclude_from_backup(
-                        repository_path,
-                        &whitelist,
-                        &mut exclusions,
-                    )?);
+                    whitelisted_directories.extend(
+                        super::find_paths_to_exclude_from_backup(
+                            repository_path,
+                            &whitelist,
+                            &mut exclusions,
+                        )?
+                        .into_iter()
+                        .filter(|whitelisted_directory| {
+                            super::find_ignored_directory(
+                                whitelisted_directory,
+                                &config.search_directories,
+                                &config.ignored_directories,
+                            )
+                            .is_none()
+                        }),
+                    );
                 }
             }
 
@@ -248,6 +259,34 @@ pub(crate) mod tests {
             cache.paths().unwrap(),
             "the whitelist keeps the directory the outer repository ignores in the backup, so the \
              repository it holds must be scanned like any other"
+        );
+    }
+
+    #[test]
+    fn test_repository_kept_by_the_whitelist_inside_an_ignored_directory() {
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
+        builder.add_text_file("outer/.gitignore", "vendor/dep/\n");
+        builder.add_empty_file("outer/vendor/kept");
+        builder.add_text_file("outer/vendor/dep/.gitignore", "build/\n");
+        builder.add_empty_file("outer/vendor/dep/build/artifact");
+        let temp_dir = builder.build().unwrap();
+        let outer_path = temp_dir.join("outer");
+        let dependency_path = outer_path.join("vendor/dep");
+        let mut cache = Cache::open_in_memory().unwrap();
+        let mut config = crate::commands::tests::create_config(&outer_path);
+
+        config.whitelist_patterns.insert(String::from("*/dep"));
+        config.ignored_directories.insert(outer_path.join("vendor"));
+        crate::commands::tests::init_git_repository(&outer_path);
+        crate::commands::tests::init_git_repository(&dependency_path);
+
+        super::execute(&config, &mut cache, false, false).unwrap();
+
+        assert_eq!(
+            Vec::<std::path::PathBuf>::new(),
+            cache.paths().unwrap(),
+            "the repository is in an ignored directory, so the full scan must not look at it even \
+             when the whitelist keeps it"
         );
     }
 
