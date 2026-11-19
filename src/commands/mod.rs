@@ -227,6 +227,15 @@ fn skip_reason(ignored_file: &Path, whitelist: &RegexSet) -> Option<SkipReason> 
     None
 }
 
+fn find_ignored_directory<'a>(
+    repository_path: &Path,
+    ignored_directories: &'a BTreeSet<PathBuf>,
+) -> Option<&'a PathBuf> {
+    ignored_directories
+        .iter()
+        .find(|ignored_directory| repository_path.starts_with(ignored_directory))
+}
+
 fn sort_and_dedup(exclusions: &mut Vec<Exclusion>) {
     exclusions.sort_unstable();
     exclusions.dedup();
