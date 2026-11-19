@@ -32,6 +32,7 @@ pub enum NotExcluded {
     Whitelisted { pattern: String, path: PathBuf },
     Symlink,
     NoRepository,
+    InIgnoredDirectory(PathBuf),
 }
 
 #[derive(Debug, PartialEq)]
@@ -62,6 +63,11 @@ impl std::fmt::Display for Status {
                 f,
                 "not excluded, it is not in a Git repository of the search directories"
             ),
+            Status::NotExcluded(NotExcluded::InIgnoredDirectory(ignored_directory)) => write!(
+                f,
+                "not excluded, it is in the ignored directory '{}'",
+                ignored_directory.display()
+            ),
         }
     }
 }
@@ -69,10 +75,12 @@ impl std::fmt::Display for Status {
 fn status(
     path: &Path,
     search_directories: &BTreeSet<PathBuf>,
+    ignored_directories: &BTreeSet<PathBuf>,
     whitelist_globs: &[&String],
     whitelist: &RegexSet,
 ) -> anyhow::Result<Status> {
     let mut repository_paths = Vec::new();
+    let mut skipping_ignored_directory = None;
     let mut current = Some(path.to_path_buf());
 
     while let Some(repository_path) = current.and_then(git::find_parent_repository) {
@@ -82,14 +90,19 @@ fn status(
             .iter()
             .any(|search_directory| repository_path.starts_with(search_directory))
         {
-            repository_paths.push(repository_path);
+            match super::find_ignored_directory(&repository_path, ignored_directories) {
+                Some(ignored_directory) => skipping_ignored_directory = Some(ignored_directory),
+                None => repository_paths.push(repository_path),
+            }
         }
     }
 
-    let mut not_excluded = if repository_paths.is_empty() {
-        NotExcluded::NoRepository
-    } else {
-        NotExcluded::NotIgnored
+    let mut not_excluded = match (repository_paths.is_empty(), skipping_ignored_directory) {
+        (false, _) => NotExcluded::NotIgnored,
+        (true, Some(ignored_directory)) => {
+            NotExcluded::InIgnoredDirectory(ignored_directory.clone())
+        }
+        (true, None) => NotExcluded::NoRepository,
     };
 
     for repository_path in repository_paths.iter().rev() {
@@ -182,6 +195,7 @@ fn check_path(
     let status = status(
         &path,
         &config.search_directories,
+        &config.ignored_directories,
         whitelist_globs,
         whitelist,
     )?;
@@ -280,6 +294,7 @@ mod tests {
             super::status(
                 &temp_dir.join(relative_path),
                 &search_directories,
+                &BTreeSet::new(),
                 &whitelist_globs,
                 &whitelist
             )
@@ -308,12 +323,47 @@ mod tests {
             super::status(
                 &temp_dir.path_of(&kept),
                 &search_directories,
+                &BTreeSet::new(),
                 &whitelist_globs,
                 &whitelist
             )
             .unwrap(),
             "the nested repository does not ignore the file, but the outer one ignores the whole \
              nested repository"
+        );
+    }
+
+    #[rstest]
+    #[case::in_the_ignored_directory("ignored/repository")]
+    #[case::is_the_ignored_directory("ignored")]
+    fn test_status_in_a_repository_the_full_scan_skips(#[case] relative_repository_path: &str) {
+        let temp_dir = TempDirectoryBuilder::default().build().unwrap();
+        let repository_path = temp_dir.join(relative_repository_path);
+        let ignored_directory = temp_dir.join("ignored");
+        let file_path = repository_path.join("file");
+
+        crate::commands::tests::init_git_repository(&repository_path);
+        std::fs::write(repository_path.join(".gitignore"), "file\n").unwrap();
+        std::fs::write(&file_path, "").unwrap();
+
+        let search_directories = BTreeSet::from([temp_dir.path().to_path_buf()]);
+        let ignored_directories = BTreeSet::from([ignored_directory.clone()]);
+        let whitelist_patterns = BTreeSet::new();
+        let (whitelist, whitelist_globs) =
+            crate::commands::create_whitelist_with_globs(&whitelist_patterns).unwrap();
+
+        assert_eq!(
+            Status::NotExcluded(NotExcluded::InIgnoredDirectory(ignored_directory)),
+            super::status(
+                &file_path,
+                &search_directories,
+                &ignored_directories,
+                &whitelist_globs,
+                &whitelist
+            )
+            .unwrap(),
+            "the full scan does not look for repositories in the ignored directories, so what \
+             their .gitignore files say does not apply"
         );
     }
 
