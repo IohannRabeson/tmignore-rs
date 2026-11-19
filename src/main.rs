@@ -231,6 +231,7 @@ fn main() {
         if error.backtrace().status() == BacktraceStatus::Captured {
             error!("{}", error.backtrace());
         }
+        std::process::exit(1);
     }
 }
 
