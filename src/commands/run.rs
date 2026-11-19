@@ -291,6 +291,34 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_repository_kept_by_the_whitelist_inside_a_directory_git_lists_as_ignored() {
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
+        builder.add_text_file("outer/.gitignore", "vendor/*\n");
+        let other = builder.add_empty_file("outer/vendor/other");
+        builder.add_text_file("outer/vendor/dep/.gitignore", "build/\n");
+        builder.add_empty_file("outer/vendor/dep/build/artifact");
+        let temp_dir = builder.build().unwrap();
+        let outer_path = temp_dir.join("outer");
+        let dependency_path = outer_path.join("vendor/dep");
+        let mut cache = Cache::open_in_memory().unwrap();
+        let mut config = crate::commands::tests::create_config(&outer_path);
+
+        config.whitelist_patterns.insert(String::from("*/dep"));
+        crate::commands::tests::init_git_repository(&outer_path);
+        crate::commands::tests::init_git_repository(&dependency_path);
+
+        super::execute(&config, &mut cache, false, false).unwrap();
+
+        assert_eq!(
+            vec![dependency_path.join("build"), temp_dir.path_of(&other)],
+            cache.paths().unwrap(),
+            "git lists the directory holding the whitelisted repository as ignored, but excluding \
+             it would exclude the whitelisted repository too, so only the other ignored entries \
+             git lists in it must be excluded"
+        );
+    }
+
+    #[test]
     fn test_overlapping_search_directories_scan_every_repository_once() {
         let mut builder = crate::commands::tests::time_machine_visible_builder();
         let nested = builder.add_directory("nested");

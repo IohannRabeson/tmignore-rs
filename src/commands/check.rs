@@ -33,6 +33,7 @@ pub enum NotExcluded {
     Symlink,
     NoRepository,
     InIgnoredDirectory(PathBuf),
+    HoldsWhitelisted(PathBuf),
 }
 
 #[derive(Debug, PartialEq)]
@@ -67,6 +68,11 @@ impl std::fmt::Display for Status {
                 f,
                 "not excluded, it is in the ignored directory '{}'",
                 ignored_directory.display()
+            ),
+            Status::NotExcluded(NotExcluded::HoldsWhitelisted(whitelisted_file)) => write!(
+                f,
+                "not excluded, it holds '{}' the whitelist keeps",
+                whitelisted_file.display()
             ),
         }
     }
@@ -108,13 +114,18 @@ fn status(
     };
 
     for repository_path in repository_paths.iter().rev() {
-        for ignored_file in git::find_ignored_files(repository_path)? {
+        for (ignored_file, skip_reason) in
+            super::find_ignored_files_with_skip_reasons(repository_path, whitelist)?
+        {
             if !path.starts_with(&ignored_file) {
                 continue;
             }
 
-            match super::skip_reason(&ignored_file, whitelist) {
+            match skip_reason {
                 Some(SkipReason::Symlink) => not_excluded = NotExcluded::Symlink,
+                Some(SkipReason::HoldsWhitelisted(whitelisted_file)) => {
+                    not_excluded = NotExcluded::HoldsWhitelisted(whitelisted_file);
+                }
                 Some(SkipReason::Whitelisted(pattern_index)) => {
                     not_excluded = NotExcluded::Whitelisted {
                         pattern: whitelist_globs
@@ -148,7 +159,9 @@ fn resolve(
         .iter()
         .filter_map(|search_directory| {
             let canonical_search_directory = search_directory.canonicalize().ok()?;
-            let relative_path = canonical_path.strip_prefix(canonical_search_directory).ok()?;
+            let relative_path = canonical_path
+                .strip_prefix(canonical_search_directory)
+                .ok()?;
 
             Some(
                 search_directory
@@ -624,6 +637,38 @@ mod tests {
             String::from_utf8(output).unwrap(),
             "the full scan reaches the path only through the outer search directory, so the path \
              must be spelled through it"
+        );
+    }
+
+    #[test]
+    fn test_execute_in_a_whitelisted_repository_inside_a_directory_git_lists_as_ignored() {
+        let mut builder = crate::commands::tests::time_machine_visible_builder();
+        builder.add_text_file("outer/.gitignore", "vendor/*\n");
+        builder.add_empty_file("outer/vendor/other");
+        let kept = builder.add_empty_file("outer/vendor/dep/kept");
+        let temp_dir = builder.build().unwrap();
+        let outer_path = temp_dir.join("outer");
+        let dependency_path = outer_path.join("vendor/dep");
+        let mut cache = Cache::open_in_memory().unwrap();
+        let mut config = crate::commands::tests::create_config(&outer_path);
+        let mut output = Vec::new();
+
+        config.whitelist_patterns.insert(String::from("*/dep"));
+        crate::commands::tests::init_git_repository(&outer_path);
+        crate::commands::tests::init_git_repository(&dependency_path);
+        crate::commands::run::execute(&config, &mut cache, false, false).unwrap();
+        super::execute(&config, &cache, &[temp_dir.path_of(&kept)], &mut output).unwrap();
+
+        assert_eq!(
+            format!(
+                "{}\n  Rules: not excluded, the whitelist pattern '*/dep' matches '{}'\n  \
+                 Exclusion list: not listed\n  Time Machine: not excluded\n",
+                temp_dir.path_of(&kept).display(),
+                dependency_path.display()
+            ),
+            String::from_utf8(output).unwrap(),
+            "the whitelist keeps the repository, even though git also lists the directory holding \
+             it as ignored"
         );
     }
 
