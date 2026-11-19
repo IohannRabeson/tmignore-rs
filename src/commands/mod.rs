@@ -309,6 +309,7 @@ pub(crate) mod tests {
             "the file must be excluded before it is replaced"
         );
 
+        std::thread::sleep(Duration::from_secs(1));
         std::fs::remove_file(path).unwrap();
         std::fs::write(path, "").unwrap();
 
