@@ -189,11 +189,12 @@ fn find_paths_to_exclude_from_backup(
     tests::FIND_PATHS_TO_EXCLUDE_CALLS.with(|calls| calls.set(calls.get() + 1));
 
     let repository_path = repository_path.as_ref();
-    let ignored_files = git::find_ignored_files(repository_path)?;
     let mut whitelisted_directories = Vec::new();
 
-    for ignored_file in ignored_files {
-        match skip_reason(&ignored_file, whitelist) {
+    for (ignored_file, skip_reason) in
+        find_ignored_files_with_skip_reasons(repository_path, whitelist)?
+    {
+        match skip_reason {
             Some(SkipReason::Whitelisted(_)) if ignored_file.is_dir() => {
                 whitelisted_directories.push(ignored_file);
             }
@@ -208,6 +209,39 @@ fn find_paths_to_exclude_from_backup(
 enum SkipReason {
     Symlink,
     Whitelisted(usize),
+    HoldsWhitelisted(PathBuf),
+}
+
+fn find_ignored_files_with_skip_reasons(
+    repository_path: &Path,
+    whitelist: &RegexSet,
+) -> anyhow::Result<Vec<(PathBuf, Option<SkipReason>)>> {
+    let mut ignored_files: Vec<(PathBuf, Option<SkipReason>)> =
+        git::find_ignored_files(repository_path)?
+            .into_iter()
+            .map(|ignored_file| {
+                let skip_reason = skip_reason(&ignored_file, whitelist);
+
+                (ignored_file, skip_reason)
+            })
+            .collect();
+    let whitelisted_files: Vec<PathBuf> = ignored_files
+        .iter()
+        .filter(|(_, skip_reason)| matches!(skip_reason, Some(SkipReason::Whitelisted(_))))
+        .map(|(ignored_file, _)| ignored_file.clone())
+        .collect();
+
+    for (ignored_file, skip_reason) in &mut ignored_files {
+        if skip_reason.is_none()
+            && let Some(whitelisted_file) = whitelisted_files.iter().find(|whitelisted_file| {
+                whitelisted_file.starts_with(&*ignored_file) && *whitelisted_file != ignored_file
+            })
+        {
+            *skip_reason = Some(SkipReason::HoldsWhitelisted(whitelisted_file.clone()));
+        }
+    }
+
+    Ok(ignored_files)
 }
 
 fn skip_reason(ignored_file: &Path, whitelist: &RegexSet) -> Option<SkipReason> {
